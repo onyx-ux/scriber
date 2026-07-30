@@ -38,6 +38,19 @@ COPY --from=whisper-source /build/whisper.cpp ./whisper.cpp
 WORKDIR /build/whisper.cpp
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --config Release
 
+# Stage runtime artifacts into a fixed layout. The `|| true` fallback for
+# the .so globs has to live here (in a RUN/shell step) rather than on a
+# COPY instruction — COPY has no shell and doesn't understand `2>/dev/null
+# || true`; those tokens get parsed as literal extra arguments instead of
+# being suppressed, which is its own footgun (see the runtime stage below,
+# this used to be parsed as a bogus extra source path). Directories are
+# created up front so the later unconditional COPY never fails even on a
+# static build that produces no .so files.
+RUN mkdir -p /out/bin /out/src /out/ggml/src && \
+    cp build/bin/whisper-cli /out/bin/ && \
+    cp build/src/*.so* /out/src/ 2>/dev/null || true && \
+    cp build/ggml/src/*.so* /out/ggml/src/ 2>/dev/null || true
+
 FROM node:20-bookworm-slim AS deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
@@ -54,10 +67,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends rclone \
     && rm -rf /var/lib/apt/lists/*
 
-# whisper.cpp binary + the shared libs it needs at runtime
-COPY --from=whisper-build /build/whisper.cpp/build/bin/whisper-cli /app/whisper.cpp/build/bin/whisper-cli
-COPY --from=whisper-build /build/whisper.cpp/build/src/*.so* /app/whisper.cpp/build/src/ 2>/dev/null || true
-COPY --from=whisper-build /build/whisper.cpp/build/ggml/src/*.so* /app/whisper.cpp/build/ggml/src/ 2>/dev/null || true
+# whisper.cpp binary + the shared libs it needs at runtime. These are plain
+# unconditional COPYs of the staged /out layout from the build stage — safe
+# even if the .so directories ended up empty (static build).
+COPY --from=whisper-build /out/bin/whisper-cli /app/whisper.cpp/build/bin/whisper-cli
+COPY --from=whisper-build /out/src/ /app/whisper.cpp/build/src/
+COPY --from=whisper-build /out/ggml/src/ /app/whisper.cpp/build/ggml/src/
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
