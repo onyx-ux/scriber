@@ -1,0 +1,5 @@
+[pihouse]
+type = sftp
+host = 192.168.0.19
+user = mattpi
+key_file = /keys/pihouse

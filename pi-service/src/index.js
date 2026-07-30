@@ -21,6 +21,12 @@ async function main() {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
   });
 
+  // Without this, an unhandled 'error' event on an EventEmitter throws and
+  // kills the whole process — and @discordjs/voice does emit one here on
+  // certain connection lifecycle races (e.g. a reconnect timer firing after
+  // destroy()). Log and keep running instead of crashing mid-session.
+  client.on('error', (err) => console.error('[client] error:', err));
+
   registerCommandHandlers(client, db, config);
 
   client.once('ready', async () => {

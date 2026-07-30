@@ -1,4 +1,5 @@
 import { AttachmentBuilder } from 'discord.js';
+import { pick, POST_SESSION_HEADER, POST_SESSION_ATTACHMENT_CAPTION } from '../flavor.js';
 
 function fmtList(items, empty = '_none_') {
   if (!items || items.length === 0) return empty;
@@ -35,7 +36,7 @@ export async function postSessionNotes({ discordClient, meeting, notes, mdPath, 
   }
 
   const date = (meeting.started_at || '').slice(0, 10);
-  const header = `# 🐉 Session Recap — ${meeting.channel_name} (${date})`;
+  const header = pick(POST_SESSION_HEADER, { channel: meeting.channel_name, date });
 
   const body = `## 📜 What Happened
 ${notes.tldr || '_none_'}
@@ -72,7 +73,7 @@ ${fmtFollowUps(notes.followUps)}`;
     name: mdPath.split('/').pop(),
   });
   await channel.send({
-    content: '📎 Full session markdown (transcript + notes) — drop into Obsidian:',
+    content: pick(POST_SESSION_ATTACHMENT_CAPTION),
     files: [attachment],
   });
 }

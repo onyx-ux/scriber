@@ -1,0 +1,40 @@
+services:
+  # Runs on Matthew's PC (not the Pi). Every 5 minutes, pulls any completed
+  # session's Obsidian markdown off the Pi over SFTP (reusing the same SSH
+  # key set up for Claude Code's Pi access) and MOVES it into the Cipher
+  # campaign folder. "Move" is deliberate here, unlike the Pi's own
+  # rclone (drive-sync.js), which only ever COPIES to Google Drive — Drive
+  # already has its own permanent copy by the time this runs, so deleting
+  # the Pi's local copy after a successful transfer is safe, not lossy.
+  #
+  # Files only ever land in obsidian-export on the Pi once a session has
+  # actually been summarized (see queue-worker.js) — so "everything currently
+  # in that folder" and "completed sessions" are the same set of files;
+  # no separate "is this done?" filter is needed here.
+  obsidian-to-cipher:
+    image: rclone/rclone:latest
+    container_name: scriber-pc-sync
+    restart: unless-stopped
+    volumes:
+      # Mounted as a directory, not a single file — rclone needs to do an
+      # atomic rename to save its config, which Docker Desktop's Windows
+      # file-sharing layer doesn't support for a bind-mounted single file
+      # (fails with "device or resource busy"). Mounting the parent
+      # directory sidesteps that entirely.
+      - ./config:/config/rclone
+      # Read-only: this container should only ever be able to read the key,
+      # never modify it.
+      - 'C:/Users/Matthew/.ssh/pihouse:/keys/pihouse:ro'
+      # Replace with your actual campaign folder if it ever moves.
+      - type: bind
+        source: 'C:/Users/Matthew/Desktop/D&D/New Game/Cipher'
+        target: /cipher
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "[pc-sync] watching pihouse:scriber/pi-service/obsidian-export -> /cipher every 5 minutes"
+        while true; do
+          rclone move pihouse:scriber/pi-service/obsidian-export /cipher --include '*.md' -v
+          sleep 300
+        done

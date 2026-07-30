@@ -47,18 +47,19 @@ WORKDIR /build/whisper.cpp
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8-a \
     && cmake --build build -j --config Release
 
-# Stage runtime artifacts into a fixed layout. The `|| true` fallback for
-# the .so globs has to live here (in a RUN/shell step) rather than on a
-# COPY instruction — COPY has no shell and doesn't understand `2>/dev/null
-# || true`; those tokens get parsed as literal extra arguments instead of
-# being suppressed, which is its own footgun (see the runtime stage below,
-# this used to be parsed as a bogus extra source path). Directories are
-# created up front so the later unconditional COPY never fails even on a
-# static build that produces no .so files.
-RUN mkdir -p /out/bin /out/src /out/ggml/src && \
+# Stage runtime artifacts into a fixed layout. Shared libs are collected with
+# `find` rather than a fixed glob path — different whisper.cpp versions have
+# put them in different places (build/src + build/ggml/src at one point,
+# build/bin/ as of the version this was last tested against), and a Dockerfile
+# that assumes one fixed layout silently ships a binary that can't find its
+# own libraries at runtime (confirmed: `whisper-cli` failed with
+# "libwhisper.so.1: cannot open shared object file" until this was fixed to
+# search build/ instead of guessing a path). The `|| true` has to live in a
+# RUN/shell step, not a COPY — COPY has no shell and can't do `2>/dev/null
+# || true`.
+RUN mkdir -p /out/bin /out/lib && \
     cp build/bin/whisper-cli /out/bin/ && \
-    cp build/src/*.so* /out/src/ 2>/dev/null || true && \
-    cp build/ggml/src/*.so* /out/ggml/src/ 2>/dev/null || true
+    find build -name '*.so*' -exec cp -n {} /out/lib/ \; 2>/dev/null || true
 
 FROM node:20-bookworm-slim AS deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -71,17 +72,21 @@ RUN npm install --omit=dev
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 
-# rclone is a straightforward Debian package on both amd64 and arm64 —
-# no separate cross-compile step needed like whisper.cpp required.
-RUN apt-get update && apt-get install -y --no-install-recommends rclone \
+# rclone and ffmpeg are straightforward Debian packages on both amd64 and
+# arm64 — no separate cross-compile step needed like whisper.cpp required.
+# ffmpeg does the 48kHz stereo -> 16kHz mono resample for captured audio
+# (see voice/capture.js) — its resampler is properly anti-aliased, unlike a
+# hand-rolled decimator, which matters for whisper's transcription accuracy.
+RUN apt-get update && apt-get install -y --no-install-recommends rclone ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # whisper.cpp binary + the shared libs it needs at runtime. These are plain
 # unconditional COPYs of the staged /out layout from the build stage — safe
-# even if the .so directories ended up empty (static build).
+# even if /out/lib ended up empty (a fully static build). LD_LIBRARY_PATH is
+# set explicitly below rather than relying on the binary's RPATH, since that
+# depends on exactly how whisper.cpp's CMake config built it.
 COPY --from=whisper-build /out/bin/whisper-cli /app/whisper.cpp/build/bin/whisper-cli
-COPY --from=whisper-build /out/src/ /app/whisper.cpp/build/src/
-COPY --from=whisper-build /out/ggml/src/ /app/whisper.cpp/build/ggml/src/
+COPY --from=whisper-build /out/lib/ /app/whisper.cpp/build/lib/
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
@@ -93,5 +98,6 @@ RUN mkdir -p /data /models && chmod +x /app/scripts/download-model.sh
 ENV DATA_DIR=/data
 ENV WHISPER_BIN=/app/whisper.cpp/build/bin/whisper-cli
 ENV WHISPER_MODEL_PATH=/models/ggml-base.en.bin
+ENV LD_LIBRARY_PATH=/app/whisper.cpp/build/lib
 
 CMD ["sh", "-c", "/app/scripts/download-model.sh && node src/index.js"]

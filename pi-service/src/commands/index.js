@@ -6,6 +6,27 @@ import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { isOllamaReachable } from '../pipeline/summarize-client.js';
 import { finishSession } from '../pipeline/finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
+import {
+  pick,
+  JOIN_NO_CHANNEL,
+  JOIN_ALREADY_RECORDING,
+  JOIN_STARTED,
+  LEAVE_NOT_RECORDING,
+  LEAVE_START,
+  LEAVE_NOTHING_USABLE,
+  LEAVE_SUMMARIZING_NOW,
+  LEAVE_SUMMARY_QUEUED,
+  HISTORY_EMPTY,
+  SUMMARIZE_UNREACHABLE,
+  SUMMARIZE_QUEUED,
+  EXPORT_INTRO,
+  SETCHARACTER_CONFIRM,
+  STATUS_IDLE,
+  STATUS_QUEUED_HEADER,
+  RECAP_NONE,
+  RECAP_HEADER,
+  GENERIC_ERROR,
+} from '../flavor.js';
 
 // active sessions keyed by guildId, since one bot instance can only sensibly
 // record one channel per guild at a time
@@ -53,7 +74,7 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'recap') return handleRecap(interaction, db);
     } catch (err) {
       console.error(`[command:${interaction.commandName}] error:`, err);
-      const reply = { content: `Something went wrong: ${err.message}`, ephemeral: true };
+      const reply = { content: pick(GENERIC_ERROR, { message: err.message }), ephemeral: true };
       if (interaction.deferred || interaction.replied) await interaction.followUp(reply);
       else await interaction.reply(reply);
     }
@@ -64,13 +85,13 @@ async function handleJoin(interaction, db, cfg) {
   const member = interaction.member;
   const voiceChannel = member?.voice?.channel;
   if (!voiceChannel) {
-    return interaction.reply({ content: 'Join a voice channel first.', ephemeral: true });
+    return interaction.reply({ content: pick(JOIN_NO_CHANNEL), ephemeral: true });
   }
   if (activeSessions.has(interaction.guildId)) {
-    return interaction.reply({ content: 'Already recording in this server.', ephemeral: true });
+    return interaction.reply({ content: pick(JOIN_ALREADY_RECORDING), ephemeral: true });
   }
 
-  await interaction.reply(`🎙️ Recording started in **${voiceChannel.name}**.`);
+  await interaction.reply(pick(JOIN_STARTED, { channel: voiceChannel.name }));
 
   const startedAt = new Date().toISOString();
   const audioDir = join(cfg.dataDir, 'audio', `${interaction.guildId}-${Date.now()}`);
@@ -109,33 +130,43 @@ async function handleJoin(interaction, db, cfg) {
 async function handleLeave(interaction, db, cfg) {
   const session = activeSessions.get(interaction.guildId);
   if (!session) {
-    return interaction.reply({ content: 'Not currently recording.', ephemeral: true });
+    return interaction.reply({ content: pick(LEAVE_NOT_RECORDING), ephemeral: true });
   }
   activeSessions.delete(interaction.guildId);
 
-  await interaction.reply('⏳ Stopping and transcribing — this can take a while for a long session...');
+  await interaction.reply(pick(LEAVE_START));
   session.handle.disconnect();
   db.endMeeting(session.meetingId, new Date().toISOString());
 
   const result = await finishSession(db, session.meetingId, session.capturedUtterances, session.audioDir, cfg);
 
   if (!result.ok) {
-    return interaction.followUp(`Transcription produced nothing usable (${result.failures.length} failure(s)).`);
+    return interaction.followUp(pick(LEAVE_NOTHING_USABLE, { failCount: result.failures.length }));
   }
 
+  // Post the raw transcript right away rather than waiting on the AI
+  // summary — that step can be delayed indefinitely if the PC is off, but
+  // the transcript itself is already fully available at this point.
+  const utterances = db.listUtterances(session.meetingId);
+  const transcriptText = buildTranscriptText(utterances);
+  const attachment = new AttachmentBuilder(Buffer.from(transcriptText, 'utf8'), {
+    name: `meeting-${session.meetingId}-transcript.txt`,
+  });
+
   const reachable = await isOllamaReachable(cfg);
-  await interaction.followUp(
-    reachable
-      ? `✅ Transcribed ${result.utteranceCount} lines. Summarizing now on your PC...`
-      : `✅ Transcribed ${result.utteranceCount} lines. Your PC's Ollama isn't reachable right now — the summary is queued and will run automatically once it's back, or run \`/summarize meeting_id:${session.meetingId}\` after you turn it on.`
-  );
+  await interaction.followUp({
+    content: reachable
+      ? pick(LEAVE_SUMMARIZING_NOW, { count: result.utteranceCount })
+      : pick(LEAVE_SUMMARY_QUEUED, { count: result.utteranceCount, meetingId: session.meetingId }),
+    files: [attachment],
+  });
 }
 
 async function handleHistory(interaction, db) {
   const count = interaction.options.getInteger('count') || 10;
   const meetings = db.listRecentMeetings(interaction.guildId, count);
   if (meetings.length === 0) {
-    return interaction.reply({ content: 'No sessions recorded yet.', ephemeral: true });
+    return interaction.reply({ content: pick(HISTORY_EMPTY), ephemeral: true });
   }
   const lines = meetings.map(
     (m) => `**#${m.id}** — ${m.channel_name} — ${(m.started_at || '').slice(0, 10)} — _${m.status}_`
@@ -151,13 +182,13 @@ async function handleSummarizeNow(interaction, db, cfg) {
   const reachable = await isOllamaReachable(cfg);
   if (!reachable) {
     return interaction.reply({
-      content: `Your PC's Ollama still isn't reachable at ${cfg.ollamaUrl}. It'll retry automatically in the background too.`,
+      content: pick(SUMMARIZE_UNREACHABLE, { url: cfg.ollamaUrl }),
       ephemeral: true,
     });
   }
 
   db.enqueueSummarizeJob(meetingId);
-  await interaction.reply(`Queued meeting #${meetingId} for immediate retry — check back shortly.`);
+  await interaction.reply(pick(SUMMARIZE_QUEUED, { meetingId }));
 }
 
 async function handleExport(interaction, db, cfg) {
@@ -170,8 +201,13 @@ async function handleExport(interaction, db, cfg) {
   const buf = Buffer.from(transcriptText, 'utf8');
   const attachment = new AttachmentBuilder(buf, { name: `meeting-${meetingId}-transcript.txt` });
 
+  const intro = pick(EXPORT_INTRO, {
+    meetingId,
+    channel: meeting.channel_name,
+    date: (meeting.started_at || '').slice(0, 10),
+  });
   await interaction.reply({
-    content: `Transcript for meeting #${meetingId} (${meeting.channel_name}, ${(meeting.started_at || '').slice(0, 10)}). Raw audio lives on the Pi at \`${meeting.audio_dir}\` if you need the source files (or \`null\` if it's already been cleaned up by the retention policy).`,
+    content: `${intro} Raw audio lives on the Pi at \`${meeting.audio_dir}\` if you need the source files (or \`null\` if it's already been cleaned up by the retention policy).`,
     files: [attachment],
     ephemeral: true,
   });
@@ -181,7 +217,7 @@ async function handleSetCharacter(interaction, db) {
   const name = interaction.options.getString('name').trim();
   db.setCharacterName(interaction.guildId, interaction.user.id, name);
   await interaction.reply({
-    content: `Got it — you'll show up as **${name}** in transcripts and notes from now on.`,
+    content: pick(SETCHARACTER_CONFIRM, { name }),
     ephemeral: true,
   });
 }
@@ -189,10 +225,11 @@ async function handleSetCharacter(interaction, db) {
 async function handleStatus(interaction, db, cfg) {
   const jobs = db.listPendingJobs();
   const reachable = await isOllamaReachable(cfg);
+  const reachableText = reachable ? '✅ reachable' : '❌ not reachable';
 
   if (jobs.length === 0) {
     return interaction.reply({
-      content: `No sessions currently queued for summarization. Your PC's Ollama is currently ${reachable ? '✅ reachable' : '❌ not reachable'}.`,
+      content: pick(STATUS_IDLE, { reachable: reachableText }),
       ephemeral: true,
     });
   }
@@ -203,7 +240,7 @@ async function handleStatus(interaction, db, cfg) {
   });
 
   await interaction.reply({
-    content: `Your PC's Ollama is currently ${reachable ? '✅ reachable' : '❌ not reachable'}.\n\n**Queued:**\n${lines.join('\n')}`,
+    content: `${pick(STATUS_QUEUED_HEADER, { reachable: reachableText })}\n${lines.join('\n')}`,
     ephemeral: true,
   });
 }
@@ -211,11 +248,10 @@ async function handleStatus(interaction, db, cfg) {
 async function handleRecap(interaction, db) {
   const meeting = db.getLastCompletedMeeting(interaction.guildId);
   if (!meeting) {
-    return interaction.reply({ content: 'No completed sessions yet.', ephemeral: true });
+    return interaction.reply({ content: pick(RECAP_NONE), ephemeral: true });
   }
   const notes = JSON.parse(meeting.summary_json || '{}');
   const date = (meeting.started_at || '').slice(0, 10);
-  await interaction.reply(
-    `📜 **Recap — ${meeting.channel_name} (${date})**\n\n${notes.tldr || '_no recap available_'}`
-  );
+  const header = pick(RECAP_HEADER, { channel: meeting.channel_name, date });
+  await interaction.reply(`${header}\n\n${notes.tldr || '_no recap available_'}`);
 }

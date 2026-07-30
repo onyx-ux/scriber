@@ -1,50 +1,57 @@
 import { joinVoiceChannel, EndBehaviorType, VoiceConnectionStatus, entersState } from '@discordjs/voice';
 import prism from 'prism-media';
-import { createWriteStream } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { stat, unlink } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const DISCORD_SAMPLE_RATE = 48000;
 const DISCORD_CHANNELS = 2;
 const TARGET_SAMPLE_RATE = 16000; // what whisper.cpp expects
-const DECIMATION = DISCORD_SAMPLE_RATE / TARGET_SAMPLE_RATE; // 3
 
-function writeWavHeader(stream, dataLength) {
-  const header = Buffer.alloc(44);
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + dataLength, 4);
-  header.write('WAVE', 8);
-  header.write('fmt ', 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20); // PCM
-  header.writeUInt16LE(1, 22); // mono
-  header.writeUInt32LE(TARGET_SAMPLE_RATE, 24);
-  header.writeUInt32LE(TARGET_SAMPLE_RATE * 2, 28); // byte rate (16-bit mono)
-  header.writeUInt16LE(2, 32); // block align
-  header.writeUInt16LE(16, 34); // bits per sample
-  header.write('data', 36);
-  header.writeUInt32LE(dataLength, 40);
-  stream.write(header);
-}
+// A WAV header is 44 bytes — anything at or below that is silence with no
+// actual audio, which happens when Discord opens a speaking segment for a
+// user but no real sound (a mic click, a brief noise gate blip) came through.
+const EMPTY_WAV_SIZE = 44;
 
-// Naive stereo-48kHz -> mono-16kHz downsample: averages the two channels,
-// then takes every 3rd sample. This is NOT a proper anti-aliased resampler —
-// it's good enough for speech-to-text (which doesn't need audiophile
-// quality) but will alias slightly on sibilant sounds. If transcription
-// accuracy on real sessions seems off, swapping in a real resampler
-// (e.g. a small WASM library) here is the first thing to try.
-function downsampleFrame(stereoBuf) {
-  const inSamples = stereoBuf.length / 4; // 2 channels * 2 bytes
-  const outSamples = Math.floor(inSamples / DECIMATION);
-  const out = Buffer.alloc(outSamples * 2);
-  for (let i = 0; i < outSamples; i++) {
-    const srcIdx = i * DECIMATION * 4;
-    const left = stereoBuf.readInt16LE(srcIdx);
-    const right = stereoBuf.readInt16LE(srcIdx + 2);
-    const mono = Math.round((left + right) / 2);
-    out.writeInt16LE(mono, i * 2);
-  }
-  return out;
+// Resample 48kHz stereo -> 16kHz mono via ffmpeg's swresample rather than a
+// hand-rolled decimator. A naive "take every 3rd sample" downsample (the
+// previous approach here) has no anti-aliasing filter and measurably hurts
+// whisper's transcription accuracy on sibilants/consonants; ffmpeg's resampler
+// is the same one used by essentially every other transcription pipeline.
+function resampleToWav(pcmStream, wavPath) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn('ffmpeg', [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-f', 's16le',
+      '-ar', String(DISCORD_SAMPLE_RATE),
+      '-ac', String(DISCORD_CHANNELS),
+      '-i', 'pipe:0',
+      '-ar', String(TARGET_SAMPLE_RATE),
+      '-ac', '1',
+      '-f', 'wav',
+      wavPath,
+    ]);
+
+    let stderr = '';
+    ffmpeg.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    ffmpeg.on('error', reject); // e.g. ffmpeg binary missing
+    ffmpeg.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited ${code}: ${stderr.trim()}`));
+    });
+
+    pcmStream.pipe(ffmpeg.stdin);
+    pcmStream.on('error', (err) => {
+      ffmpeg.stdin.end();
+      reject(err);
+    });
+  });
 }
 
 // Starts listening to a voice channel. Returns a handle with .disconnect().
@@ -57,7 +64,12 @@ export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtt
     guildId,
     adapterCreator: channel.guild.voiceAdapterCreator,
     selfDeaf: false,
+    selfMute: true, // the bot only ever listens — never let it appear as an open mic
   });
+
+  // VoiceConnection is its own EventEmitter — an unhandled 'error' here
+  // crashes the process the same way an unhandled Client error would.
+  connection.on('error', (err) => console.error('[voice] connection error:', err.message));
 
   const receiver = connection.receiver;
   const sessionStart = Date.now();
@@ -78,38 +90,20 @@ export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtt
     await mkdir(safeDir, { recursive: true });
     const wavPath = join(safeDir, `${startMs}.wav`);
 
-    const fileStream = createWriteStream(wavPath);
-    let dataLength = 0;
-    let headerWritten = false;
-
     const pcmStream = opusStream.pipe(decoder);
 
-    pcmStream.on('data', (chunk) => {
-      if (!headerWritten) {
-        // placeholder header, patched with real length in 'end' below
-        writeWavHeader(fileStream, 0);
-        headerWritten = true;
+    try {
+      await resampleToWav(pcmStream, wavPath);
+      const { size } = await stat(wavPath);
+      const endMs = Date.now() - sessionStart;
+      if (size > EMPTY_WAV_SIZE) {
+        onUtterance(userId, displayName, wavPath, startMs, endMs);
+      } else {
+        await unlink(wavPath).catch(() => {});
       }
-      const mono16k = downsampleFrame(chunk);
-      dataLength += mono16k.length;
-      fileStream.write(mono16k);
-    });
-
-    pcmStream.on('end', () => {
-      fileStream.end(() => {
-        // patch the header with the real data length now that we know it
-        patchWavLength(wavPath, dataLength);
-        const endMs = Date.now() - sessionStart;
-        if (dataLength > 0) {
-          onUtterance(userId, displayName, wavPath, startMs, endMs);
-        }
-      });
-    });
-
-    pcmStream.on('error', (err) => {
+    } catch (err) {
       console.error(`[capture] stream error for user ${userId}:`, err.message);
-      fileStream.end();
-    });
+    }
   });
 
   return {
@@ -121,19 +115,4 @@ export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtt
       connection.destroy();
     },
   };
-}
-
-function patchWavLength(wavPath, dataLength) {
-  // Reopen and patch bytes 4 (RIFF size) and 40 (data size) rather than
-  // buffering the whole file in memory — sessions can run for hours.
-  import('node:fs').then(({ openSync, writeSync, closeSync }) => {
-    const fd = openSync(wavPath, 'r+');
-    const riffSize = Buffer.alloc(4);
-    riffSize.writeUInt32LE(36 + dataLength, 0);
-    writeSync(fd, riffSize, 0, 4, 4);
-    const dataSize = Buffer.alloc(4);
-    dataSize.writeUInt32LE(dataLength, 0);
-    writeSync(fd, dataSize, 0, 4, 40);
-    closeSync(fd);
-  });
 }

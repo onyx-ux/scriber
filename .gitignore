@@ -4,6 +4,7 @@ node_modules/
 # Secrets / local config — never commit these
 .env
 pi-service/rclone.conf
+pc-sync/config/rclone.conf
 
 # Runtime data written by the bot (SQLite db, audio, whisper models, Obsidian export)
 pi-service/data/
