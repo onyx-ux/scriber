@@ -36,7 +36,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 COPY --from=whisper-source /build/whisper.cpp ./whisper.cpp
 WORKDIR /build/whisper.cpp
-RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --config Release
+# GGML_NATIVE=OFF is required here: ggml's default -march=native detection
+# probes CPU features that are meaningless (or outright wrong) under QEMU
+# emulation, and generates a self-contradictory -march string (adding and
+# then un-adding the same extensions), which the assembler rejects with
+# "must specify extensions to add before specifying those to remove". This
+# is a known ggml/llama.cpp issue under emulated arm64 builds (ggml-org/
+# llama.cpp#10933) -- pinning a plain generic armv8-a target sidesteps the
+# broken autodetection instead of trying to fix the probe itself.
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8-a \
+    && cmake --build build -j --config Release
 
 # Stage runtime artifacts into a fixed layout. The `|| true` fallback for
 # the .so globs has to live here (in a RUN/shell step) rather than on a
