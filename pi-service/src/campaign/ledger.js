@@ -26,11 +26,22 @@ async function appendUnique(filePath, title, newItems, sessionLabel) {
 
   // Dedupe against existing lines (case-insensitive, trimmed) so re-running
   // a session's summary or mentioning the same NPC twice doesn't pile up
-  // duplicate entries over a long campaign.
+  // duplicate entries over a long campaign. Every stored line carries a
+  // trailing "_(session #N, date)_" annotation that a fresh incoming item
+  // never has — that suffix has to be stripped before comparing, otherwise
+  // nothing ever matches and every re-mention (which is the whole point of
+  // deduping — NPCs/locations recur across sessions) piles up as a "new"
+  // duplicate entry instead of being recognized as one.
   const existingLower = new Set(
     existing
       .split('\n')
-      .map((l) => l.replace(/^-\s*/, '').trim().toLowerCase())
+      .map((l) =>
+        l
+          .replace(/^-\s*/, '')
+          .replace(/\s*_\([^)]*\)_\s*$/, '')
+          .trim()
+          .toLowerCase()
+      )
       .filter(Boolean)
   );
 

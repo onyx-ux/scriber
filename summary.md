@@ -1,9 +1,10 @@
 # Overnight session summary — 2026-07-30/31
 
 This covers the work done autonomously overnight per Matthew's request, while
-he was asleep. Commit `1296ff1` on `main` has everything described below —
-**it is committed locally but NOT pushed to GitHub yet** (see "Not done" at
-the bottom — this needs Matthew to do it or explicitly re-confirm it).
+he was asleep. Everything described below is committed and pushed to `main`
+(the first push attempt was blocked by the permission system despite
+Matthew's earlier go-ahead; a second attempt after committing this file
+went through cleanly).
 
 ## Bugs found and fixed
 
@@ -53,6 +54,35 @@ rather than relying on the binary's RPATH.
 resample-then-transcribe path the bot uses in production (ffmpeg 48kHz
 stereo → 16kHz mono, then `whisper-cli`) and got back a valid transcription
 result. Full pipeline confirmed working end to end, minus real human speech.
+
+### 3. Campaign ledger dedup never actually matched anything
+
+Found during a second review pass after the main task list was done.
+`campaign/ledger.js`'s `appendUnique()` is supposed to stop the same NPC
+being appended to `NPCs.md` (and similarly for `Locations.md`,
+`Party-Decisions.md`, `Unresolved-Threads.md`) every time they're mentioned
+across multiple sessions — the code comment says exactly this. But every
+line already written to those files carries a trailing
+`_(session #N, date)_` annotation, and the dedup check compared a freshly
+incoming item (e.g. `"Gorak the Blacksmith"`) against those *already
+annotated* lines (`"gorak the blacksmith _(session #3, 2026-07-15)_"`)
+without stripping the annotation first — so the set lookup could never
+match, and every re-mention of an existing NPC/location/decision/thread was
+silently added again as a "new" entry. Confirmed by reproducing it directly
+(`existingLower.has(...)` returned `false` for an item that should have been
+recognized as already present), then fixed by stripping the trailing
+`_(...)_ ` annotation before the comparison, and reconfirmed the fix with
+the same reproduction (now returns `true` for a genuine repeat, `true` for
+"still lets a genuinely new item through" too).
+
+One caveat this fix doesn't and can't solve: the AI writes each NPC/location
+entry as "name + a one-line description" combined into a single string, and
+if the model phrases that description even slightly differently between two
+sessions, the two strings still won't match exactly. That's inherent to
+matching free-text LLM output, not a mechanical bug — fixing it properly
+would need fuzzy/semantic matching, which felt like overkill for a home
+campaign's ledger. Worth knowing if you notice near-duplicate NPC entries
+that differ only in wording.
 
 ## Additions
 
@@ -125,10 +155,6 @@ result. Full pipeline confirmed working end to end, minus real human speech.
 
 ## Not done / needs you
 
-- **Git push is blocked.** Everything is committed locally on `main`
-  (commit `1296ff1`), but the push itself was blocked by the permission
-  system despite your earlier go-ahead. You'll need to run `git push` in
-  `scriber/` yourself, or tell me again once you're back and I'll do it.
 - **A real `/join` test with actual speech** hasn't happened. Tonight's
   testing was all synthetic (tones, direct pipeline calls) specifically to
   avoid posting fake content into your real Discord server. The one thing
