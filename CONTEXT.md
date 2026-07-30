@@ -121,12 +121,13 @@ each one only visible after fixing the previous one:
    line, pinning a safe generic arm64 target instead of relying on
    broken autodetection.
 
-**Current status: the fix for bug #9 was just pushed
-(commit `15bb2fe`) and the GitHub Actions build was running when this
-session ended — not yet confirmed green.** First thing to check: the
-Actions tab for the `onyx-ux/scriber` repo. If it's still failing, it'll
-be a new/different error than the three above (those were each
-confirmed root-caused, not guesses).
+**Update (2026-07-30, from Claude Code on Matthew's PC): confirmed
+green.** Run #4 (commit `15bb2fe`) completed with `conclusion: success`
+— checked directly via the GitHub Actions API
+(`api.github.com/repos/onyx-ux/scriber/actions/runs`). The multi-arch
+(`linux/amd64` + `linux/arm64`) image is published to GHCR. All three
+sequential build bugs are resolved; no new failures surfaced after the
+ggml fix.
 
 ## Networking — confirmed working
 
@@ -162,8 +163,8 @@ between the Pi and PC for Ollama:
 Carried over from the original handoff's "immediate next steps," updated
 for what's actually confirmed vs. still open:
 
-- [ ] Confirm the current GitHub Actions build (commit `15bb2fe`) is
-      green.
+- [x] Confirm the current GitHub Actions build (commit `15bb2fe`) is
+      green. — Confirmed 2026-07-30, run #4, `conclusion: success`.
 - [ ] `.env` on the Pi is **not yet created** (not present in this
       workspace copy as of end of session) — needs `DISCORD_TOKEN`,
       `DISCORD_CLIENT_ID` from the Discord Developer Portal (this step
