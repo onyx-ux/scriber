@@ -1,0 +1,23 @@
+services:
+  # This is the LOCAL-BUILD variant, for dev/testing before pushing to
+  # GitHub — compiles whisper.cpp on this machine, which is what you want
+  # when iterating on code changes. For normal day-to-day running on the Pi
+  # and PC, use docker-compose.yml instead (pulls the pre-built image from
+  # GHCR, no local compile needed).
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Bind mounts (not named volumes) on purpose — you want these visible
+      # as real folders on the Pi's filesystem so you can point Syncthing /
+      # Obsidian Sync / whatever you use at the obsidian folder directly,
+      # and so audio survives container rebuilds for the export command.
+      - ./data:/data
+      - ./models:/models
+      - ./obsidian-export:/data/obsidian
+      # Read-only: the container only needs to use this token, never modify it.
+      - ./rclone.conf:/root/.config/rclone/rclone.conf:ro
+    # No ports need to be exposed — this service only makes outbound
+    # connections (to Discord's gateway, to Ollama on the PC, and to
+    # Google Drive if DRIVE_SYNC_ENABLED=true).

@@ -1,0 +1,22 @@
+services:
+  # This is what runs day-to-day on both the Pi and your PC — pulls the
+  # image GitHub Actions already built for the right architecture, no local
+  # compiling of whisper.cpp needed on either machine. For iterating on code
+  # changes before pushing, use docker-compose.build.yml instead.
+  bot:
+    image: ghcr.io/onyx-ux/scriber:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Bind mounts (not named volumes) on purpose — you want these visible
+      # as real folders on the Pi's filesystem so you can point Syncthing /
+      # Obsidian Sync / whatever you use at the obsidian folder directly,
+      # and so audio survives container rebuilds for the export command.
+      - ./data:/data
+      - ./models:/models
+      - ./obsidian-export:/data/obsidian
+      # Read-only: the container only needs to use this token, never modify it.
+      - ./rclone.conf:/root/.config/rclone/rclone.conf:ro
+    # No ports need to be exposed — this service only makes outbound
+    # connections (to Discord's gateway, to Ollama on the PC, and to
+    # Google Drive if DRIVE_SYNC_ENABLED=true).

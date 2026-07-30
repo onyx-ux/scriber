@@ -1,0 +1,18 @@
+{
+  "name": "dnd-scribe-pi",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "@discordjs/voice": "^0.17.0",
+    "prism-media": "^1.3.5",
+    "opusscript": "^0.0.8",
+    "libsodium-wrappers": "^0.7.15",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5"
+  }
+}
