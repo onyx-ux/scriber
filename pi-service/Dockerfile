@@ -9,12 +9,32 @@
 # --platform linux/arm64` and pushing to a registry the Pi pulls from is the
 # usual workaround.
 
-FROM node:20-bookworm-slim AS whisper-build
+
+# git clone runs on the BUILD platform (native, no QEMU) rather than the
+# TARGET platform. Cloning is pure network I/O and gains nothing from
+# emulation — but running it *under* QEMU for the arm64 leg of a multi-arch
+# build is a known buildx footgun: git crashes with exit code 128 fairly
+# often because QEMU's syscall emulation is flaky for git's process/spawn
+# calls (see docker/buildx#528). Splitting the clone into its own
+# always-native stage sidesteps that entirely.
+FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS whisper-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake build-essential \
+    git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git
+
+# The actual compile still needs to target the real platform (arm64 for the
+# Pi), so this stage is left unpinned — buildx runs it under QEMU when
+# cross-building for arm64 on an amd64 runner. That's slower than the clone
+# but doesn't hit the same crash; it's just the compile time README already
+# warned about (10-20 min for the arm64 leg).
+FROM node:20-bookworm-slim AS whisper-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake build-essential \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY --from=whisper-source /build/whisper.cpp ./whisper.cpp
 WORKDIR /build/whisper.cpp
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j --config Release
 
