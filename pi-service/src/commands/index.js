@@ -40,8 +40,8 @@ export const commandDefs = [
     .setDescription('List recent sessions')
     .addIntegerOption((o) => o.setName('count').setDescription('How many to show').setRequired(false)),
   new SlashCommandBuilder()
-    .setName('summarize')
-    .setDescription('Retry summarization now for a meeting (useful right after turning your PC on)')
+    .setName('summarise')
+    .setDescription('Retry summarisation now for a meeting (useful right after turning your PC on)')
     .addIntegerOption((o) => o.setName('meeting_id').setDescription('Meeting ID').setRequired(true)),
   new SlashCommandBuilder()
     .setName('export')
@@ -67,7 +67,7 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'join') return handleJoin(interaction, db, cfg);
       if (interaction.commandName === 'leave') return handleLeave(interaction, db, cfg);
       if (interaction.commandName === 'history') return handleHistory(interaction, db);
-      if (interaction.commandName === 'summarize') return handleSummarizeNow(interaction, db, cfg);
+      if (interaction.commandName === 'summarise') return handleSummarizeNow(interaction, db, cfg);
       if (interaction.commandName === 'export') return handleExport(interaction, db, cfg);
       if (interaction.commandName === 'setcharacter') return handleSetCharacter(interaction, db);
       if (interaction.commandName === 'status') return handleStatus(interaction, db, cfg);

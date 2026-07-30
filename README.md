@@ -68,7 +68,7 @@ pi-service/          # everything that runs on the Raspberry Pi
     export/markdown.js      # Obsidian-formatted .md export
     delivery/discord-post.js  # posts to channel (no thread) + attaches files
     prompts/dnd-summary-prompt.js
-    commands/                 # /join /leave /history /summarize /export
+    commands/                 # /join /leave /history /summarise /export
   Dockerfile
   docker-compose.yml
   .env.example
@@ -195,7 +195,7 @@ whole stack on one machine for debugging.)*
 - `/join` — start recording the voice channel you're in
 - `/leave` — stop recording, transcribe, queue the AI summary
 - `/history [count]` — list recent sessions
-- `/summarize meeting_id:<id>` — force an immediate summarize retry (useful right after turning your PC on)
+- `/summarise meeting_id:<id>` — force an immediate summarise retry (useful right after turning your PC on)
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
 - `/status` — see what's currently queued/retrying, and whether your PC's Ollama is reachable right now
@@ -237,7 +237,7 @@ lost: audio is written directly to disk as it's captured (never only held
 in memory), so on the next startup the bot scans for any meeting left in an
 unfinished state, reconstructs the utterance list straight from the `.wav`
 files already on disk, and runs it through the normal transcribe → queue →
-summarize pipeline automatically — no manual intervention needed.
+summarise pipeline automatically — no manual intervention needed.
 
 ## Ideas not built yet (worth considering later)
 

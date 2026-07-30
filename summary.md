@@ -6,6 +6,32 @@ he was asleep. Everything described below is committed and pushed to `main`
 Matthew's earlier go-ahead; a second attempt after committing this file
 went through cleanly).
 
+## Addendum (2026-07-31 morning): Australian English pass
+
+Matthew asked, on waking up, that all commands use Australian English. Went
+through every user-facing string (the ~380 flavor.js variants, the
+SlashCommandBuilder descriptions in commands/index.js, and the command
+reference table in README.md) for American spellings:
+
+- Renamed the actual slash command from `/summarize` to `/summarise` —
+  the only command *name* affected. Its description, and every flavor-text
+  line referencing it (e.g. "run `/summarize meeting_id:...`"), updated to
+  match. **This is a breaking rename** — if you or your players had
+  `/summarize` muscle memory, it's `/summarise` now. Discord's global
+  command cache can take up to an hour to fully refresh everywhere after a
+  rename like this.
+- Fixed `-ize`/`-ized`/`-izing`/`-ization` → `-ise`/`-ised`/`-ising`/
+  `-isation` throughout flavor.js (summarising, summarised, summarisation,
+  immortalise) and "neighborhood" → "neighbourhood".
+- Deliberately left internal code alone: function/variable/file names like
+  `summarizeViaOllama`, `SUMMARIZE_RETRY_BASE_MS`, `summarize-client.js`,
+  and code comments (e.g. "behavior" in capture.js, drive-sync.js) — those
+  aren't commands or user-facing text, and renaming them touches many files
+  for zero visible benefit. Said the word if you want that done too, but
+  wanted to flag the scoping choice rather than silently leave it half-done.
+- Rebuilt and redeployed to the Pi; confirmed a clean restart and
+  successful slash command re-registration.
+
 ## Bugs found and fixed
 
 These weren't introduced tonight — they were latent in the original scaffold
