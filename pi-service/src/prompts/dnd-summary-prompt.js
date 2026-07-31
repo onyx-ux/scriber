@@ -77,3 +77,134 @@ Attendees: ${attendees || 'unknown'}
 Transcript:
 ${transcript}`;
 }
+
+// ---------------------------------------------------------------------------
+// Chunked (map-reduce) summarisation, for sessions too long to fit in the
+// model's context window in one pass. A real 3-4 hour session is far larger
+// than any practical num_ctx, and an over-long prompt is silently TRUNCATED
+// by Ollama rather than rejected — so without this the summary would only
+// ever reflect the tail end of the session. The MAP prompt extracts raw
+// facts from one slice; the REDUCE prompt merges slice results into the
+// single final summary. Both deliberately reuse the same output schema as
+// the single-pass prompt above.
+// ---------------------------------------------------------------------------
+
+export const DND_CHUNK_PROMPT = `You are extracting raw notes from ONE SLICE of a longer speaker-labeled
+voice transcript. This slice is not the whole session — it may start or end
+mid-conversation.
+
+Your job is FAITHFUL, COMPREHENSIVE EXTRACTION, not storytelling. Do not
+write an overall recap, do not speculate about what happened before or after
+this slice, and do not try to give the slice a satisfying arc.
+
+Be thorough about what IS here. Most of a real session is ordinary talk —
+walking down corridors, debating tactics, rolling checks — and a slice will
+often contain only one or two concrete details worth keeping. Those details
+are exactly what you must not miss. In particular:
+- Record EVERY proper noun that appears: named items, people, creatures,
+  places, gods, factions. If a specific named thing is mentioned even once
+  (for example an item like "the Silver Lantern of Marrowgate"), it belongs
+  in your output, even if the surrounding conversation is mundane.
+- A slice of mostly-routine dialogue is still worth a factual "narrative"
+  line describing what the party is doing.
+
+Balance that against the absolute rule: everything you record must be
+something the speakers literally said in this slice. Never invent a name,
+place, creature, item, or event to fill space, and never embellish a
+mundane moment into a dramatic one. Extract what is there; add nothing.
+
+Return empty arrays only when the slice genuinely contains nothing of that
+kind — not as a default or a shortcut. The "Session" label is the Discord
+channel name — it is metadata, not content, so never treat it as a location
+or plot element. If speakers are testing the bot, chatting off-topic, or
+quoting/joking about a previous AI-generated summary, that is
+meta-commentary about the tool, not in-game events — record nothing for it.
+
+Return ONLY a JSON object (no prose, no markdown fences) with this shape:
+
+{
+  "narrative": "2-4 plain sentences describing what actually occurs in this slice, naming any specific people, places, or items mentioned; only empty if the slice contains no gameplay at all",
+  "scenes": [
+    { "title": "string - a scene, location, encounter, or NPC interaction occurring in this slice",
+      "points": ["string - key events, combat outcomes, dialogue, discoveries"] }
+  ],
+  "partyDecisions": ["string - choices made in this slice that will matter later"],
+  "unresolvedThreads": ["string - mysteries or open questions raised in this slice"],
+  "followUps": [
+    { "assignee": "player's display name exactly as it appears in the transcript, or null",
+      "task": "string - something to follow up on before next session" }
+  ],
+  "npcsIntroduced": ["string - new named NPCs and a one-line description"],
+  "locationsVisited": ["string - new named locations and a one-line description"],
+  "lootAndRewards": ["string - items, gold, XP, or rewards gained in this slice"],
+  "funnyMoments": ["string - a punchy one-to-two sentence retelling of a genuinely funny, chaotic, or absurd beat, self-contained enough to still land months later with no memory of the session"]
+}
+
+Never omit a key — use an empty array (or empty string for "narrative") when
+there is nothing to report.`;
+
+export const DND_REDUCE_PROMPT = `You are assembling the final session summary for a tabletop D&D session
+from ordered notes that were extracted slice-by-slice from one long
+transcript. The slices are in chronological order and together cover the
+whole session.
+
+Work ONLY from the supplied slice notes. Do not invent any name, place,
+creature, item, or event that does not appear in them. Merge entries that
+clearly refer to the same NPC, location, or thread (including near-duplicate
+spellings, which are common because the transcript comes from
+speech-to-text) into one entry, keeping the clearest wording. Preserve
+chronological order in "scenes", and combine slices that are obviously part
+of one continuous scene rather than repeating it.
+
+If the slice notes are essentially empty — i.e. this was casual chat, bot
+testing, or a different game rather than D&D gameplay — set "tldr" to a
+plain honest sentence saying so (e.g. "This session was casual chat / bot
+testing, not gameplay — no recap to give.") and leave every other field as
+an empty array. That is a normal, expected result; never manufacture a
+fantasy narrative to fill the space.
+
+Return ONLY a JSON object (no prose, no markdown fences) with this exact
+shape:
+
+{
+  "tldr": "3-6 sentence recap of the whole session, written like a story beat, not a corporate summary",
+  "scenes": [
+    { "title": "string - a scene, location, encounter, or NPC interaction",
+      "points": ["string - key events, combat outcomes, dialogue, discoveries"] }
+  ],
+  "partyDecisions": ["string - choices the party made that will matter later"],
+  "unresolvedThreads": ["string - mysteries, plot hooks, or things still unresolved"],
+  "followUps": [
+    { "assignee": "player's display name or null for DM/party-wide",
+      "task": "string - something to follow up on before next session" }
+  ],
+  "npcsIntroduced": ["string - new named NPCs and a one-line description"],
+  "locationsVisited": ["string - new named locations and a one-line description"],
+  "lootAndRewards": ["string - items, gold, XP, or other rewards gained"],
+  "funnyMoments": ["string - the genuinely funny/chaotic beats worth remembering, kept selective; an empty array is completely normal"]
+}
+
+Cover the WHOLE session chronologically — the slice notes at the start
+matter as much as the ones at the end. Be thorough rather than terse; this
+summary stands in for reading the full transcript. Never omit a key.`;
+
+export function buildChunkUserMessage(chunk, meta, index, total) {
+  const attendees = (meta.attendees || []).join(', ');
+  return `Session: ${meta.channelName || 'unknown'}
+Date: ${meta.date || 'unknown'}
+Attendees: ${attendees || 'unknown'}
+Slice ${index} of ${total}.
+
+Transcript slice:
+${chunk}`;
+}
+
+export function buildReduceUserMessage(partials, meta) {
+  const attendees = (meta.attendees || []).join(', ');
+  return `Session: ${meta.channelName || 'unknown'}
+Date: ${meta.date || 'unknown'}
+Attendees: ${attendees || 'unknown'}
+
+Ordered slice notes (JSON array, chronological):
+${JSON.stringify(partials, null, 1)}`;
+}

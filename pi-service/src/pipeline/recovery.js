@@ -21,6 +21,23 @@ import { EMPTY_WAV_SIZE } from '../voice/capture.js';
 // if a member fetch fails, e.g. they left the server) we fall back to the
 // bare user ID, same as before.
 export async function recoverInterruptedMeetings(db, cfg, discordClient) {
+  // --- job-queue reconciliation, before any meeting recovery ---
+
+  // A job left mid-flight when the process died is still marked 'running',
+  // and nextDueJob only ever picks up 'pending' rows — so without this it
+  // would sit there untouched forever instead of being retried.
+  const reset = db.resetStuckRunningJobs();
+  if (reset > 0) console.log(`[recovery] reset ${reset} job(s) stuck in 'running' back to pending`);
+
+  // Meetings that transcribed fine but ended up with no live job (crash at
+  // exactly the wrong moment, or a job that hit its permanent-failure cap).
+  // Nothing else would ever look at these again.
+  const orphans = db.listMeetingsAwaitingSummaryWithoutJob();
+  for (const meeting of orphans) {
+    db.enqueueSummarizeJob(meeting.id);
+    console.log(`[recovery] meeting ${meeting.id} was awaiting summary with no job — re-queued`);
+  }
+
   const stuck = db.listInterruptedMeetings();
   if (stuck.length === 0) return;
 
@@ -39,6 +56,18 @@ export async function recoverInterruptedMeetings(db, cfg, discordClient) {
         console.warn(`[recovery] meeting ${meeting.id}: no audio files found, marking empty/failed`);
         db.setMeetingStatus(meeting.id, 'transcription_failed');
         continue;
+      }
+
+      // A crashed session never ran /leave, so ended_at was never recorded.
+      // Approximate it from when the last captured utterance began — far
+      // closer to the truth than "now", since recovery may not run until days
+      // later, and /history and the exported notes both display this.
+      if (!meeting.ended_at) {
+        const startedMs = new Date(meeting.started_at).getTime();
+        const lastOffsetMs = captured[captured.length - 1]?.startMs ?? 0;
+        if (!Number.isNaN(startedMs)) {
+          db.endMeeting(meeting.id, new Date(startedMs + lastOffsetMs).toISOString());
+        }
       }
 
       console.log(`[recovery] meeting ${meeting.id}: recovered ${captured.length} audio file(s), transcribing...`);

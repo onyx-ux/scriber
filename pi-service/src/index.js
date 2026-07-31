@@ -22,7 +22,9 @@ async function main() {
 
   registerCommandHandlers(client, db, config);
 
-  client.once('ready', async () => {
+  // 'ready' is deprecated in discord.js v14 and only fires as 'clientReady'
+  // from v15 — the gateway READY event kept the old name, hence the rename.
+  client.once('clientReady', async () => {
     console.log(`Logged in as ${client.user.tag}`);
 
     // Runs after login (not before, like it used to) specifically so it can

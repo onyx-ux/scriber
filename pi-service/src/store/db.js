@@ -91,23 +91,50 @@ function wrap(db) {
         .all(guildId, limit);
     },
 
-    insertUtterances(meetingId, utterances) {
-      const stmt = db.prepare(
-        `INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      );
-      const tx = db.transaction((rows) => {
-        for (const u of rows) {
-          stmt.run(meetingId, u.userId, u.displayName, u.startMs, u.endMs, u.text);
-        }
-      });
-      tx(utterances);
-    },
-
     listUtterances(meetingId) {
       return db
         .prepare(`SELECT * FROM utterances WHERE meeting_id = ? ORDER BY start_ms ASC`)
         .all(meetingId);
+    },
+
+    // Commits a finished transcription in ONE transaction: replace the
+    // meeting's utterances, mark it awaiting_summary, and enqueue the
+    // summarise job.
+    //
+    // These used to be three separate statements, which left two ways to
+    // corrupt or strand a session if the process died in between:
+    //   - die after inserting but before the status update -> the meeting is
+    //     still 'transcribing', so startup recovery re-transcribes it and
+    //     inserts a SECOND copy of every utterance (duplicated transcript).
+    //   - die after the status update but before enqueueing -> the meeting
+    //     sits in 'awaiting_summary' with no job, and recovery only scans
+    //     'recording'/'transcribing', so it never gets summarised at all.
+    // Deleting first also makes a recovery re-run idempotent rather than additive.
+    finalizeTranscription(meetingId, utterances) {
+      const del = db.prepare(`DELETE FROM utterances WHERE meeting_id = ?`);
+      const ins = db.prepare(
+        `INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      );
+      const setStatus = db.prepare(`UPDATE meetings SET status = 'awaiting_summary' WHERE id = ?`);
+      const existingJob = db.prepare(
+        `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize' AND status IN ('pending', 'running')`
+      );
+      const enqueue = db.prepare(
+        `INSERT INTO jobs (meeting_id, type, status, next_attempt_at) VALUES (?, 'summarize', 'pending', datetime('now'))`
+      );
+
+      const tx = db.transaction((rows) => {
+        del.run(meetingId);
+        for (const u of rows) {
+          ins.run(meetingId, u.userId, u.displayName, u.startMs, u.endMs, u.text);
+        }
+        setStatus.run(meetingId);
+        // Don't stack a duplicate job if one is already waiting for this meeting.
+        if (!existingJob.get(meetingId)) enqueue.run(meetingId);
+      });
+
+      tx(utterances);
     },
 
     setTranscriptPath(meetingId, path) {
@@ -124,6 +151,28 @@ function wrap(db) {
     // --- job queue ---
 
     enqueueSummarizeJob(meetingId) {
+      db.prepare(
+        `INSERT INTO jobs (meeting_id, type, status, next_attempt_at) VALUES (?, 'summarize', 'pending', datetime('now'))`
+      ).run(meetingId);
+    },
+
+    // "Do it now" for /summarise. Reuses the meeting's existing job (clearing
+    // its backoff) instead of adding a second one — otherwise running
+    // /summarise while a job was already waiting would queue a duplicate and
+    // the session would be summarised, and posted to Discord, twice.
+    requeueSummarizeNow(meetingId) {
+      const existing = db
+        .prepare(
+          `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize' AND status IN ('pending', 'running')`
+        )
+        .get(meetingId);
+
+      if (existing) {
+        db.prepare(`UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now') WHERE id = ?`).run(
+          existing.id
+        );
+        return;
+      }
       db.prepare(
         `INSERT INTO jobs (meeting_id, type, status, next_attempt_at) VALUES (?, 'summarize', 'pending', datetime('now'))`
       ).run(meetingId);
@@ -178,6 +227,34 @@ function wrap(db) {
         .all();
     },
 
+    // A job is flipped to 'running' while the worker processes it, but
+    // nextDueJob only ever selects 'pending' — so if the process dies
+    // mid-summarise (restart, power loss, OOM), that job stays 'running'
+    // forever and is never retried. Reset them at startup; the job itself is
+    // idempotent, so re-running one that had actually finished is harmless.
+    resetStuckRunningJobs() {
+      const info = db
+        .prepare(`UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now') WHERE status = 'running'`)
+        .run();
+      return info.changes;
+    },
+
+    // Meetings that finished transcription but have no live job — strandable
+    // by an ill-timed crash, or by a job that was failed permanently. Used at
+    // startup to put them back in the queue rather than losing them silently.
+    listMeetingsAwaitingSummaryWithoutJob() {
+      return db
+        .prepare(
+          `SELECT * FROM meetings m
+           WHERE m.status = 'awaiting_summary'
+             AND NOT EXISTS (
+               SELECT 1 FROM jobs j
+               WHERE j.meeting_id = m.id AND j.status IN ('pending', 'running')
+             )`
+        )
+        .all();
+    },
+
     // --- character name mapping ---
 
     setCharacterName(guildId, userId, characterName) {
@@ -204,6 +281,26 @@ function wrap(db) {
       return db
         .prepare(`SELECT * FROM meetings WHERE guild_id = ? AND status = 'done' ORDER BY started_at DESC LIMIT 1`)
         .get(guildId);
+    },
+
+    // --- full-text lookup across every transcript in the campaign (/search) ---
+
+    searchUtterances(guildId, term, limit = 25) {
+      // LIKE's own wildcards have to be neutralised or a search for "50%"
+      // or "under_dark" would silently match far more than the user meant.
+      const escaped = String(term).replace(/[\\%_]/g, (c) => `\\${c}`);
+      return db
+        .prepare(
+          `SELECT u.text, u.display_name, u.start_ms,
+                  m.id AS meeting_id, m.channel_name, m.started_at
+             FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.guild_id = ?
+              AND u.text LIKE ? ESCAPE '\\'
+            ORDER BY m.started_at DESC, u.start_ms ASC
+            LIMIT ?`
+        )
+        .all(guildId, `%${escaped}%`, limit);
     },
 
     // --- every completed meeting with a summary, for /funny to pull from ---

@@ -531,6 +531,54 @@ export const JOIN_FAILED = [
   "😬 Couldn't actually start recording — the voice connection failed: {error}. Nothing was recorded — try `/join` again.",
 ];
 
+// {query}
+export const SEARCH_NONE = [
+  '🔍 Nothing in the archive matches "{query}".',
+  '📜 The scribe flipped through every scroll and found no mention of "{query}".',
+  '🕯️ No record of "{query}" anywhere in the chronicle.',
+  '🗝️ The vault holds nothing matching "{query}".',
+  '🐦 The familiar searched the whole archive and came back with nothing for "{query}".',
+  '🔮 The crystal ball shows no memory of "{query}".',
+  '🧙 "{query}"? I have no recollection of that being said.',
+  '🧾 Not a single line in the ledger mentions "{query}".',
+  '📖 No chapter contains "{query}".',
+  '🌙 Nothing on record for "{query}".',
+  '⚗️ Nothing in the archive distills down to "{query}".',
+  '🕸️ No thread in the tapestry matches "{query}".',
+  '🧠 I have no memory of "{query}" being spoken.',
+  '🎙️ Nothing on any tape matches "{query}".',
+  '🐉 The dragon\'s hoard contains no "{query}".',
+  '🗿 No stone bears the words "{query}".',
+  '📯 Nothing to announce — no matches for "{query}".',
+  '🧝 The chronicler cannot recall "{query}" at all.',
+  '⛩️ The shrine holds no record of "{query}".',
+  '🪶 No ink was ever spilled on "{query}".',
+];
+
+// {query}, {count}
+export const SEARCH_HEADER = [
+  '🔍 Found {count} mention(s) of "{query}" in the archive:',
+  '📜 The scribe dug up {count} mention(s) of "{query}":',
+  '🗝️ Unsealed {count} record(s) mentioning "{query}":',
+  '🕯️ By candlelight, {count} mention(s) of "{query}":',
+  '🐦 The familiar retrieved {count} mention(s) of "{query}":',
+  '🔮 The crystal ball replays {count} moment(s) mentioning "{query}":',
+  '🧙 I remember "{query}" — {count} time(s), in fact:',
+  '🧾 The ledger records {count} mention(s) of "{query}":',
+  '📖 {count} passage(s) mention "{query}":',
+  '🌙 {count} moment(s) in the chronicle mention "{query}":',
+  '⚗️ Distilled {count} mention(s) of "{query}" from the archive:',
+  '🕰️ Turning back the clock — {count} mention(s) of "{query}":',
+  '🧠 {count} memory(s) surfaced for "{query}":',
+  '🎙️ {count} moment(s) on tape mention "{query}":',
+  '🐉 The hoard yields {count} mention(s) of "{query}":',
+  '🗿 {count} inscription(s) mention "{query}":',
+  '📯 Announcing {count} mention(s) of "{query}":',
+  '🧝 The chronicler recalls {count} mention(s) of "{query}":',
+  '⛩️ The shrine surrenders {count} mention(s) of "{query}":',
+  '🪶 {count} line(s) of ink mention "{query}":',
+];
+
 export const GENERIC_ERROR = [
   '💥 The spell fizzled: {message}',
   '🧙 Something went wrong in the workshop: {message}',

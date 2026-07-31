@@ -30,6 +30,20 @@ export const config = {
   // Ollama on the PC, reachable over the LAN
   ollamaUrl: optional('OLLAMA_URL', 'http://127.0.0.1:11434'),
   ollamaModel: optional('OLLAMA_MODEL', 'qwen2.5:14b'),
+  // Context window for summarisation. Ollama does NOT use the model's full
+  // advertised context by default — it applies its own small default (4096)
+  // and silently TRUNCATES anything longer, so a long session would be
+  // summarised from only its tail. Transcripts longer than this are split
+  // and summarised in slices (see pipeline/summarize-client.js), so this
+  // doesn't cap session length; it only trades VRAM for fewer slices.
+  // Raise it if your GPU has headroom beyond the model weights.
+  // Sanitised rather than raw parseInt: a typo'd or absurdly small value
+  // would otherwise propagate NaN into the chunk-size maths and collapse the
+  // whole transcript back into one oversized (silently truncated) request.
+  ollamaNumCtx: (() => {
+    const n = parseInt(optional('OLLAMA_NUM_CTX', '8192'), 10);
+    return Number.isFinite(n) && n >= 2048 ? n : 8192;
+  })(),
 
   // Job queue / retry behavior for when the PC is off
   summarizeRetryBaseMs: parseInt(optional('SUMMARIZE_RETRY_BASE_MS', '60000'), 10), // 1 min

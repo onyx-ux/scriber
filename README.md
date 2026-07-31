@@ -68,7 +68,7 @@ pi-service/          # everything that runs on the Raspberry Pi
     export/markdown.js      # Obsidian-formatted .md export
     delivery/discord-post.js  # posts to channel (no thread) + attaches files
     prompts/dnd-summary-prompt.js
-    commands/                 # /join /leave /history /summarise /export
+    commands/                 # /join /leave /history /summarise /export /search /funny
   Dockerfile
   docker-compose.yml
   .env.example
@@ -200,6 +200,7 @@ whole stack on one machine for debugging.)*
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
 - `/funny` — pull a random funny/memorable moment from any completed session in this campaign's history (the AI summariser flags these, if any, as part of the normal per-session summary)
+- `/search query:<text>` — search every transcript in the campaign for a word or phrase (an NPC name, an item, a place) and get back the matching lines with the session number, timestamp and speaker. Answers "when did we first meet that guy?" without re-reading old notes
 - `/status` — see what's currently queued/retrying, and whether your PC's Ollama is reachable right now
 - `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
 

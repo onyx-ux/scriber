@@ -1,9 +1,28 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { mkdir, readdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
+
+// A fresh DB snapshot is written on every transcription AND every summary —
+// roughly two per session — and nothing ever removed them, so the Pi
+// accumulated a full copy of the database (transcripts included) forever.
+// Keep a rolling window instead; Drive holds the long-term history.
+const MAX_DB_SNAPSHOTS = 10;
+
+async function pruneOldSnapshots(dir) {
+  try {
+    const files = (await readdir(dir))
+      .filter((f) => f.startsWith('db-') && f.endsWith('.sqlite'))
+      .sort(); // db-<epoch-ms>.sqlite — fixed-width timestamps sort chronologically
+    for (const stale of files.slice(0, Math.max(0, files.length - MAX_DB_SNAPSHOTS))) {
+      await rm(join(dir, stale), { force: true });
+    }
+  } catch (err) {
+    console.warn(`[drive-sync] snapshot prune skipped: ${err.message}`);
+  }
+}
 
 function remotePath(cfg, ...parts) {
   return `${cfg.driveRemoteName}:${cfg.driveRemotePath}/${parts.join('/')}`;
@@ -80,13 +99,17 @@ export async function syncSessionAudio(audioDir, meetingId, cfg) {
 // snapshot first; only the snapshot gets uploaded.
 export async function backupAndSyncDatabase(db, cfg) {
   if (!cfg.driveSyncEnabled) return;
+  const backupDir = join(cfg.dataDir, 'backups');
   try {
-    const snapshotPath = join(cfg.dataDir, 'backups', `db-${Date.now()}.sqlite`);
-    await mkdir(dirname(snapshotPath), { recursive: true });
+    const snapshotPath = join(backupDir, `db-${Date.now()}.sqlite`);
+    await mkdir(backupDir, { recursive: true });
     await db.raw.backup(snapshotPath);
     await rcloneCopy(snapshotPath, remotePath(cfg, 'db-backups'));
     console.log(`[drive-sync] uploaded db snapshot ${snapshotPath}`);
   } catch (err) {
     console.error(`[drive-sync] db backup/upload failed: ${err.message}`);
+  } finally {
+    // Prune even when the upload failed — the local snapshot was still written.
+    await pruneOldSnapshots(backupDir);
   }
 }

@@ -31,11 +31,18 @@ export async function transcribeAll(capturedUtterances, cfg, { onProgress } = {}
   return { utterances: results, failures };
 }
 
+// Accepts either DB rows (snake_case start_ms) or in-flight captured
+// utterances (camelCase startMs), so read the offset through one accessor.
+// The previous `a.start_ms - b.start_ms || a.startMs - b.startMs` chain
+// evaluated to NaN whenever two DB rows shared a start_ms (0 || NaN), and a
+// comparator returning NaN gives an implementation-defined ordering.
+const offsetMs = (u) => u.start_ms ?? u.startMs ?? 0;
+
 export function buildTranscriptText(utterances) {
   return [...utterances]
-    .sort((a, b) => a.start_ms - b.start_ms || a.startMs - b.startMs)
+    .sort((a, b) => offsetMs(a) - offsetMs(b))
     .map((u) => {
-      const ms = u.start_ms ?? u.startMs;
+      const ms = offsetMs(u);
       const mm = String(Math.floor(ms / 60000)).padStart(2, '0');
       const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
       const name = u.display_name ?? u.displayName;

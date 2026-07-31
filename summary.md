@@ -366,3 +366,168 @@ campaign ledger updated locally → (Drive/Cipher sync confirmed separately,
 now that certs are fixed). All ten bugs above were found, fixed, deployed,
 and re-verified against the real Pi and real Ollama instance before being
 called done.
+
+---
+
+## Addendum (2026-07-31, afternoon): deep bug sweep on Opus
+
+Matthew went out and asked for a thorough bug hunt plus improvements. This
+pass was a systematic read of every source file rather than a reaction to a
+symptom, so most of what follows had never been triggered — but nearly all
+of it would have fired on a real, full-length session.
+
+### 11. Ollama silently discarded ~93% of every transcript (the big one)
+
+**This was the most consequential bug in the project.** Nothing in the code
+was wrong; the model was never being given the transcript.
+
+Ollama does not use a model's full advertised context. It applies its own
+small default and, crucially, **truncates over-long prompts silently rather
+than erroring**. Measured directly against the running instance:
+
+| | |
+|---|---|
+| Transcript sent | 111,854 chars (~28,000 tokens) |
+| Tokens Ollama actually processed | **2,050** |
+| Could the model recall a sentinel placed at the start? | **No** |
+
+`qwen2.5:14b` advertises a 32,768-token context, but had no `num_ctx` set,
+so it ran at 4,096 and evaluated ~2,050. A three-hour session would have
+been summarised from roughly its **last five minutes** — and the output
+would have looked like "the AI is bad at this", not like a config bug.
+(Notably, Matthew had already hit this elsewhere: there is a
+`qwen2.5-14b-longctx` model on the PC with `num_ctx 32768`. The bot just
+was not pointed at it.)
+
+Fixed in two layers, because raising the context alone is not enough — even
+32k tokens will not hold a four-hour session:
+
+1. `num_ctx` is now sent explicitly on every request, configurable via
+   `OLLAMA_NUM_CTX` (default 8192, sanitised against typos).
+2. Transcripts longer than the budget are now **split into slices,
+   summarised individually, then merged** (map-reduce), with a hierarchical
+   collapse if there are so many slices that even the merge will not fit. So
+   session length no longer has a ceiling.
+
+Robustness built into the new path: a slice that fails to parse retries
+once, then degrades to an empty slice rather than failing the whole
+session; if *every* slice fails it throws, so the queue still retries.
+
+**Verified end-to-end against the real Ollama** with a 52k-char transcript
+carrying a distinct named item in the first line and another in the last:
+
+- Before: only the tail was ever visible.
+- After: 3 slices, 36s, and **both the first-line and last-line items appear
+  in the final summary**.
+
+### 12. A crash mid-finalise could duplicate the entire transcript
+
+`finish-session` inserted utterances, set the status, and queued the summary
+as three separate statements. Dying between the first and second left the
+meeting still marked `'transcribing'`, so startup recovery re-ran it and
+inserted a **second copy of every utterance**. Dying between the second and
+third left the meeting in `'awaiting_summary'` with no job — and recovery
+only scans `'recording'`/`'transcribing'`, so it would never be summarised.
+Now one transaction (`db.finalizeTranscription`), which also deletes first,
+making a recovery re-run idempotent instead of additive.
+
+### 13. Jobs stuck in `'running'` were never retried
+
+The worker flips a job to `'running'` while it works, but `nextDueJob` only
+ever selects `'pending'`. A restart mid-summarise (exactly what happened
+during tonight's testing) stranded that job permanently. Startup now resets
+orphaned `'running'` jobs back to `'pending'`.
+
+### 14. Meetings could be stranded with no job at all
+
+Complementing #12/#13: startup now re-queues any meeting sitting in
+`'awaiting_summary'` with no live job, whatever the cause.
+
+### 15. Malformed model output could permanently fail a session
+
+`{...EMPTY_NOTES, ...parsed}` let a model returning `"scenes": null`
+overwrite a good default with `null`; the first `.map()` in the Discord post
+or markdown export then threw, failing an otherwise fine summary. Every
+field is now coerced to its declared shape, and empty placeholder follow-ups
+(`{assignee: null, task: ""}`) are dropped rather than rendered as blank
+checklist bullets.
+
+### 16. `/summarise` could post the same session twice
+
+It enqueued unconditionally, so running it while a job was already pending
+created a second job — summarising and posting the session twice. It now
+clears the existing job's backoff instead ("do it now" without duplicating).
+
+### 17. Two quick `/join`s could both start recording
+
+The "already recording?" check ran before ~20s of awaits, and the session
+was not registered until the very end, so two commands issued close together
+could both pass and both capture into separate directories. A guild is now
+claimed synchronously, released in a `finally`.
+
+### 18. DB snapshots accumulated forever
+
+A full database snapshot (transcripts included) was written on every
+transcription *and* every summary, and nothing ever deleted them. Harmless
+now (188 KB), unbounded over a long campaign. Capped at the 10 most recent;
+Drive keeps the long history.
+
+### 19-21. Smaller correctness fixes
+
+- `ephemeral: true` is deprecated and removed in discord.js v15 — now
+  `MessageFlags.Ephemeral` (this was the warning in the logs).
+- Recovered sessions never got an `ended_at`; it is now derived from the last
+  captured utterance rather than left null or stamped "now".
+- The transcript sort comparator could evaluate to `NaN` when two rows
+  shared a `start_ms`, which is implementation-defined ordering.
+
+### 22. A bug in my own fix, caught by testing it properly
+
+Worth recording because it nearly shipped. My first version of the
+slice-extraction prompt leaned so hard on "do not fabricate, empty arrays are
+correct" that against mostly-mundane dialogue the model returned **entirely
+empty output** — including dropping a named magic item mentioned in the
+first line. The context fix was working perfectly (the full slice was being
+processed); the prompt was throwing the content away.
+
+Rebalanced to demand comprehensive extraction of what *is* present —
+especially proper nouns — while keeping the anti-fabrication rules. Re-test
+confirmed the item is now captured, with much richer scenes and threads.
+The lesson: "no truncation" and "nothing lost" are not the same test.
+
+## New feature: `/search`
+
+Every competitor surveyed (Archivist, SessionKeeper, DM's ARK, DiscMeet)
+leads with searchable campaign history. Scriber stored every word and had no
+way to look anything up.
+
+`/search query:<text>` searches every transcript in the campaign and returns
+matching lines grouped by session, with timestamp and speaker — answering
+"when did we first meet that guy?" without re-reading old notes. Read-only,
+no AI involved, ephemeral reply. Verified against the real database,
+including LIKE-escaping (searching `50%` returns nothing rather than
+matching everything).
+
+## Feature ideas from surveying other bots — your call
+
+Researched but deliberately **not** built, since these are product decisions:
+
+- **`/ask <question>`** — campaign Q&A over stored summaries/transcripts via
+  Ollama. The headline feature competitors advertise, and the architecture
+  already supports it. Biggest win available.
+- **Obsidian `[[wikilinks]]`** between session notes and ledger entries, so
+  the vault becomes a real interlinked graph instead of flat bullets.
+- **Speaking-time stats** per player — `capture.js` already records the
+  timings and has a TODO noting they are unused.
+- **Thread resolution tracking** — `unresolvedThreads` currently only ever
+  grows; nothing marks one resolved in a later session.
+
+## Needs you
+
+- **`OLLAMA_NUM_CTX` is set to 8192** — deliberately conservative so it fits
+  alongside the 9.5 GB model in VRAM. If your GPU has room, raising it means
+  fewer slices and better cross-slice coherence. Chunking means it is safe
+  either way.
+- **`medium.en` whisper plus all of the above are deployed but not yet
+  exercised by a real session** — the next live game is the real test.
+- Nothing was pushed to git; commits are local, awaiting your say-so.

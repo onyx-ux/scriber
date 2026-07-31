@@ -19,9 +19,10 @@ export async function finishSession(db, meetingId, capturedUtterances, audioDir,
     return { ok: false, utteranceCount: 0, failures };
   }
 
-  db.insertUtterances(meetingId, utterances);
-  db.setMeetingStatus(meetingId, 'awaiting_summary');
-  db.enqueueSummarizeJob(meetingId);
+  // Single transaction: replaces utterances, flips status, and enqueues the
+  // summarise job together, so a crash mid-way can't duplicate the transcript
+  // or strand the meeting with no job. See db.finalizeTranscription.
+  db.finalizeTranscription(meetingId, utterances);
 
   syncSessionAudio(audioDir, meetingId, cfg).catch(() => {});
   backupAndSyncDatabase(db, cfg).catch(() => {});
