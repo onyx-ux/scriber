@@ -6,8 +6,15 @@ import { mkdir } from 'node:fs/promises';
 import { startCapture } from '../voice/capture.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { isOllamaReachable } from '../pipeline/summarize-client.js';
+import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { finishSession } from '../pipeline/finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
+import {
+  notifyApprovalNeeded,
+  buildApprovalRow,
+  APPROVE_PREFIX,
+  PARK_PREFIX,
+} from '../delivery/approval-notify.js';
 import {
   pick,
   JOIN_NO_CHANNEL,
@@ -32,6 +39,12 @@ import {
   FUNNY_HEADER,
   SEARCH_NONE,
   SEARCH_HEADER,
+  LEAVE_AWAITING_APPROVAL,
+  APPROVED_CONFIRM,
+  PARKED_CONFIRM,
+  QUEUE_PAUSED,
+  QUEUE_RESUMED,
+  PENDING_EMPTY,
   GENERIC_ERROR,
 } from '../flavor.js';
 
@@ -78,10 +91,39 @@ export const commandDefs = [
     .addStringOption((o) =>
       o.setName('query').setDescription('Word or phrase to look for (e.g. an NPC name)').setRequired(true)
     ),
+  new SlashCommandBuilder()
+    .setName('pending')
+    .setDescription('Show everything currently in the pipeline (recording, transcribing, awaiting approval)'),
+  new SlashCommandBuilder()
+    .setName('pause')
+    .setDescription('Pause summarising so Ollama can be killed or the GPU freed — nothing is lost'),
+  new SlashCommandBuilder().setName('resume').setDescription('Resume summarising after a /pause'),
+  new SlashCommandBuilder()
+    .setName('ask')
+    .setDescription('Ask a question about this campaign, answered from past sessions')
+    .addStringOption((o) =>
+      o.setName('question').setDescription('e.g. "who was the smuggler we met at the docks?"').setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('approve')
+    .setDescription('Release a session that is parked awaiting approval')
+    .addIntegerOption((o) =>
+      o.setName('meeting_id').setDescription('Meeting ID (omit to approve everything waiting)').setRequired(false)
+    ),
 ].map((c) => c.toJSON());
 
 export function registerCommandHandlers(client, db, cfg) {
   client.on('interactionCreate', async (interaction) => {
+    // Approval buttons arrive as component interactions, not commands.
+    if (interaction.isButton()) {
+      try {
+        return await handleApprovalButton(interaction, db);
+      } catch (err) {
+        console.error('[button] error:', err);
+        return;
+      }
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
     try {
@@ -100,6 +142,11 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'recap') return await handleRecap(interaction, db);
       if (interaction.commandName === 'funny') return await handleFunny(interaction, db);
       if (interaction.commandName === 'search') return await handleSearch(interaction, db);
+      if (interaction.commandName === 'pending') return await handlePending(interaction, db, cfg);
+      if (interaction.commandName === 'pause') return await handlePause(interaction, db);
+      if (interaction.commandName === 'resume') return await handleResume(interaction, db);
+      if (interaction.commandName === 'approve') return await handleApprove(interaction, db);
+      if (interaction.commandName === 'ask') return await handleAsk(interaction, db, cfg);
     } catch (err) {
       console.error(`[command:${interaction.commandName}] error:`, err);
       const reply = { content: pick(GENERIC_ERROR, { message: err.message }), flags: MessageFlags.Ephemeral };
@@ -207,13 +254,34 @@ async function handleLeave(interaction, db, cfg) {
     name: `meeting-${session.meetingId}-transcript.txt`,
   });
 
-  const reachable = await isOllamaReachable(cfg);
-  await interaction.followUp({
-    content: reachable
+  // When approval is required the job is parked, so don't claim the summary
+  // is running (or blame the PC being off) — neither is true.
+  const awaitingApproval = result.job?.status === 'awaiting_approval';
+
+  let content;
+  if (awaitingApproval) {
+    content = pick(LEAVE_AWAITING_APPROVAL, {
+      count: result.utteranceCount,
+      meetingId: session.meetingId,
+    });
+  } else {
+    const reachable = await isOllamaReachable(cfg);
+    content = reachable
       ? pick(LEAVE_SUMMARIZING_NOW, { count: result.utteranceCount })
-      : pick(LEAVE_SUMMARY_QUEUED, { count: result.utteranceCount, meetingId: session.meetingId }),
-    files: [attachment],
-  });
+      : pick(LEAVE_SUMMARY_QUEUED, { count: result.utteranceCount, meetingId: session.meetingId });
+  }
+
+  await interaction.followUp({ content, files: [attachment] });
+
+  if (awaitingApproval) {
+    await notifyApprovalNeeded({
+      discordClient: interaction.client,
+      cfg,
+      meeting: db.getMeeting(session.meetingId),
+      jobId: result.job.id,
+      utteranceCount: result.utteranceCount,
+    });
+  }
 }
 
 async function handleHistory(interaction, db) {
@@ -308,6 +376,147 @@ async function handleRecap(interaction, db) {
   const date = (meeting.started_at || '').slice(0, 10);
   const header = pick(RECAP_HEADER, { channel: meeting.channel_name, date });
   await interaction.reply(`${header}\n\n${notes.tldr || '_no recap available_'}`);
+}
+
+async function handleAsk(interaction, db, cfg) {
+  const question = interaction.options.getString('question').trim();
+
+  if (db.getSetting('summarize_paused') === 'true') {
+    return interaction.reply({
+      content: '⏸️ Summarising is paused, so I\'m not calling Ollama. Run `/resume` first.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  if (!(await isOllamaReachable(cfg))) {
+    // Not the SUMMARIZE_UNREACHABLE text — that promises a background retry,
+    // and there's no queue behind /ask to retry with.
+    return interaction.reply({
+      content: `🔮 The oracle is dark — your PC's Ollama isn't reachable at \`${cfg.ollamaUrl}\`. Turn it on and ask again.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  // Answering means a full model round-trip; Discord needs the ack inside 3s.
+  await interaction.deferReply();
+
+  const { summaries, excerpts } = gatherContext(db, interaction.guildId, question, cfg);
+  if (summaries.length === 0 && excerpts.length === 0) {
+    return interaction.editReply(
+      "📭 There's nothing in the campaign records yet — I need at least one completed session to answer questions."
+    );
+  }
+
+  const answer = await askCampaign({ question, summaries, excerpts, cfg });
+  const body = `🔮 **${question}**\n\n${answer}`;
+  await interaction.editReply(body.length > 1990 ? `${body.slice(0, 1980)}…` : body);
+}
+
+async function handleApprovalButton(interaction, db) {
+  const { customId } = interaction;
+
+  if (customId.startsWith(APPROVE_PREFIX)) {
+    const jobId = parseInt(customId.slice(APPROVE_PREFIX.length), 10);
+    const job = db.getJob(jobId);
+    if (!job) {
+      return interaction.update({ content: '⚠️ That job no longer exists.', components: [] });
+    }
+    const released = db.approveJob(jobId);
+    // Dropping the buttons on success stops a second click re-queueing a job
+    // that has already moved on.
+    return interaction.update({
+      content: released
+        ? pick(APPROVED_CONFIRM, { meetingId: job.meeting_id })
+        : `⚠️ Session #${job.meeting_id} was already released (currently: ${job.status}).`,
+      components: [],
+    });
+  }
+
+  if (customId.startsWith(PARK_PREFIX)) {
+    const jobId = parseInt(customId.slice(PARK_PREFIX.length), 10);
+    const job = db.getJob(jobId);
+    // Keep the buttons — the whole point is that they can approve it later
+    // from this same DM.
+    return interaction.update({
+      content: pick(PARKED_CONFIRM, { meetingId: job ? job.meeting_id : '?' }),
+      components: [buildApprovalRow(jobId)],
+    });
+  }
+}
+
+async function handlePause(interaction, db) {
+  db.setSetting('summarize_paused', 'true');
+  await interaction.reply({ content: pick(QUEUE_PAUSED), flags: MessageFlags.Ephemeral });
+}
+
+async function handleResume(interaction, db) {
+  db.setSetting('summarize_paused', 'false');
+  await interaction.reply({ content: pick(QUEUE_RESUMED), flags: MessageFlags.Ephemeral });
+}
+
+async function handleApprove(interaction, db) {
+  const meetingId = interaction.options.getInteger('meeting_id');
+
+  if (meetingId === null) {
+    const count = db.approveAllWaiting();
+    return interaction.reply({
+      content: count === 0 ? '📭 Nothing was awaiting approval.' : `✅ Released ${count} parked session(s) for summarising.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const job = db.listPendingJobs().find((j) => j.meeting_id === meetingId && j.status === 'awaiting_approval');
+  if (!job) {
+    return interaction.reply({
+      content: `⚠️ Session #${meetingId} isn't awaiting approval — check \`/pending\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  db.approveJob(job.id);
+  await interaction.reply({
+    content: pick(APPROVED_CONFIRM, { meetingId }),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handlePending(interaction, db, cfg) {
+  const rows = db.listPipeline();
+  const paused = db.getSetting('summarize_paused') === 'true';
+  const pausedNote = paused ? '\n\n⏸️ _Summarising is paused — run `/resume` to continue._' : '';
+
+  if (rows.length === 0) {
+    return interaction.reply({
+      content: `${pick(PENDING_EMPTY)}${pausedNote}`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const reachable = await isOllamaReachable(cfg);
+  const lines = rows.map((r) => {
+    const date = (r.started_at || '').slice(0, 10);
+    const parts = [`**#${r.id} — ${r.channel_name} (${date})**`];
+    parts.push(`  • session: \`${r.meeting_status}\`${r.utterance_count ? ` — ${r.utterance_count} lines` : ''}`);
+
+    if (r.job_status === 'awaiting_approval') {
+      parts.push(`  • summary: ⏸️ **awaiting your approval** — \`/approve meeting_id:${r.id}\``);
+    } else if (r.job_status === 'running') {
+      parts.push('  • summary: ⚙️ running now');
+    } else if (r.job_status === 'pending') {
+      const age = Math.round((Date.now() - new Date(r.next_attempt_at).getTime()) / 60000);
+      const when = age >= 0 ? 'due now' : `retry in ~${Math.abs(age)}m`;
+      parts.push(
+        `  • summary: 🕒 queued (${when}, ${r.attempts} attempt(s))${r.last_error ? `\n    last error: _${String(r.last_error).slice(0, 120)}_` : ''}`
+      );
+    }
+    return parts.join('\n');
+  });
+
+  let content = `🔧 **Pipeline** — Ollama is ${reachable ? '✅ reachable' : '❌ not reachable'}\n\n${lines.join('\n\n')}${pausedNote}`;
+  if (content.length > 1900) {
+    const trimmed = content.slice(0, 1900);
+    content = `${trimmed.slice(0, trimmed.lastIndexOf('\n'))}\n… _(truncated)_`;
+  }
+
+  await interaction.reply({ content, flags: MessageFlags.Ephemeral });
 }
 
 function timestamp(ms) {

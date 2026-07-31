@@ -22,10 +22,14 @@ export async function finishSession(db, meetingId, capturedUtterances, audioDir,
   // Single transaction: replaces utterances, flips status, and enqueues the
   // summarise job together, so a crash mid-way can't duplicate the transcript
   // or strand the meeting with no job. See db.finalizeTranscription.
-  db.finalizeTranscription(meetingId, utterances);
+  // With approval required the job is parked rather than made due, so nothing
+  // hits the PC's GPU until the owner explicitly releases it.
+  const job = db.finalizeTranscription(meetingId, utterances, {
+    requireApproval: cfg.summaryRequireApproval,
+  });
 
   syncSessionAudio(audioDir, meetingId, cfg).catch(() => {});
   backupAndSyncDatabase(db, cfg).catch(() => {});
 
-  return { ok: true, utteranceCount: utterances.length, failures };
+  return { ok: true, utteranceCount: utterances.length, failures, job };
 }

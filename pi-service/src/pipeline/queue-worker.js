@@ -3,7 +3,20 @@ import { buildTranscriptText } from './transcribe.js';
 import { exportMarkdown } from '../export/markdown.js';
 import { postSessionNotes } from '../delivery/discord-post.js';
 import { syncSessionMarkdown, backupAndSyncDatabase, pullLedgerFromDrive, pushLedgerToDrive } from '../sync/drive-sync.js';
-import { updateCampaignLedger, campaignDirInfo } from '../campaign/ledger.js';
+import { updateCampaignLedger, campaignDirInfo, readKnownEntities, entryKey } from '../campaign/ledger.js';
+
+// Drop NPCs and locations the campaign already knows about from THIS
+// session's recap. The party visiting the same tavern every week shouldn't
+// re-list it as a "location visited" forever — the ledger is the permanent
+// record, the per-session recap should only carry what's new. The stored
+// summary keeps everything; this only affects what gets displayed.
+export function withoutAlreadyKnown(notes, known) {
+  return {
+    ...notes,
+    npcsIntroduced: (notes.npcsIntroduced || []).filter((n) => !known.npcs.has(entryKey(n))),
+    locationsVisited: (notes.locationsVisited || []).filter((l) => !known.locations.has(entryKey(l))),
+  };
+}
 
 function backoffMs(attempts, cfg) {
   const ms = cfg.summarizeRetryBaseMs * Math.pow(2, attempts);
@@ -12,6 +25,11 @@ function backoffMs(attempts, cfg) {
 
 // Call once at startup: setInterval(() => tick(...), 15000)
 export async function tick(db, discordClient, cfg) {
+  // /pause sets this so Ollama can be killed or the GPU freed without the
+  // worker repeatedly trying to reach it. Queued work is untouched and
+  // resumes exactly where it left off.
+  if (db.getSetting('summarize_paused') === 'true') return;
+
   const job = db.nextDueJob();
   if (!job) return;
 
@@ -29,19 +47,29 @@ export async function tick(db, discordClient, cfg) {
 
     const notes = await summarizeViaOllama(transcript, meta, cfg);
 
+    // Store the FULL summary — /recap, /funny and the ledger all read this,
+    // and it should stay the complete record of the session.
     db.setSummary(meeting.id, notes);
-    const mdPath = await exportMarkdown({ meeting, utterances, notes, cfg });
-    await postSessionNotes({ discordClient, meeting, notes, mdPath, cfg });
 
     // Pull the ledger down first — you may have edited NPCs.md/Locations.md
     // etc. directly in Obsidian since the last session, and we don't want
-    // to append onto a stale local copy and lose those edits.
+    // to append onto a stale local copy and lose those edits. Doing it before
+    // rendering also means "what does this campaign already know" reflects
+    // your manual edits, not just what the bot has seen.
     const { localDir: ledgerDir, remoteSubpath: ledgerRemote } = campaignDirInfo(
       cfg,
       meeting.guild_id,
       meeting.channel_name
     );
     await pullLedgerFromDrive(ledgerDir, ledgerRemote, cfg);
+
+    const known = await readKnownEntities(cfg, meeting.guild_id, meeting.channel_name);
+    const displayNotes = withoutAlreadyKnown(notes, known);
+
+    const mdPath = await exportMarkdown({ meeting, utterances, notes: displayNotes, cfg });
+    await postSessionNotes({ discordClient, meeting, notes: displayNotes, mdPath, cfg });
+
+    // Ledger update uses the unfiltered notes so it stays authoritative.
     await updateCampaignLedger({ meeting, notes, cfg });
     await pushLedgerToDrive(ledgerDir, ledgerRemote, cfg);
 

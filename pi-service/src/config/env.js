@@ -40,10 +40,25 @@ export const config = {
   // Sanitised rather than raw parseInt: a typo'd or absurdly small value
   // would otherwise propagate NaN into the chunk-size maths and collapse the
   // whole transcript back into one oversized (silently truncated) request.
+  //
+  // 9216 is the measured ceiling for a 12GB RTX 3080 Ti running qwen2.5:14b
+  // Q4_K_M: at 9216 the model + KV cache occupy 9996 MiB and stay entirely on
+  // the GPU; at 10240 Ollama spills to CPU and the same request went from
+  // ~4s to ~176s. If summaries suddenly get drastically slower, the desktop
+  // is probably using more VRAM than usual — drop this to 8192.
   ollamaNumCtx: (() => {
-    const n = parseInt(optional('OLLAMA_NUM_CTX', '8192'), 10);
-    return Number.isFinite(n) && n >= 2048 ? n : 8192;
+    const n = parseInt(optional('OLLAMA_NUM_CTX', '9216'), 10);
+    return Number.isFinite(n) && n >= 2048 ? n : 9216;
   })(),
+
+  // --- summarise-on-approval ---
+  // With this on, finishing a session does NOT immediately hand the
+  // transcript to Ollama; the job waits in 'awaiting_approval' and the owner
+  // gets a DM with a button. Stops a summary firing on the PC mid-game.
+  summaryRequireApproval: optional('SUMMARY_REQUIRE_APPROVAL', 'false') === 'true',
+  // Discord user ID to DM for that approval (and for pipeline nudges).
+  // Without it, approval still works via /pending, there's just no DM.
+  ownerUserId: optional('OWNER_USER_ID', null),
 
   // Job queue / retry behavior for when the PC is off
   summarizeRetryBaseMs: parseInt(optional('SUMMARIZE_RETRY_BASE_MS', '60000'), 10), // 1 min
@@ -52,6 +67,9 @@ export const config = {
 
   // Where Obsidian-ready markdown gets written (bind-mount this to your vault sync folder)
   obsidianExportDir: optional('OBSIDIAN_EXPORT_DIR', '/data/obsidian'),
+  // Render NPC/location names as [[wikilinks]] so Obsidian's graph view
+  // connects sessions to the campaign ledger. Set false for plain text.
+  obsidianWikilinks: optional('OBSIDIAN_WIKILINKS', 'true') !== 'false',
 
   // Discord delivery
   notesChannelId: optional('NOTES_CHANNEL_ID', null), // falls back to the voice session's text channel

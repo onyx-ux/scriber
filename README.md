@@ -201,8 +201,27 @@ whole stack on one machine for debugging.)*
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
 - `/funny` — pull a random funny/memorable moment from any completed session in this campaign's history (the AI summariser flags these, if any, as part of the normal per-session summary)
 - `/search query:<text>` — search every transcript in the campaign for a word or phrase (an NPC name, an item, a place) and get back the matching lines with the session number, timestamp and speaker. Answers "when did we first meet that guy?" without re-reading old notes
+- `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs Ollama running
 - `/status` — see what's currently queued/retrying, and whether your PC's Ollama is reachable right now
+- `/pending` — everything currently in the pipeline: recording, transcribing, awaiting approval, or queued for summarising
+- `/approve [meeting_id]` — release a session parked awaiting approval (omit the ID to approve everything waiting)
+- `/pause` / `/resume` — stop and restart summarising, so you can kill Ollama or free the GPU without losing queued work
 - `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
+
+## Summarise on approval (optional)
+
+By default, finishing a session hands the transcript straight to Ollama. If
+your PC doubles as your gaming machine that's a problem — a 14B model
+suddenly claiming ~10GB of VRAM mid-match is very noticeable.
+
+Set `SUMMARY_REQUIRE_APPROVAL=true` (plus `OWNER_USER_ID`) and the pipeline
+stops one step short instead: the transcript is written, the job parks in
+`awaiting_approval`, and you get a DM with a **Summarise now** button. Nothing
+touches the GPU until you press it. `/pending` shows everything waiting and
+`/approve` releases it if you'd rather not use the button.
+
+`/pause` goes further — it stops the queue entirely, so you can kill Ollama
+outright. Queued sessions stay exactly where they are and resume on `/resume`.
 
 ## Campaign ledger (Obsidian)
 

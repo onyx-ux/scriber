@@ -39,11 +39,22 @@ CREATE TABLE IF NOT EXISTS characters (
   PRIMARY KEY (guild_id, user_id)
 );
 
+-- Simple persistent key/value store, so operator state (e.g. the summarise
+-- queue being paused) survives a restart rather than living only in memory.
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
   type TEXT NOT NULL DEFAULT 'summarize',
-  status TEXT NOT NULL DEFAULT 'pending', -- pending | running | done | failed
+  -- awaiting_approval | pending | running | done | failed
+  -- awaiting_approval is the parked state used when SUMMARY_REQUIRE_APPROVAL
+  -- is on: nextDueJob only ever selects 'pending', so a parked job sits
+  -- untouched until it is explicitly approved.
+  status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_error TEXT,
@@ -110,7 +121,7 @@ function wrap(db) {
     //     sits in 'awaiting_summary' with no job, and recovery only scans
     //     'recording'/'transcribing', so it never gets summarised at all.
     // Deleting first also makes a recovery re-run idempotent rather than additive.
-    finalizeTranscription(meetingId, utterances) {
+    finalizeTranscription(meetingId, utterances, { requireApproval = false } = {}) {
       const del = db.prepare(`DELETE FROM utterances WHERE meeting_id = ?`);
       const ins = db.prepare(
         `INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text)
@@ -118,10 +129,11 @@ function wrap(db) {
       );
       const setStatus = db.prepare(`UPDATE meetings SET status = 'awaiting_summary' WHERE id = ?`);
       const existingJob = db.prepare(
-        `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize' AND status IN ('pending', 'running')`
+        `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize'
+           AND status IN ('awaiting_approval', 'pending', 'running')`
       );
       const enqueue = db.prepare(
-        `INSERT INTO jobs (meeting_id, type, status, next_attempt_at) VALUES (?, 'summarize', 'pending', datetime('now'))`
+        `INSERT INTO jobs (meeting_id, type, status, next_attempt_at) VALUES (?, 'summarize', ?, datetime('now'))`
       );
 
       const tx = db.transaction((rows) => {
@@ -131,10 +143,19 @@ function wrap(db) {
         }
         setStatus.run(meetingId);
         // Don't stack a duplicate job if one is already waiting for this meeting.
-        if (!existingJob.get(meetingId)) enqueue.run(meetingId);
+        if (!existingJob.get(meetingId)) {
+          enqueue.run(meetingId, requireApproval ? 'awaiting_approval' : 'pending');
+        }
       });
 
       tx(utterances);
+      return db
+        .prepare(
+          `SELECT id, status FROM jobs WHERE meeting_id = ? AND type = 'summarize'
+             AND status IN ('awaiting_approval', 'pending', 'running')
+           ORDER BY id DESC LIMIT 1`
+        )
+        .get(meetingId);
     },
 
     setTranscriptPath(meetingId, path) {
@@ -163,10 +184,12 @@ function wrap(db) {
     requeueSummarizeNow(meetingId) {
       const existing = db
         .prepare(
-          `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize' AND status IN ('pending', 'running')`
+          `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize'
+             AND status IN ('awaiting_approval', 'pending', 'running')`
         )
         .get(meetingId);
 
+      // Also the manual approval path: /summarise on a parked job releases it.
       if (existing) {
         db.prepare(`UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now') WHERE id = ?`).run(
           existing.id
@@ -223,8 +246,64 @@ function wrap(db) {
 
     listPendingJobs() {
       return db
-        .prepare(`SELECT * FROM jobs WHERE status IN ('pending', 'running') ORDER BY next_attempt_at ASC`)
+        .prepare(
+          `SELECT * FROM jobs WHERE status IN ('awaiting_approval', 'pending', 'running')
+           ORDER BY next_attempt_at ASC`
+        )
         .all();
+    },
+
+    // Release a parked job so the worker can pick it up on its next tick.
+    approveJob(jobId) {
+      const info = db
+        .prepare(
+          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now')
+            WHERE id = ? AND status = 'awaiting_approval'`
+        )
+        .run(jobId);
+      return info.changes > 0;
+    },
+
+    approveAllWaiting() {
+      const info = db
+        .prepare(
+          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now')
+            WHERE status = 'awaiting_approval'`
+        )
+        .run();
+      return info.changes;
+    },
+
+    // Everything currently moving through the pipeline, for /pending.
+    listPipeline() {
+      return db
+        .prepare(
+          `SELECT m.id, m.channel_name, m.started_at, m.status AS meeting_status,
+                  j.id AS job_id, j.status AS job_status, j.attempts, j.next_attempt_at, j.last_error,
+                  (SELECT COUNT(*) FROM utterances u WHERE u.meeting_id = m.id) AS utterance_count
+             FROM meetings m
+             LEFT JOIN jobs j
+               ON j.meeting_id = m.id
+              AND j.status IN ('awaiting_approval', 'pending', 'running')
+            WHERE m.status != 'done'
+               OR j.id IS NOT NULL
+            ORDER BY m.id DESC`
+        )
+        .all();
+    },
+
+    // --- persistent operator settings ---
+
+    getSetting(key, fallback = null) {
+      const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key);
+      return row ? row.value : fallback;
+    },
+
+    setSetting(key, value) {
+      db.prepare(
+        `INSERT INTO settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      ).run(key, String(value));
     },
 
     // A job is flipped to 'running' while the worker processes it, but
@@ -249,7 +328,8 @@ function wrap(db) {
            WHERE m.status = 'awaiting_summary'
              AND NOT EXISTS (
                SELECT 1 FROM jobs j
-               WHERE j.meeting_id = m.id AND j.status IN ('pending', 'running')
+               WHERE j.meeting_id = m.id
+                 AND j.status IN ('awaiting_approval', 'pending', 'running')
              )`
         )
         .all();

@@ -1,14 +1,24 @@
 import { AttachmentBuilder } from 'discord.js';
 import { pick, POST_SESSION_HEADER, POST_SESSION_ATTACHMENT_CAPTION } from '../flavor.js';
 
-function fmtList(items, empty = '_none_') {
-  if (!items || items.length === 0) return empty;
+// These return null rather than "_none_" so empty sections can be dropped
+// entirely. A recap that lists eight headings with "_none_" under seven of
+// them buries the one part anyone actually reads.
+function fmtList(items) {
+  if (!items || items.length === 0) return null;
   return items.map((i) => `- ${i}`).join('\n');
 }
 
 function fmtFollowUps(items) {
-  if (!items || items.length === 0) return '_none_';
+  if (!items || items.length === 0) return null;
   return items.map((f) => `- ${f.assignee ? `**${f.assignee}:** ` : ''}${f.task}`).join('\n');
+}
+
+function fmtScenes(scenes) {
+  if (!scenes || scenes.length === 0) return null;
+  return scenes
+    .map((s) => `**${s.title}**\n${fmtList(s.points) || '_no details_'}`)
+    .join('\n\n');
 }
 
 // Discord messages cap at 2000 chars — long D&D recaps will exceed that, so
@@ -27,6 +37,31 @@ function chunk(text, size = 1900) {
   return parts;
 }
 
+export function buildSessionBody(notes) {
+  const sections = [];
+  const add = (heading, content) => {
+    if (content && String(content).trim()) sections.push(`## ${heading}\n${content}`);
+  };
+
+  add('📜 What Happened', notes.tldr);
+  add('😂 Moments Worth Remembering', fmtList(notes.funnyMoments));
+  add('⚔️ Scenes & Encounters', fmtScenes(notes.scenes));
+  add('🗺️ Party Decisions', fmtList(notes.partyDecisions));
+  add('❓ Unresolved Threads', fmtList(notes.unresolvedThreads));
+  add('🧙 NPCs Introduced', fmtList(notes.npcsIntroduced));
+  add('🗺️ Locations Visited', fmtList(notes.locationsVisited));
+  add('💰 Loot & Rewards', fmtList(notes.lootAndRewards));
+  add('📋 Before Next Session', fmtFollowUps(notes.followUps));
+
+  // Everything empty means the summariser judged there was no real gameplay
+  // (bot testing, off-topic chat) — say so plainly rather than posting a
+  // skeleton of empty headings.
+  if (sections.length === 0) {
+    return '_Nothing substantial to report from this session._';
+  }
+  return sections.join('\n\n');
+}
+
 export async function postSessionNotes({ discordClient, meeting, notes, mdPath, cfg }) {
   const channelId = cfg.notesChannelId || meeting.channel_id;
   const channel = await discordClient.channels.fetch(channelId).catch(() => null);
@@ -37,37 +72,7 @@ export async function postSessionNotes({ discordClient, meeting, notes, mdPath, 
 
   const date = (meeting.started_at || '').slice(0, 10);
   const header = pick(POST_SESSION_HEADER, { channel: meeting.channel_name, date });
-
-  const funnySection =
-    notes.funnyMoments && notes.funnyMoments.length > 0
-      ? `\n\n## 😂 Moments Worth Remembering\n${fmtList(notes.funnyMoments)}`
-      : '';
-
-  const body = `## 📜 What Happened
-${notes.tldr || '_none_'}${funnySection}
-
-## ⚔️ Scenes & Encounters
-${(notes.scenes || []).map((s) => `**${s.title}**\n${fmtList(s.points, '_no details_')}`).join('\n\n') || '_none_'}
-
-## 🗺️ Party Decisions
-${fmtList(notes.partyDecisions)}
-
-## ❓ Unresolved Threads
-${fmtList(notes.unresolvedThreads)}
-
-## 🧙 NPCs Introduced
-${fmtList(notes.npcsIntroduced)}
-
-## 🗺️ Locations Visited
-${fmtList(notes.locationsVisited)}
-
-## 💰 Loot & Rewards
-${fmtList(notes.lootAndRewards)}
-
-## 📋 Before Next Session
-${fmtFollowUps(notes.followUps)}`;
-
-  const full = `${header}\n\n${body}`;
+  const full = `${header}\n\n${buildSessionBody(notes)}`;
 
   for (const part of chunk(full)) {
     // eslint-disable-next-line no-await-in-loop

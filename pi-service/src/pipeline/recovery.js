@@ -2,6 +2,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { finishSession } from './finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
+import { notifyApprovalNeeded } from '../delivery/approval-notify.js';
 import { EMPTY_WAV_SIZE } from '../voice/capture.js';
 
 // Capture writes each utterance's WAV straight to disk as it happens (see
@@ -75,6 +76,18 @@ export async function recoverInterruptedMeetings(db, cfg, discordClient) {
       console.log(
         `[recovery] meeting ${meeting.id}: ${result.ok ? `recovered ${result.utteranceCount} utterances` : 'recovery transcription produced nothing usable'}`
       );
+
+      // A recovered session still needs approval if that's configured —
+      // otherwise a restart would sneak a summary onto the GPU unannounced.
+      if (result.ok && result.job?.status === 'awaiting_approval' && discordClient) {
+        await notifyApprovalNeeded({
+          discordClient,
+          cfg,
+          meeting: db.getMeeting(meeting.id),
+          jobId: result.job.id,
+          utteranceCount: result.utteranceCount,
+        });
+      }
     } catch (err) {
       console.error(`[recovery] meeting ${meeting.id} failed to recover: ${err.message}`);
       db.setMeetingStatus(meeting.id, 'transcription_failed');

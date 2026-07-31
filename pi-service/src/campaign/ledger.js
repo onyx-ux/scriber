@@ -14,6 +14,49 @@ export function campaignDirInfo(cfg, guildId, channelName) {
   return { localDir: campaignDir(cfg, guildId, channelName), remoteSubpath: `campaign/${slug}` };
 }
 
+// Ledger entries are written as "Name — one-line description", but the model
+// rephrases the description freely between sessions ("Vex the Bold, a
+// smuggler" vs "Vex the Bold — smuggler from the docks"). Comparing whole
+// lines therefore treats the same NPC as new every time. Key on the leading
+// name only — everything before the first dash, comma or bracket — so
+// re-mentions actually match.
+export function entryKey(line) {
+  return String(line)
+    .replace(/^-\s*/, '')
+    .replace(/\s*_\([^)]*\)_\s*$/, '')
+    .split(/\s+[—–-]\s+|,|\(/)[0]
+    .trim()
+    .toLowerCase();
+}
+
+// The set of entries already recorded in one ledger file.
+async function readEntryKeys(filePath) {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    return new Set(
+      raw
+        .split('\n')
+        .filter((l) => l.trim().startsWith('-'))
+        .map(entryKey)
+        .filter(Boolean)
+    );
+  } catch {
+    return new Set(); // no ledger file yet
+  }
+}
+
+// What this campaign already knows about, so a session recap can omit
+// NPCs/locations that were introduced in an earlier session rather than
+// repeating the same entries every single week.
+export async function readKnownEntities(cfg, guildId, channelName) {
+  const dir = campaignDir(cfg, guildId, channelName);
+  const [npcs, locations] = await Promise.all([
+    readEntryKeys(join(dir, 'NPCs.md')),
+    readEntryKeys(join(dir, 'Locations.md')),
+  ]);
+  return { npcs, locations };
+}
+
 async function appendUnique(filePath, title, newItems, sessionLabel) {
   if (!newItems || newItems.length === 0) return;
 
@@ -32,20 +75,15 @@ async function appendUnique(filePath, title, newItems, sessionLabel) {
   // nothing ever matches and every re-mention (which is the whole point of
   // deduping — NPCs/locations recur across sessions) piles up as a "new"
   // duplicate entry instead of being recognized as one.
-  const existingLower = new Set(
+  const existingKeys = new Set(
     existing
       .split('\n')
-      .map((l) =>
-        l
-          .replace(/^-\s*/, '')
-          .replace(/\s*_\([^)]*\)_\s*$/, '')
-          .trim()
-          .toLowerCase()
-      )
+      .filter((l) => l.trim().startsWith('-'))
+      .map(entryKey)
       .filter(Boolean)
   );
 
-  const toAdd = newItems.filter((item) => !existingLower.has(item.trim().toLowerCase()));
+  const toAdd = newItems.filter((item) => !existingKeys.has(entryKey(item)));
   if (toAdd.length === 0) return;
 
   const additions = toAdd.map((item) => `- ${item} _(${sessionLabel})_`).join('\n');
