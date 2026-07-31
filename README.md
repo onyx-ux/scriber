@@ -204,12 +204,17 @@ whole stack on one machine for debugging.)*
 - `/import [file:<attachment>] [url:<link>] [speaker:<label>]` — import a recording made outside Discord (an in-person game, a phone recording). Runs through the same transcribe → summarise → post pipeline. Use `url:` for anything over Discord's ~25MB attachment cap. **Every line is attributed to one label** (default "Table") — a single microphone has no per-speaker channels, so voices can't be told apart the way they can in a voice call
 - `/correct wrong:<text> right:<text>` — fix a name whisper keeps mishearing. Rewrites every past transcript in the campaign **and** is saved, so future sessions are corrected automatically
 - `/corrections` — list the saved corrections
+- `/uncorrect wrong:<text>` — remove a saved correction (undoes `/correct`; past transcripts already rewritten stay as they are)
 - `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs the configured summariser (Ollama, Claude, or Gemini) reachable
 - `/status` — see what's currently queued/retrying, and whether the configured summariser is reachable right now
 - `/pending` — everything currently in the pipeline: recording, transcribing, awaiting approval, or queued for summarising
 - `/approve [meeting_id]` — release a session parked awaiting approval (omit the ID to approve everything waiting)
 - `/pause` / `/resume` — stop and restart summarising, so you can kill Ollama or free the GPU without losing queued work
 - `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
+- `/whoami` — show what name you currently appear as in transcripts and notes
+- `/stats` — campaign-wide totals: sessions, hours recorded, lines transcribed, and who talks the most
+- `/npcs` / `/locations` — list everyone met / everywhere visited so far, straight from the campaign ledger, without opening Obsidian
+- `/archive` — get the browsable campaign archive (the same self-contained HTML page that syncs to Drive after every session) as a one-off attachment
 
 ## Summarise on approval (optional)
 

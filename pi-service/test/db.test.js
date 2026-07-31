@@ -188,3 +188,44 @@ test('character names are per-guild and upsert cleanly', async (t) => {
   assert.equal(db.getCharacterName('G1', 'u1'), 'Thalric the Second');
   assert.equal(db.getCharacterName('G2', 'u1'), null);
 });
+
+test('campaignStats totals only completed sessions, ranks talkers, and finds the longest', async (t) => {
+  const db = await freshDb(t);
+
+  // Session 1: 1 hour, two speakers.
+  const id1 = db.createMeeting({ guildId: 'G1', channelId: 'C1', channelName: 'Cipher', startedAt: '2026-07-01T10:00:00Z', audioDir: '/tmp' });
+  db.finalizeTranscription(id1, [
+    { userId: 'u1', displayName: 'Koru', startMs: 0, endMs: 1000, text: 'a' },
+    { userId: 'u1', displayName: 'Koru', startMs: 1000, endMs: 2000, text: 'b' },
+    { userId: 'u2', displayName: 'Vex', startMs: 2000, endMs: 3000, text: 'c' },
+  ]);
+  db.endMeeting(id1, '2026-07-01T11:00:00Z');
+  db.setSummary(id1, { tldr: 'x' });
+
+  // Session 2: 3 hours (the longest), one speaker.
+  const id2 = db.createMeeting({ guildId: 'G1', channelId: 'C1', channelName: 'Cipher', startedAt: '2026-07-08T10:00:00Z', audioDir: '/tmp' });
+  db.finalizeTranscription(id2, [{ userId: 'u1', displayName: 'Koru', startMs: 0, endMs: 1000, text: 'd' }]);
+  db.endMeeting(id2, '2026-07-08T13:00:00Z');
+  db.setSummary(id2, { tldr: 'y' });
+
+  // Never finished — must not count toward totals at all.
+  const id3 = db.createMeeting({ guildId: 'G1', channelId: 'C1', channelName: 'Cipher', startedAt: '2026-07-15T10:00:00Z', audioDir: '/tmp' });
+  db.finalizeTranscription(id3, [{ userId: 'u1', displayName: 'Koru', startMs: 0, endMs: 1000, text: 'e' }]);
+
+  const stats = db.campaignStats('G1');
+  assert.equal(stats.totalSessions, 2);
+  assert.equal(stats.totalLines, 4, 'only lines from the 2 completed sessions');
+  assert.equal(stats.totalMs, 60 * 60_000 + 3 * 60 * 60_000);
+  assert.equal(stats.longestMeetingId, id2);
+  assert.equal(stats.longestMs, 3 * 60 * 60_000);
+  assert.deepEqual(stats.talkative[0], { display_name: 'Koru', lines: 3 });
+
+  assert.deepEqual(db.campaignStats('OTHER_GUILD'), {
+    totalSessions: 0,
+    totalMs: 0,
+    totalLines: 0,
+    talkative: [],
+    longestMeetingId: null,
+    longestMs: 0,
+  });
+});

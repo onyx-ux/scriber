@@ -91,6 +91,18 @@ async function appendUnique(filePath, title, newItems, sessionLabel) {
   await writeFile(filePath, updated, 'utf8');
 }
 
+// Raw contents of one ledger file (e.g. NPCs.md), for commands that want to
+// show the campaign's running list directly in Discord rather than making
+// someone open Obsidian mid-session. Returns null rather than throwing when
+// nothing's been recorded yet.
+export async function readLedgerFile(cfg, guildId, channelName, filename) {
+  try {
+    return await readFile(join(campaignDir(cfg, guildId, channelName), filename), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 export async function updateCampaignLedger({ meeting, notes, cfg }) {
   const dir = campaignDir(cfg, meeting.guild_id, meeting.channel_name);
   await mkdir(dir, { recursive: true });

@@ -462,5 +462,52 @@ function wrap(db) {
     listInterruptedMeetings() {
       return db.prepare(`SELECT * FROM meetings WHERE status IN ('recording', 'transcribing')`).all();
     },
+
+    // --- campaign-wide totals, for /stats ---
+
+    campaignStats(guildId) {
+      const meetings = db
+        .prepare(`SELECT id, started_at, ended_at FROM meetings WHERE guild_id = ? AND status = 'done'`)
+        .all(guildId);
+
+      let totalMs = 0;
+      let longest = null;
+      for (const m of meetings) {
+        if (!m.ended_at) continue;
+        const ms = new Date(m.ended_at).getTime() - new Date(m.started_at).getTime();
+        if (!Number.isFinite(ms) || ms <= 0) continue;
+        totalMs += ms;
+        if (!longest || ms > longest.ms) longest = { id: m.id, ms };
+      }
+
+      const totalLines = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM utterances u JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.guild_id = ? AND m.status = 'done'`
+        )
+        .get(guildId).n;
+
+      // Ranked by lines rather than words — cheap to compute and a fair enough
+      // proxy for "who talked the most" without tokenising every utterance.
+      const talkative = db
+        .prepare(
+          `SELECT u.display_name, COUNT(*) AS lines
+             FROM utterances u JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.guild_id = ? AND m.status = 'done'
+            GROUP BY u.display_name
+            ORDER BY lines DESC
+            LIMIT 5`
+        )
+        .all(guildId);
+
+      return {
+        totalSessions: meetings.length,
+        totalMs,
+        totalLines,
+        talkative,
+        longestMeetingId: longest?.id ?? null,
+        longestMs: longest?.ms ?? 0,
+      };
+    },
   };
 }

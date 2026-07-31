@@ -768,6 +768,100 @@ export const CORRECT_APPLIED = [
   '✏️ Corrected "{wrong}" → **{right}** on {count} line(s), and saved so future transcripts match.',
 ];
 
+// {wrong}
+export const UNCORRECT_APPLIED = [
+  '🧙 Undone — "{wrong}" will go back to transcribing as whisper actually hears it.',
+  '📜 Struck from the ledger — the correction for "{wrong}" is removed.',
+  '🗝️ Unlocked "{wrong}" from its old fix. Future transcripts are unaffected by it now.',
+  '🪶 Erased — "{wrong}" is no longer auto-corrected.',
+  '🧾 Removed "{wrong}" from the saved corrections.',
+  '⚗️ Reversed the distillation — "{wrong}" corrects to nothing now.',
+  '🕯️ The old fix for "{wrong}" has been snuffed out.',
+  '🌙 "{wrong}" is free again — no correction applies to it anymore.',
+  "🐦 The familiar forgets that one — \"{wrong}\" is no longer corrected.",
+  '✏️ Correction for "{wrong}" removed. Past transcripts are unchanged; only future ones stop applying it.',
+];
+
+// {name}
+export const WHOAMI_SET = [
+  '🧙 You appear in every transcript and recap as **{name}**.',
+  "📜 The archive knows you as **{name}**.",
+  "🗝️ Your recorded name is **{name}**.",
+  "🧾 On the ledger, you're **{name}**.",
+  "🕯️ By candlelight you're known as **{name}**.",
+  "🐦 The familiar calls you **{name}**.",
+  "🔮 The crystal ball sees you as **{name}**.",
+  "🧝 You're chronicled as **{name}**.",
+  "🌙 Under this name you're remembered: **{name}**.",
+  "🎙️ On record, you're **{name}**.",
+];
+
+// {discordName}
+export const WHOAMI_UNSET = [
+  "🧙 No character name set — you'll show up as your Discord name, **{discordName}**. Set one with `/setcharacter`.",
+  "📜 Nothing inscribed yet — transcripts use **{discordName}** until you `/setcharacter`.",
+  "🗝️ No true name on file. Currently recorded as **{discordName}** — `/setcharacter` to change that.",
+  "🧾 The ledger has you as **{discordName}** (your Discord name). Use `/setcharacter` to set something else.",
+  "🕯️ Unset — you appear as **{discordName}** for now. `/setcharacter` to give yourself a proper name.",
+  "🐦 The familiar only knows your Discord name, **{discordName}**. `/setcharacter` fixes that.",
+  "🧝 No character name yet — **{discordName}** it is, until you `/setcharacter`.",
+];
+
+// {sessions}, {hours}, {lines}
+export const STATS_HEADER = [
+  '📊 **{sessions}** session(s), **{hours}h** recorded, **{lines}** lines transcribed.',
+  '🧾 The ledger totals **{sessions}** session(s) — **{hours}h**, **{lines}** lines.',
+  '📜 Across **{sessions}** session(s): **{hours}h** of tape, **{lines}** lines transcribed.',
+  '🗝️ The vault holds **{sessions}** session(s) — **{hours}h**, **{lines}** lines.',
+  '🕰️ **{hours}h** across **{sessions}** session(s), **{lines}** lines all told.',
+  '🐉 The hoard: **{sessions}** session(s), **{hours}h**, **{lines}** lines.',
+  '🎙️ **{lines}** lines on tape across **{sessions}** session(s) (**{hours}h** total).',
+];
+
+export const STATS_EMPTY = [
+  '📭 No completed sessions yet — nothing to count.',
+  "📜 The ledger is blank so far — no finished sessions.",
+  '🗝️ Nothing in the vault yet. Finish a session first.',
+  "🧾 No totals to report — no completed sessions yet.",
+];
+
+export const NPCS_EMPTY = [
+  '📭 No NPCs recorded yet.',
+  "🧙 Nobody worth writing down has shown up yet.",
+  '🗝️ The NPC ledger is empty so far.',
+  "🐦 The familiar hasn't met anyone worth noting yet.",
+];
+
+// {list}
+export const NPCS_HEADER = [
+  '🧙 **NPCs met so far:**\n{list}',
+  '📜 **The cast so far:**\n{list}',
+  '🗝️ **Faces on file:**\n{list}',
+  '🧾 **The NPC ledger:**\n{list}',
+];
+
+export const LOCATIONS_EMPTY = [
+  '📭 No locations recorded yet.',
+  "🗺️ Nowhere worth marking on the map yet.",
+  '🗝️ The locations ledger is empty so far.',
+  "🐦 The familiar hasn't scouted anywhere worth noting yet.",
+];
+
+// {list}
+export const LOCATIONS_HEADER = [
+  '🗺️ **Places visited so far:**\n{list}',
+  '📜 **The map so far:**\n{list}',
+  '🗝️ **Marked locations:**\n{list}',
+  '🧾 **The locations ledger:**\n{list}',
+];
+
+export const ARCHIVE_SENT = [
+  '🗺️ The full campaign archive — download and open in any browser.',
+  '📖 Everything the campaign remembers, in one page.',
+  '🧾 The complete archive, ready to open locally.',
+  '🔮 A whole campaign, distilled into one file.',
+];
+
 export const GENERIC_ERROR = [
   '💥 The spell fizzled: {message}',
   '🧙 Something went wrong in the workshop: {message}',

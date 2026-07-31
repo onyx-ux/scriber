@@ -11,6 +11,8 @@ import { finishSession } from '../pipeline/finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
+import { readLedgerFile } from '../campaign/ledger.js';
+import { exportCampaignSite } from '../export/site.js';
 import {
   notifyApprovalNeeded,
   buildApprovalRow,
@@ -48,6 +50,16 @@ import {
   QUEUE_RESUMED,
   PENDING_EMPTY,
   CORRECT_APPLIED,
+  UNCORRECT_APPLIED,
+  WHOAMI_SET,
+  WHOAMI_UNSET,
+  STATS_HEADER,
+  STATS_EMPTY,
+  NPCS_EMPTY,
+  NPCS_HEADER,
+  LOCATIONS_EMPTY,
+  LOCATIONS_HEADER,
+  ARCHIVE_SENT,
   GENERIC_ERROR,
 } from '../flavor.js';
 
@@ -137,6 +149,27 @@ export const commandDefs = [
     .addIntegerOption((o) =>
       o.setName('meeting_id').setDescription('Meeting ID (omit to approve everything waiting)').setRequired(false)
     ),
+  new SlashCommandBuilder()
+    .setName('uncorrect')
+    .setDescription('Remove a saved transcript correction')
+    .addStringOption((o) =>
+      o.setName('wrong').setDescription('The mangled text to stop correcting (must match /correct exactly)').setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('whoami')
+    .setDescription('Show what name you currently appear as in transcripts and notes'),
+  new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('Campaign-wide totals: sessions, hours, lines, and who talks the most'),
+  new SlashCommandBuilder()
+    .setName('npcs')
+    .setDescription('List every NPC the campaign has met so far'),
+  new SlashCommandBuilder()
+    .setName('locations')
+    .setDescription('List every location the campaign has visited so far'),
+  new SlashCommandBuilder()
+    .setName('archive')
+    .setDescription('Get the browsable campaign archive (a single HTML file) right now'),
 ].map((c) => c.toJSON());
 
 export function registerCommandHandlers(client, db, cfg) {
@@ -177,6 +210,12 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'import') return await handleImport(interaction, db, cfg);
       if (interaction.commandName === 'correct') return await handleCorrect(interaction, db);
       if (interaction.commandName === 'corrections') return await handleCorrections(interaction, db);
+      if (interaction.commandName === 'uncorrect') return await handleUncorrect(interaction, db);
+      if (interaction.commandName === 'whoami') return await handleWhoAmI(interaction, db);
+      if (interaction.commandName === 'stats') return await handleStats(interaction, db);
+      if (interaction.commandName === 'npcs') return await handleNpcs(interaction, db, cfg);
+      if (interaction.commandName === 'locations') return await handleLocations(interaction, db, cfg);
+      if (interaction.commandName === 'archive') return await handleArchive(interaction, db, cfg);
     } catch (err) {
       console.error(`[command:${interaction.commandName}] error:`, err);
       const reply = { content: pick(GENERIC_ERROR, { message: err.message }), flags: MessageFlags.Ephemeral };
@@ -529,6 +568,84 @@ async function handleCorrections(interaction, db) {
     content: `✏️ **Saved corrections** (applied automatically to every new transcript):\n${lines.join('\n')}`,
     flags: MessageFlags.Ephemeral,
   });
+}
+
+async function handleUncorrect(interaction, db) {
+  const wrong = interaction.options.getString('wrong').trim();
+  const removed = db.removeCorrection(interaction.guildId, wrong);
+  if (removed === 0) {
+    return interaction.reply({
+      content: `⚠️ No saved correction for "${wrong}" — check \`/corrections\` for the exact text.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  await interaction.reply({ content: pick(UNCORRECT_APPLIED, { wrong }), flags: MessageFlags.Ephemeral });
+}
+
+async function handleWhoAmI(interaction, db) {
+  const characterName = db.getCharacterName(interaction.guildId, interaction.user.id);
+  const content = characterName
+    ? pick(WHOAMI_SET, { name: characterName })
+    : pick(WHOAMI_UNSET, { discordName: interaction.member?.displayName || interaction.user.username });
+  await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+}
+
+async function handleStats(interaction, db) {
+  const stats = db.campaignStats(interaction.guildId);
+  if (stats.totalSessions === 0) {
+    return interaction.reply({ content: pick(STATS_EMPTY), flags: MessageFlags.Ephemeral });
+  }
+
+  const hours = (stats.totalMs / 3_600_000).toFixed(1);
+  const header = pick(STATS_HEADER, { sessions: stats.totalSessions, hours, lines: stats.totalLines });
+
+  const talkLines = stats.talkative.map((t, i) => `${i + 1}. **${t.display_name}** — ${t.lines} lines`).join('\n');
+  const longest =
+    stats.longestMeetingId !== null
+      ? `${(stats.longestMs / 3_600_000).toFixed(1)}h (session #${stats.longestMeetingId})`
+      : 'unknown';
+
+  const content = [header, '', '**Most talkative:**', talkLines, '', `**Longest session:** ${longest}`].join('\n');
+  await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+}
+
+// Both /npcs and /locations pull from whatever campaign this guild's last
+// completed session belonged to — same one-campaign-per-guild assumption
+// /recap, /ask, /history etc. already make; there's no per-command way to
+// pick a specific campaign if a guild ever ran more than one.
+async function ledgerEntries(db, cfg, guildId, filename) {
+  const meeting = db.getLastCompletedMeeting(guildId);
+  if (!meeting) return null;
+  const raw = await readLedgerFile(cfg, guildId, meeting.channel_name, filename);
+  return (raw || '').split('\n').filter((l) => l.trim().startsWith('-'));
+}
+
+function ledgerReply(entries, emptyPick, headerPick) {
+  if (!entries || entries.length === 0) {
+    return { content: pick(emptyPick), flags: MessageFlags.Ephemeral };
+  }
+  let content = pick(headerPick, { list: entries.join('\n') });
+  if (content.length > 1900) {
+    content = `${content.slice(0, 1900)}\n… _(truncated — see the full ledger in Obsidian)_`;
+  }
+  return { content, flags: MessageFlags.Ephemeral };
+}
+
+async function handleNpcs(interaction, db, cfg) {
+  const entries = await ledgerEntries(db, cfg, interaction.guildId, 'NPCs.md');
+  await interaction.reply(ledgerReply(entries, NPCS_EMPTY, NPCS_HEADER));
+}
+
+async function handleLocations(interaction, db, cfg) {
+  const entries = await ledgerEntries(db, cfg, interaction.guildId, 'Locations.md');
+  await interaction.reply(ledgerReply(entries, LOCATIONS_EMPTY, LOCATIONS_HEADER));
+}
+
+async function handleArchive(interaction, db, cfg) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const path = await exportCampaignSite(db, interaction.guildId, cfg);
+  const attachment = new AttachmentBuilder(path, { name: 'campaign-archive.html' });
+  await interaction.editReply({ content: pick(ARCHIVE_SENT), files: [attachment] });
 }
 
 async function handleAsk(interaction, db, cfg) {
