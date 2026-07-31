@@ -40,11 +40,29 @@ a /pending (or status) command that outputs what is currently in the pipeling.
 A validation on the summary output that if the output has no real content of value, this is removed to allow space for more "what happened" For instance, the D&D campaigns may only visit one location, we don't need to have that location noted every time.
 -->
 
+## Implemented (2026-08-01, overnight)
+
+- [x] **`/correct` / `/uncorrect`** — fix a whisper-mangled fantasy name
+      across every past transcript and all future ones; `/uncorrect` undoes it.
+- [x] **Gemini as a third summariser option** — `SUMMARY_PROVIDER=gemini`,
+      alongside Ollama and Claude.
+- [x] **Transcription speed** — a real 235-utterance session was on pace for
+      4-5 hours (whisper.cpp reloads its model per file). Utterances are now
+      batched into one whisper call per group instead of one per utterance.
+- [x] **Whole-session audio backup** — `DRIVE_SYNC_AUDIO=true` now uploads
+      one compressed recording of the whole session instead of the raw
+      per-utterance fragments.
+- [x] **`/whoami`, `/stats`, `/npcs`, `/locations`, `/archive`** — campaign
+      totals and the ledger, surfaced directly in Discord instead of only
+      being visible in Obsidian.
+
 ## Ideas not built yet
 
 - **Thread resolution tracking** — `unresolvedThreads` only ever grows; nothing
   marks one resolved once a later session answers it.
 - **Auto-join/leave on voice activity** — deliberately skipped so far, since it
   risks recording casual chatter that wasn't meant to be a session.
-- **`/correct`** — fix a whisper-mangled fantasy name after the fact.
 - **Session digest/reminder** — auto-post `/recap` the day before game night.
+  Needs a "when is game night" concept that doesn't exist yet (a fixed
+  day/time config, most likely) — a design question worth confirming before
+  building, not something to guess at.
