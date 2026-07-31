@@ -119,11 +119,20 @@ export function renderMarkdown({ meeting, utterances, notes, cfg = {} }) {
   add('Locations Visited', fmtList(notes.locationsVisited, { wikilinks }));
   add('Loot & Rewards', fmtList(notes.lootAndRewards));
   add('Follow-ups Before Next Session', fmtFollowUps(notes.followUps));
-  add('Who Talked', fmtSpeakerStats(utterances));
+
+  // Kept apart from the summary sections above: speaker stats are derived
+  // from the audio, not from the AI, so they're present even when the
+  // summariser found nothing. Counting them as content would mask an empty
+  // summary behind a table nobody asked about.
+  const recap = sections.length
+    ? sections.join('\n\n')
+    : '_Nothing substantial to report from this session._';
+  const stats = fmtSpeakerStats(utterances);
+  const afterRecap = stats ? `${recap}\n\n## Who Talked\n${stats}` : recap;
 
   const body = `# Session Recap — ${meeting.channel_name} (${date})
 
-${sections.length ? sections.join('\n\n') : '_Nothing substantial to report from this session._'}
+${afterRecap}
 
 ---
 
