@@ -86,6 +86,10 @@ function wrap(db) {
   return {
     raw: db,
 
+    close() {
+      db.close();
+    },
+
     createMeeting({ guildId, channelId, channelName, startedAt, audioDir }) {
       const stmt = db.prepare(
         `INSERT INTO meetings (guild_id, channel_id, channel_name, started_at, audio_dir, status)

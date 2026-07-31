@@ -61,8 +61,15 @@ test('applyCorrections is safe with no corrections or empty text', () => {
 
 async function freshDb(t) {
   const dir = await mkdtemp(join(tmpdir(), 'scriber-corr-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  return openDb(join(dir, 'db.sqlite'));
+  const db = openDb(join(dir, 'db.sqlite'));
+  // Close the native handle before removing the directory — on Windows,
+  // deleting a WAL file that better-sqlite3 still has open fails with EBUSY
+  // (Linux allows unlinking open files; Windows doesn't).
+  t.after(async () => {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  return db;
 }
 
 test('corrections are stored per campaign and upsert on repeat', async (t) => {
