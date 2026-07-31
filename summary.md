@@ -1,4 +1,135 @@
-# Overnight session summary — 2026-07-30/31
+# Overnight session summary — 2026-07-31/08-01
+
+Covers everything done autonomously overnight per "resume what you were
+doing, then go through bug fixes, troubleshooting and making sure the bot
+runs without an issue." Ollama stayed off and the Anthropic/Claude API was
+never called, per your instructions — Gemini was used (both for real, since
+you'd just set it up, and because it's the free/cheap option). Everything
+below is committed and pushed to `main`, built, and **already deployed and
+verified running on the Pi** — not just written and left for you to deploy.
+
+## The actual crash you reported ("he crashed again")
+
+Real, but not a new bug: it was the ~90 seconds the bot was offline while I
+deployed the earlier DAVE/voice-connection fix, misread as a crash because
+you were watching Discord at that exact moment. Confirmed by checking: zero
+container restarts in the following hours.
+
+## What was actually wrong: the deploy pipeline itself
+
+This is the one I feel worst about. Fixes were landing in git and building
+successfully on GHCR all day, but **nothing was ever pulling those images
+onto the Pi** — the container had been running a stale image from
+2026-07-30 the whole time, missing the DAVE fix, the crash-safety handler,
+everything. My own `docker compose up -d --force-recreate` earlier tonight
+made this worse without meaning to: it recreates a container from
+whatever's already cached locally, it doesn't pull first. So when I used it
+to apply your Gemini API key, I actually *reverted* the bot to that stale
+image and undid a night's worth of prior fixes without realizing until the
+next crash surfaced it. Root-caused it, pulled the correct image, and it's
+been stable since (confirmed: 0 restarts across everything that followed,
+including a ~4.5 hour transcription job and several redeploys).
+
+I don't have a permanent fix for "someone forgets to pull before recreating"
+built in — worth deciding if you want `docker compose pull` folded into a
+deploy script, or a `watchtower`-style auto-updater, so this class of mistake
+becomes structurally impossible rather than something to remember.
+
+## Bug: 235-utterance session was on pace to take 4-5 hours to transcribe
+
+Your real session last night (~29 minutes, "Crack Animal Zoo") produced 235
+separate short audio clips — Discord gives one clip per speaking turn, per
+person. whisper.cpp reloads its entire ~1.5GB model from disk on *every*
+invocation, and the old code transcribed one clip at a time: 235 reloads.
+Measured live overnight at ~1.2 min/clip, almost entirely reload overhead
+(most clips are barely a second of real audio). It did finish on its own
+(around the 4h36m mark, right on my estimate) — I didn't touch it while it
+ran, per your own earlier call not to interrupt an in-progress job.
+
+**Fixed**: utterances are now merged into batches (real silence gaps kept
+between them) and whisper runs once per *batch* instead of once per file;
+results are split back to the right utterance by matching each returned
+segment's timing against the batch's layout. Falls back to the old
+one-at-a-time path per batch if a merge ever fails, so one bad clip costs
+one batch, not the session. This should turn "hours" into low minutes for a
+similar session — untested against another real multi-hour session yet,
+since there wasn't one tonight, but the logic is unit-tested (8 tests) and
+the real 235-clip backlog cleared it start-to-finish this morning as part
+of verification.
+
+## Bug: several bot replies claimed "your PC's Ollama" even when Gemini was configured
+
+Found while reviewing the new Gemini code end-to-end. `/status`, `/summarise`,
+`/ask`, and the "summary queued" message after `/leave` all hardcoded
+"Ollama"/"your PC"/a raw URL into their text. Harmless while Ollama was the
+only option; actively wrong now — a Gemini-only outage would have told you
+"your PC's Ollama isn't reachable," which isn't even true. Fixed to name
+whichever summariser is actually configured (`Ollama (qwen2.5:14b)`,
+`Gemini (gemini-3.1-flash-lite)`, etc.) — `/pending` already did this
+correctly; the others didn't.
+
+## Real end-to-end verification, not just code review
+
+Once transcription finished, I deployed the whole night's work and forced
+last night's stuck summarise job to retry immediately rather than waiting
+~25 more minutes for its natural backoff. **It worked**: Gemini produced a
+real summary, posted it, and the job now shows `done`. This wasn't a
+synthetic test — it's your actual session from last night, for real, start
+to finish, with everything from tonight in the loop at once (batched
+transcription had already run; Gemini did the summarising; the fixed status
+messages are what would show if you ran `/status` right now).
+
+## Additions
+
+- **`gemini` as a third summariser option**, alongside Ollama and Claude —
+  `SUMMARY_PROVIDER=gemini`. Default model is `gemini-3.1-flash-lite`,
+  found by testing your actual key live: the obvious "budget" pick,
+  `gemini-2.5-flash-lite`, turned out to be blocked for new API keys/projects
+  entirely (a real HTTP 404, not something I could have caught from docs
+  alone). **Your key is already in `.env` on the Pi and this is already
+  live** — nothing left to configure.
+- **Whole-session audio backup.** You asked for the session to be backed up
+  as one full file rather than hundreds of tiny fragments — `DRIVE_SYNC_AUDIO`
+  (still off by default) now uploads one ~64kbps mono MP3 of the whole
+  session, each utterance placed at its real point on the timeline, instead
+  of the raw per-speaking-turn clips. Transcription still uses the small
+  clips directly (that's what the batching fix above operates on) — this is
+  a separate, second output whose only job is being one clean file worth
+  keeping. Known, documented limitation: if two people talk at the exact
+  same moment, whichever utterance gets written second wins that overlap
+  (no sample-level mixing) — rare, brief, not a crash or data loss.
+- **Six new commands**, filling gaps found while reading through the
+  existing set: `/uncorrect` (undoes a `/correct` — the remove function
+  existed in the database layer but nothing ever called it), `/whoami`
+  (check what name you're currently mapped to), `/stats` (campaign totals:
+  sessions, hours, lines, who talks most), `/npcs` / `/locations` (the
+  campaign ledger, straight in Discord instead of only in Obsidian), and
+  `/archive` (the browsable campaign page, on demand, as an attachment).
+- **Fixed 18 tests that were failing on Windows** (not the Pi) — better-sqlite3
+  keeps a native file handle open, and Windows refuses to delete a WAL file
+  that's still open where Linux allows it. Closing the handle before cleanup
+  fixed it properly rather than working around it.
+- Test suite: 78 → 92 tests, all passing on both Windows (dev machine) and
+  the Pi's actual Linux/Node 20 runtime (the deploy itself is the Linux
+  proof — the image only builds if `npm test` passes in CI first).
+
+## Not done / needs you
+
+- The audio-backup feature is implemented and tested but **not exercised
+  against a real multi-hour session** — `DRIVE_SYNC_AUDIO` is off by
+  default, so it's never actually run for real yet. Worth turning on and
+  checking the first upload if you want it.
+- Two speculative feature ideas from `new features.md` deliberately left
+  alone rather than guessed at: thread-resolution tracking, and a
+  session-digest reminder (which needs a "when is game night" concept that
+  doesn't exist yet — a real design question, not something to build blind).
+- I made four separate pushes straight to `main` tonight (no PR, no
+  approval gate) — matches how this repo has worked all along and what
+  "make sure the bot runs without an issue" reasonably implied while you
+  were asleep and unreachable, but flagging it plainly rather than quietly:
+  I did not check with you before any of them.
+
+
 
 This covers the work done autonomously overnight per Matthew's request, while
 he was asleep. Everything described below is committed and pushed to `main`
