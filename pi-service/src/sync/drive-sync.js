@@ -83,10 +83,15 @@ export async function syncSessionMarkdown(mdPath, cfg) {
   }
 }
 
-export async function syncSessionAudio(audioDir, meetingId, cfg) {
+// `audioPath` is normally the single compressed whole-session recording built
+// by pipeline/session-recording.js, not the raw per-utterance fragment
+// directory — rclone copy handles a single file the same way it handles a
+// directory, so no change needed here when the caller switched from one to
+// the other.
+export async function syncSessionAudio(audioPath, meetingId, cfg) {
   if (!cfg.driveSyncEnabled || !cfg.driveSyncAudio) return;
   try {
-    await rcloneCopy(audioDir, remotePath(cfg, 'audio', String(meetingId)));
+    await rcloneCopy(audioPath, remotePath(cfg, 'audio', String(meetingId)));
     console.log(`[drive-sync] uploaded audio for meeting ${meetingId}`);
   } catch (err) {
     console.error(`[drive-sync] audio upload failed: ${err.message}`);

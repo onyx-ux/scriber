@@ -40,6 +40,13 @@ function parsePcmWav(buffer) {
   return { ...fmt, data };
 }
 
+// Exported for callers that just need one file's raw PCM + format (e.g.
+// session-recording.js positions each utterance's audio by hand rather than
+// concatenating), without pulling in the merge/silence-gap logic below.
+export async function readPcmWav(path) {
+  return parsePcmWav(await readFile(path));
+}
+
 export function writePcmWav({ sampleRate, channels, bitsPerSample }, data) {
   const byteRate = (sampleRate * channels * bitsPerSample) / 8;
   const blockAlign = (channels * bitsPerSample) / 8;

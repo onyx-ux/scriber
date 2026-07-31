@@ -1,6 +1,7 @@
 import { transcribeAll } from './transcribe.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { syncSessionAudio, backupAndSyncDatabase } from '../sync/drive-sync.js';
+import { buildCompressedSessionRecording } from './session-recording.js';
 
 // capturedUtterances: [{ userId, displayName, wavPath, startMs, endMs }]
 // Returns { ok, utteranceCount, failures }
@@ -40,7 +41,17 @@ export async function finishSession(db, meetingId, capturedUtterances, audioDir,
     requireApproval: cfg.summaryRequireApproval,
   });
 
-  syncSessionAudio(audioDir, meetingId, cfg).catch(() => {});
+  // Building + compressing a whole-session recording costs real CPU time on
+  // top of transcription, so only pay for it when the result would actually
+  // be used. When it is, this uploads ONE clean, listenable recording of the
+  // whole session instead of the raw per-utterance fragment directory
+  // (hundreds of tiny files a person was never meant to open individually).
+  if (cfg.driveSyncEnabled && cfg.driveSyncAudio) {
+    buildCompressedSessionRecording(capturedUtterances, audioDir)
+      .then((mp3Path) => (mp3Path ? syncSessionAudio(mp3Path, meetingId, cfg) : null))
+      .catch((err) => console.warn(`[session-recording] meeting ${meetingId}: ${err.message}`));
+  }
+
   backupAndSyncDatabase(db, cfg).catch(() => {});
 
   return { ok: true, utteranceCount: utterances.length, failures, job };

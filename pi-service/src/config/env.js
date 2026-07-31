@@ -112,7 +112,11 @@ export const config = validate({
   // /history and /export (fast, works offline) — this just pushes copies
   // out so your PC's Google Drive desktop app picks them up automatically.
   driveSyncEnabled: optional('DRIVE_SYNC_ENABLED', 'false') === 'true',
-  driveSyncAudio: optional('DRIVE_SYNC_AUDIO', 'false') === 'true', // off by default: audio is large, opt in
+  // Off by default: even compressed, a long session is still tens of MB.
+  // When on, uploads one compressed whole-session recording (built by
+  // pipeline/session-recording.js) rather than the raw per-utterance
+  // fragment directory.
+  driveSyncAudio: optional('DRIVE_SYNC_AUDIO', 'false') === 'true',
   driveRemoteName: optional('DRIVE_REMOTE_NAME', 'gdrive'), // must match `rclone config` remote name
   driveRemotePath: optional('DRIVE_REMOTE_PATH', 'DnDSessions'),
 

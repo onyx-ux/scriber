@@ -107,10 +107,9 @@ config over:**
    section pasted in (it's mounted as a directory, not a single file, so
    rclone can rewrite it in place when it refreshes the OAuth token).
 5. In `.env` on the Pi, set `DRIVE_SYNC_ENABLED=true` (and
-   `DRIVE_SYNC_AUDIO=true` if you also want raw audio uploaded — off by
-   default since audio is large and normally deleted after processing
-   anyway; only turn this on if you're keeping audio around, per the
-   earlier decision to disable auto-delete).
+   `DRIVE_SYNC_AUDIO=true` if you also want a copy of each session's audio
+   uploaded — off by default, since even compressed it's tens of MB per
+   session).
 6. Restart: `docker compose up -d --build`
 
 **On the PC:** install Google Drive for Desktop, and either point it at the
@@ -120,7 +119,16 @@ Google's own sync client doing its job.
 
 **What gets uploaded where** (all under `DnDSessions/` in your Drive):
 - `notes/` — finished markdown (after summary, so it's the complete version)
-- `audio/<meeting_id>/` — only if `DRIVE_SYNC_AUDIO=true`
+- `audio/<meeting_id>/` — only if `DRIVE_SYNC_AUDIO=true`. **One** ~64kbps
+  mono MP3 for the whole session, not the raw per-utterance fragments —
+  Discord gives one short audio clip per speaking turn per person (hundreds
+  per session), which transcription needs but nobody wants to back up or
+  listen back to individually. The MP3 is reconstructed from those same
+  clips, each placed at its real point in the session, so it plays back like
+  the session actually happened (silences included) rather than every line
+  squashed end-to-end. This upload is independent of `AUDIO_RETENTION_DAYS`
+  — the raw fragments still get deleted locally on that schedule either way;
+  the Drive copy is what survives long-term if you want one.
 - `db-backups/` — periodic consistent SQLite snapshots (never the live
   actively-written database file, to avoid uploading a corrupted mid-write
   copy)
