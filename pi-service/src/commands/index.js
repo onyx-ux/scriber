@@ -298,7 +298,11 @@ async function handleLeave(interaction, db, cfg) {
     const reachable = await isSummariserReachable(cfg);
     content = reachable
       ? pick(LEAVE_SUMMARIZING_NOW, { count: result.utteranceCount })
-      : pick(LEAVE_SUMMARY_QUEUED, { count: result.utteranceCount, meetingId: session.meetingId });
+      : pick(LEAVE_SUMMARY_QUEUED, {
+          count: result.utteranceCount,
+          meetingId: session.meetingId,
+          label: summariserLabel(cfg),
+        });
   }
 
   await interaction.followUp({ content, files: [attachment] });
@@ -334,7 +338,7 @@ async function handleSummarizeNow(interaction, db, cfg) {
   const reachable = await isSummariserReachable(cfg);
   if (!reachable) {
     return interaction.reply({
-      content: pick(SUMMARIZE_UNREACHABLE, { url: cfg.ollamaUrl }),
+      content: pick(SUMMARIZE_UNREACHABLE, { label: summariserLabel(cfg) }),
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -378,10 +382,11 @@ async function handleStatus(interaction, db, cfg) {
   const jobs = db.listPendingJobs();
   const reachable = await isSummariserReachable(cfg);
   const reachableText = reachable ? '✅ reachable' : '❌ not reachable';
+  const label = summariserLabel(cfg);
 
   if (jobs.length === 0) {
     return interaction.reply({
-      content: pick(STATUS_IDLE, { reachable: reachableText }),
+      content: pick(STATUS_IDLE, { reachable: reachableText, label }),
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -392,7 +397,7 @@ async function handleStatus(interaction, db, cfg) {
   });
 
   await interaction.reply({
-    content: `${pick(STATUS_QUEUED_HEADER, { reachable: reachableText })}\n${lines.join('\n')}`,
+    content: `${pick(STATUS_QUEUED_HEADER, { reachable: reachableText, label })}\n${lines.join('\n')}`,
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -531,7 +536,7 @@ async function handleAsk(interaction, db, cfg) {
 
   if (db.getSetting('summarize_paused') === 'true') {
     return interaction.reply({
-      content: '⏸️ Summarising is paused, so I\'m not calling Ollama. Run `/resume` first.',
+      content: `⏸️ Summarising is paused, so I'm not calling ${summariserLabel(cfg)}. Run \`/resume\` first.`,
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -539,7 +544,7 @@ async function handleAsk(interaction, db, cfg) {
     // Not the SUMMARIZE_UNREACHABLE text — that promises a background retry,
     // and there's no queue behind /ask to retry with.
     return interaction.reply({
-      content: `🔮 The oracle is dark — your PC's Ollama isn't reachable at \`${cfg.ollamaUrl}\`. Turn it on and ask again.`,
+      content: `🔮 The oracle is dark — ${summariserLabel(cfg)} isn't reachable right now. Try again shortly.`,
       flags: MessageFlags.Ephemeral,
     });
   }
