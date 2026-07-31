@@ -38,8 +38,13 @@ export async function postSessionNotes({ discordClient, meeting, notes, mdPath, 
   const date = (meeting.started_at || '').slice(0, 10);
   const header = pick(POST_SESSION_HEADER, { channel: meeting.channel_name, date });
 
+  const funnySection =
+    notes.funnyMoments && notes.funnyMoments.length > 0
+      ? `\n\n## 😂 Moments Worth Remembering\n${fmtList(notes.funnyMoments)}`
+      : '';
+
   const body = `## 📜 What Happened
-${notes.tldr || '_none_'}
+${notes.tldr || '_none_'}${funnySection}
 
 ## ⚔️ Scenes & Encounters
 ${(notes.scenes || []).map((s) => `**${s.title}**\n${fmtList(s.points, '_no details_')}`).join('\n\n') || '_none_'}

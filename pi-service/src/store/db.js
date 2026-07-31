@@ -196,6 +196,14 @@ function wrap(db) {
         .get(guildId);
     },
 
+    // --- every completed meeting with a summary, for /funny to pull from ---
+
+    listCompletedMeetings(guildId) {
+      return db
+        .prepare(`SELECT * FROM meetings WHERE guild_id = ? AND status = 'done' AND summary_json IS NOT NULL`)
+        .all(guildId);
+    },
+
     // --- orphaned session recovery (bot crashed/restarted mid-session) ---
 
     listInterruptedMeetings() {

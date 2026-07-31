@@ -25,6 +25,8 @@ import {
   STATUS_QUEUED_HEADER,
   RECAP_NONE,
   RECAP_HEADER,
+  FUNNY_NONE,
+  FUNNY_HEADER,
   GENERIC_ERROR,
 } from '../flavor.js';
 
@@ -57,6 +59,9 @@ export const commandDefs = [
   new SlashCommandBuilder()
     .setName('recap')
     .setDescription("Post last session's TL;DR again"),
+  new SlashCommandBuilder()
+    .setName('funny')
+    .setDescription('Pull a random funny or memorable moment from this campaign\'s history'),
 ].map((c) => c.toJSON());
 
 export function registerCommandHandlers(client, db, cfg) {
@@ -72,6 +77,7 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'setcharacter') return handleSetCharacter(interaction, db);
       if (interaction.commandName === 'status') return handleStatus(interaction, db, cfg);
       if (interaction.commandName === 'recap') return handleRecap(interaction, db);
+      if (interaction.commandName === 'funny') return handleFunny(interaction, db);
     } catch (err) {
       console.error(`[command:${interaction.commandName}] error:`, err);
       const reply = { content: pick(GENERIC_ERROR, { message: err.message }), ephemeral: true };
@@ -254,4 +260,25 @@ async function handleRecap(interaction, db) {
   const date = (meeting.started_at || '').slice(0, 10);
   const header = pick(RECAP_HEADER, { channel: meeting.channel_name, date });
   await interaction.reply(`${header}\n\n${notes.tldr || '_no recap available_'}`);
+}
+
+async function handleFunny(interaction, db) {
+  const meetings = db.listCompletedMeetings(interaction.guildId);
+
+  // Every funny moment from every completed session, paired with which
+  // session it came from — the pool /funny picks randomly out of.
+  const pool = [];
+  for (const meeting of meetings) {
+    const notes = JSON.parse(meeting.summary_json || '{}');
+    for (const moment of notes.funnyMoments || []) {
+      pool.push({ moment, channel: meeting.channel_name, date: (meeting.started_at || '').slice(0, 10) });
+    }
+  }
+
+  if (pool.length === 0) {
+    return interaction.reply({ content: pick(FUNNY_NONE), ephemeral: true });
+  }
+
+  const chosen = pool[Math.floor(Math.random() * pool.length)];
+  await interaction.reply(pick(FUNNY_HEADER, chosen));
 }

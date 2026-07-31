@@ -9,6 +9,7 @@ const EMPTY_NOTES = {
   npcsIntroduced: [],
   locationsVisited: [],
   lootAndRewards: [],
+  funnyMoments: [],
 };
 
 function extractJson(text) {

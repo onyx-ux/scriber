@@ -16,7 +16,8 @@ markdown fences, no commentary) with this exact shape:
   ],
   "npcsIntroduced": ["string - any new named NPCs and a one-line description"],
   "locationsVisited": ["string - any new named locations and a one-line description"],
-  "lootAndRewards": ["string - items, gold, XP, or other rewards gained this session"]
+  "lootAndRewards": ["string - items, gold, XP, or other rewards gained this session"],
+  "funnyMoments": ["string - a short, self-contained retelling of a genuinely funny, chaotic, or absurd beat from this session, written as a punchy one-to-two sentence callback (e.g. \"Cipher cast Fireball at point-blank range and caught the whole party in the blast\") — something that would still be funny out of context, months later, with no other memory of the session"]
 }
 
 Rules:
@@ -33,7 +34,11 @@ Rules:
   a key.
 - Be thorough rather than terse. This summary is meant to stand in for
   reading the full transcript, so don't drop plot-relevant detail to save
-  space.`;
+  space.
+- Be genuinely selective about "funnyMoments" — most sessions have one or
+  two moments like this at most, and plenty of sessions have none at all.
+  Do not force it or stretch a merely-notable moment into a "funny" one;
+  an empty array is a completely normal result for this field.`;
 
 export function buildSummaryUserMessage(transcript, meta) {
   const attendees = (meta.attendees || []).join(', ');

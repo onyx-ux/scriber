@@ -39,10 +39,15 @@ export function renderMarkdown({ meeting, utterances, notes }) {
     '',
   ].join('\n');
 
+  const funnySection =
+    notes.funnyMoments && notes.funnyMoments.length > 0
+      ? `\n\n## Moments Worth Remembering\n${fmtList(notes.funnyMoments)}`
+      : '';
+
   const body = `# Session Recap — ${meeting.channel_name} (${date})
 
 ## TL;DR
-${notes.tldr || '_none_'}
+${notes.tldr || '_none_'}${funnySection}
 
 ## Scenes
 ${fmtScenes(notes.scenes)}

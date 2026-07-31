@@ -460,6 +460,53 @@ export const POST_SESSION_ATTACHMENT_CAPTION = [
   '📎 Full session markdown (transcript + notes) — drop into Obsidian:',
 ];
 
+export const FUNNY_NONE = [
+  "🤷 Nothing funny on record yet — either you've all been very sensible, or nobody's cast Fireball indoors yet.",
+  "😐 No memorable chaos recorded so far. Give it time.",
+  '🧙 The scribe has yet to write down anything worth laughing about. A quiet campaign, so far.',
+  "📜 The archive of foolishness is empty. Surely that won't last.",
+  "🎭 No blooper reel yet — this campaign is being suspiciously well-behaved.",
+  '🧾 Nothing filed under "chaos" yet.',
+  "🕯️ Not a single recorded disaster yet. Impressive, honestly.",
+  "🐦 The familiar hasn't overheard anything worth repeating yet.",
+  '🔮 The crystal ball shows a distinct lack of tomfoolery so far.',
+  "🌙 No embarrassing moments on the books yet.",
+  "⚗️ Nothing chaotic enough to bottle yet.",
+  "🕰️ History hasn't recorded a single blunder yet.",
+  "🧠 I've got nothing funny filed away yet — ask again after a few more sessions.",
+  "🎙️ Nothing on the blooper tape yet.",
+  "🐉 Even the dragon hasn't seen anything worth laughing at yet.",
+  '🗿 No moment has been carved into the "hall of shame" yet.',
+  "📯 Nothing embarrassing enough to announce yet.",
+  "🧝 The chronicler hasn't caught anyone doing anything silly yet.",
+  "⛩️ The shrine of chaos stands empty, for now.",
+  "🪶 Not a single funny quill-mark yet — give the party time.",
+];
+
+// {channel}, {date}, {moment}
+export const FUNNY_HEADER = [
+  '😂 Remember when, back in **{channel}** ({date})... {moment}',
+  '🎭 A moment worth remembering, from **{channel}** ({date}):\n\n{moment}',
+  '🧙 Pulled from the archive — **{channel}** ({date}):\n\n{moment}',
+  '📜 Straight from the record books, **{channel}** ({date}):\n\n{moment}',
+  '🐦 The familiar recalls, from **{channel}** ({date}):\n\n{moment}',
+  '🔮 The crystal ball shows a memory from **{channel}** ({date}):\n\n{moment}',
+  '🌙 A blast from the past — **{channel}** ({date}):\n\n{moment}',
+  '⚗️ A distilled memory from **{channel}** ({date}):\n\n{moment}',
+  '🕰️ Turning back the clock to **{channel}** ({date})...\n\n{moment}',
+  '🧠 I remember this one — **{channel}** ({date}):\n\n{moment}',
+  '🎙️ Pulled at random from the tape — **{channel}** ({date}):\n\n{moment}',
+  '🐉 From the hoard of chaos, **{channel}** ({date}):\n\n{moment}',
+  '🗿 Carved into the hall of shame — **{channel}** ({date}):\n\n{moment}',
+  '📯 Hear ye — a moment from **{channel}** ({date}):\n\n{moment}',
+  '🧝 The chronicler grins and recalls, from **{channel}** ({date}):\n\n{moment}',
+  '⛩️ From the shrine of chaos, **{channel}** ({date}):\n\n{moment}',
+  '🪶 A moment worth re-inking — **{channel}** ({date}):\n\n{moment}',
+  '📖 Flipping back to **{channel}** ({date})...\n\n{moment}',
+  '🧾 On record, from **{channel}** ({date}):\n\n{moment}',
+  '😂 A random moment worth remembering — **{channel}** ({date}):\n\n{moment}',
+];
+
 export const GENERIC_ERROR = [
   '💥 The spell fizzled: {message}',
   '🧙 Something went wrong in the workshop: {message}',
