@@ -1,6 +1,7 @@
-import { summarizeViaOllama } from './summarize-client.js';
+import { summarizeTranscript } from './summarize-client.js';
 import { buildTranscriptText } from './transcribe.js';
 import { exportMarkdown } from '../export/markdown.js';
+import { exportCampaignSite } from '../export/site.js';
 import { postSessionNotes } from '../delivery/discord-post.js';
 import { syncSessionMarkdown, backupAndSyncDatabase, pullLedgerFromDrive, pushLedgerToDrive } from '../sync/drive-sync.js';
 import { updateCampaignLedger, campaignDirInfo, readKnownEntities, entryKey } from '../campaign/ledger.js';
@@ -45,7 +46,7 @@ export async function tick(db, discordClient, cfg) {
       attendees: [...new Set(utterances.map((u) => u.display_name))],
     };
 
-    const notes = await summarizeViaOllama(transcript, meta, cfg);
+    const notes = await summarizeTranscript(transcript, meta, cfg);
 
     // Store the FULL summary — /recap, /funny and the ledger all read this,
     // and it should stay the complete record of the session.
@@ -72,6 +73,12 @@ export async function tick(db, discordClient, cfg) {
     // Ledger update uses the unfiltered notes so it stays authoritative.
     await updateCampaignLedger({ meeting, notes, cfg });
     await pushLedgerToDrive(ledgerDir, ledgerRemote, cfg);
+
+    // Regenerate the browsable archive page. Best-effort — a failure here
+    // must not fail an otherwise-complete session.
+    await exportCampaignSite(db, meeting.guild_id, cfg).catch((err) =>
+      console.warn(`[site] archive page not regenerated: ${err.message}`)
+    );
 
     db.markJobDone(job.id);
     console.log(`[queue] meeting ${meeting.id} summarized and posted`);

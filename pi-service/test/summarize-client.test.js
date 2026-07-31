@@ -1,7 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { summarizeViaOllama } from '../src/pipeline/summarize-client.js';
+import { summarizeTranscript } from '../src/pipeline/summarize-client.js';
 
 const cfg = { ollamaUrl: 'http://stub:11434', ollamaModel: 'test', ollamaNumCtx: 8192 };
 const meta = { channelName: 'Cipher', date: '2026-07-31', attendees: ['Alice', 'Bob'] };
@@ -51,7 +51,7 @@ afterEach(() => {
 
 test('a short transcript takes the single-pass path', async () => {
   stub(() => GOOD);
-  const notes = await summarizeViaOllama('[00:01] Alice: hello there', meta, cfg);
+  const notes = await summarizeTranscript('[00:01] Alice: hello there', meta, cfg);
   assert.equal(calls.length, 1);
   assert.equal(kind(calls[0]), 'SINGLE');
   assert.equal(notes.tldr, 'Something happened.');
@@ -62,13 +62,13 @@ test('a short transcript takes the single-pass path', async () => {
 // tail of a session.
 test('num_ctx is always sent explicitly', async () => {
   stub(() => GOOD);
-  await summarizeViaOllama('[00:01] Alice: hi', meta, cfg);
+  await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
   assert.equal(calls[0].numCtx, 8192);
 });
 
 test('a long transcript is sliced and reduced, never sent in one oversized call', async () => {
   stub(() => GOOD);
-  await summarizeViaOllama(longTranscript, meta, cfg);
+  await summarizeTranscript(longTranscript, meta, cfg);
 
   const kinds = calls.map(kind);
   assert.ok(kinds.filter((k) => k === 'MAP').length > 1, 'expected several map calls');
@@ -82,7 +82,7 @@ test('a long transcript is sliced and reduced, never sent in one oversized call'
 
 test('slices are cut on utterance boundaries, never mid-line', async () => {
   stub(() => GOOD);
-  await summarizeViaOllama(longTranscript, meta, cfg);
+  await summarizeTranscript(longTranscript, meta, cfg);
 
   for (const c of calls.filter((x) => kind(x) === 'MAP')) {
     const slice = c.user.split('Transcript slice:\n')[1] ?? '';
@@ -94,13 +94,13 @@ test('slices are cut on utterance boundaries, never mid-line', async () => {
 
 test('one bad slice degrades gracefully instead of losing the session', async () => {
   stub((n) => (n === 2 ? 'not json at all' : GOOD));
-  const notes = await summarizeViaOllama(longTranscript, meta, cfg);
+  const notes = await summarizeTranscript(longTranscript, meta, cfg);
   assert.ok(notes.tldr.length > 0, 'the rest of the session still produces a summary');
 });
 
 test('every slice failing throws, so the queue retries rather than storing a blank summary', async () => {
   stub(() => 'not json at all');
-  await assert.rejects(() => summarizeViaOllama(longTranscript, meta, cfg), /slices failed/);
+  await assert.rejects(() => summarizeTranscript(longTranscript, meta, cfg), /slices failed/);
 });
 
 // Guards a crash: a model returning null for an array used to overwrite the
@@ -109,7 +109,7 @@ test('malformed model output is coerced, not fatal', async () => {
   stub(() =>
     JSON.stringify({ tldr: null, scenes: null, npcsIntroduced: 'not an array', followUps: [{ nope: 1 }] })
   );
-  const notes = await summarizeViaOllama('[00:01] Alice: hi', meta, cfg);
+  const notes = await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
 
   assert.equal(typeof notes.tldr, 'string');
   assert.ok(Array.isArray(notes.scenes));
@@ -120,13 +120,13 @@ test('malformed model output is coerced, not fatal', async () => {
 
 test('placeholder follow-ups with an empty task are dropped', async () => {
   stub(() => JSON.stringify({ tldr: 't', followUps: [{ assignee: null, task: '' }, { assignee: 'A', task: 'real' }] }));
-  const notes = await summarizeViaOllama('[00:01] Alice: hi', meta, cfg);
+  const notes = await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
   assert.equal(notes.followUps.length, 1);
   assert.equal(notes.followUps[0].task, 'real');
 });
 
 test('JSON wrapped in markdown fences is still parsed', async () => {
   stub(() => '```json\n' + GOOD + '\n```');
-  const notes = await summarizeViaOllama('[00:01] Alice: hi', meta, cfg);
+  const notes = await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
   assert.equal(notes.tldr, 'Something happened.');
 });

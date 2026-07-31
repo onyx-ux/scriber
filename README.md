@@ -201,6 +201,9 @@ whole stack on one machine for debugging.)*
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
 - `/funny` — pull a random funny/memorable moment from any completed session in this campaign's history (the AI summariser flags these, if any, as part of the normal per-session summary)
 - `/search query:<text>` — search every transcript in the campaign for a word or phrase (an NPC name, an item, a place) and get back the matching lines with the session number, timestamp and speaker. Answers "when did we first meet that guy?" without re-reading old notes
+- `/import [file:<attachment>] [url:<link>] [speaker:<label>]` — import a recording made outside Discord (an in-person game, a phone recording). Runs through the same transcribe → summarise → post pipeline. Use `url:` for anything over Discord's ~25MB attachment cap. **Every line is attributed to one label** (default "Table") — a single microphone has no per-speaker channels, so voices can't be told apart the way they can in a voice call
+- `/correct wrong:<text> right:<text>` — fix a name whisper keeps mishearing. Rewrites every past transcript in the campaign **and** is saved, so future sessions are corrected automatically
+- `/corrections` — list the saved corrections
 - `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs Ollama running
 - `/status` — see what's currently queued/retrying, and whether your PC's Ollama is reachable right now
 - `/pending` — everything currently in the pipeline: recording, transcribing, awaiting approval, or queued for summarising
@@ -222,6 +225,29 @@ touches the GPU until you press it. `/pending` shows everything waiting and
 
 `/pause` goes further — it stops the queue entirely, so you can kill Ollama
 outright. Queued sessions stay exactly where they are and resume on `/resume`.
+
+## Browsable archive
+
+Alongside the markdown, the bot writes `campaign-archive.html` into the export
+folder after every session — a single self-contained page listing every
+session with its recap, plus a campaign-wide NPC/location index, the funny
+moments, and a live search box. No server and no open port on the Pi: it's
+just a file, so it syncs to Drive with everything else and opens from a phone,
+a laptop, or a USB stick. Full transcripts stay in the `.md` files beside it.
+
+## Choosing the summariser
+
+`SUMMARY_PROVIDER` decides which model writes the recap:
+
+- `ollama` (default) — everything stays on your own hardware.
+- `anthropic` — sends the finished **transcript text** to Claude for a
+  noticeably better recap. Set `ANTHROPIC_API_KEY`; `ANTHROPIC_MODEL` defaults
+  to `claude-opus-5`.
+
+**Audio and transcription are always local.** Recordings never leave the
+network under either setting — the cloud option only ever sees text that has
+already been transcribed on the Pi. Long transcripts are still sliced and
+merged automatically, so session length isn't capped either way.
 
 ## Campaign ledger (Obsidian)
 

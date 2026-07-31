@@ -744,6 +744,30 @@ export const PENDING_EMPTY = [
   '🪶 Quill idle — nothing in the pipeline.',
 ];
 
+// {wrong}, {right}, {count}
+export const CORRECT_APPLIED = [
+  '✏️ Noted — "{wrong}" is really **{right}**. Fixed {count} line(s), and I\'ll correct it automatically from now on.',
+  '🧙 Ah, **{right}** — not "{wrong}". Corrected {count} line(s) and remembered it for future sessions.',
+  '📜 The scribe amends the record: "{wrong}" → **{right}**. {count} line(s) rewritten, and it\'ll stick.',
+  '🪶 Struck through "{wrong}", written **{right}**. {count} line(s) fixed; future sessions will match.',
+  '🗝️ "{wrong}" now reads **{right}** throughout the archive — {count} line(s) — and stays that way.',
+  '🧾 Ledger amended: "{wrong}" is **{right}**. {count} line(s) updated, correction saved.',
+  '📖 Every "{wrong}" is now **{right}** — {count} line(s) — and I\'ll keep it that way.',
+  '🐦 The familiar went back through the archive: "{wrong}" → **{right}**, {count} line(s) fixed.',
+  '🔮 The record clears: "{wrong}" was always **{right}**. {count} line(s) corrected.',
+  '🕯️ By candlelight the error is mended — "{wrong}" → **{right}**, {count} line(s).',
+  '⚗️ Refined "{wrong}" into **{right}** across {count} line(s). It\'ll hold for future sessions.',
+  '🕰️ History rewritten (for the better): "{wrong}" → **{right}**, {count} line(s).',
+  '🧠 Re-remembered: **{right}**, not "{wrong}". {count} line(s) corrected and saved.',
+  '🎙️ The tape is patched — "{wrong}" → **{right}** on {count} line(s).',
+  '🐉 Even the dragon agrees it\'s **{right}**, not "{wrong}". {count} line(s) fixed.',
+  '🗿 Re-carved: "{wrong}" → **{right}**, across {count} line(s).',
+  '📯 Let the record show **{right}**, not "{wrong}" — {count} line(s) amended.',
+  '🧝 The chronicler corrects themselves: **{right}**. {count} line(s) updated.',
+  '⛩️ The name **{right}** replaces "{wrong}" on {count} line(s), now and hereafter.',
+  '✏️ Corrected "{wrong}" → **{right}** on {count} line(s), and saved so future transcripts match.',
+];
+
 export const GENERIC_ERROR = [
   '💥 The spell fizzled: {message}',
   '🧙 Something went wrong in the workshop: {message}',

@@ -1,4 +1,5 @@
 import { transcribeAll } from './transcribe.js';
+import { applyCorrections } from '../campaign/corrections.js';
 import { syncSessionAudio, backupAndSyncDatabase } from '../sync/drive-sync.js';
 
 // capturedUtterances: [{ userId, displayName, wavPath, startMs, endMs }]
@@ -17,6 +18,17 @@ export async function finishSession(db, meetingId, capturedUtterances, audioDir,
   if (utterances.length === 0) {
     db.setMeetingStatus(meetingId, 'transcription_failed');
     return { ok: false, utteranceCount: 0, failures };
+  }
+
+  // Replay the campaign's saved /correct fixes over the fresh transcript.
+  // whisper mangles the same invented names identically every session, so
+  // correcting one once should fix it forever, not just retroactively.
+  const meeting = db.getMeeting(meetingId);
+  const corrections = meeting ? db.listCorrections(meeting.guild_id) : [];
+  if (corrections.length > 0) {
+    for (const u of utterances) {
+      u.text = applyCorrections(u.text, corrections);
+    }
   }
 
   // Single transaction: replaces utterances, flips status, and enqueues the

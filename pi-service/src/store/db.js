@@ -39,6 +39,17 @@ CREATE TABLE IF NOT EXISTS characters (
   PRIMARY KEY (guild_id, user_id)
 );
 
+-- Per-campaign speech-to-text corrections. Columns are *_text rather than
+-- "wrong"/"right" because RIGHT is a SQL keyword (RIGHT JOIN) in newer SQLite.
+CREATE TABLE IF NOT EXISTS corrections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  wrong_text TEXT NOT NULL,
+  correct_text TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (guild_id, wrong_text)
+);
+
 -- Simple persistent key/value store, so operator state (e.g. the summarise
 -- queue being paused) survives a restart rather than living only in memory.
 CREATE TABLE IF NOT EXISTS settings (
@@ -292,6 +303,53 @@ function wrap(db) {
         .all();
     },
 
+    // --- speech-to-text corrections ---
+
+    addCorrection(guildId, wrongText, correctText) {
+      db.prepare(
+        `INSERT INTO corrections (guild_id, wrong_text, correct_text) VALUES (?, ?, ?)
+         ON CONFLICT(guild_id, wrong_text) DO UPDATE SET correct_text = excluded.correct_text`
+      ).run(guildId, wrongText, correctText);
+    },
+
+    listCorrections(guildId) {
+      return db
+        .prepare(`SELECT wrong_text, correct_text FROM corrections WHERE guild_id = ? ORDER BY id ASC`)
+        .all(guildId);
+    },
+
+    removeCorrection(guildId, wrongText) {
+      return db.prepare(`DELETE FROM corrections WHERE guild_id = ? AND wrong_text = ?`).run(guildId, wrongText).changes;
+    },
+
+    // Rewrites already-stored transcripts. Takes the replace function rather
+    // than doing it in SQL because SQLite's REPLACE() is case-sensitive and
+    // has no word-boundary support, so "vecks" wouldn't match "Vecks" and
+    // correcting a short name would corrupt longer words containing it.
+    rewriteUtterances(guildId, rewrite) {
+      const rows = db
+        .prepare(
+          `SELECT u.id, u.text FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.guild_id = ?`
+        )
+        .all(guildId);
+
+      const update = db.prepare(`UPDATE utterances SET text = ? WHERE id = ?`);
+      let changed = 0;
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          const next = rewrite(row.text);
+          if (next !== row.text) {
+            update.run(next, row.id);
+            changed++;
+          }
+        }
+      });
+      tx();
+      return changed;
+    },
+
     // --- persistent operator settings ---
 
     getSetting(key, fallback = null) {
@@ -361,6 +419,10 @@ function wrap(db) {
       return db
         .prepare(`SELECT * FROM meetings WHERE guild_id = ? AND status = 'done' ORDER BY started_at DESC LIMIT 1`)
         .get(guildId);
+    },
+
+    countUtterances(meetingId) {
+      return db.prepare(`SELECT COUNT(*) AS n FROM utterances WHERE meeting_id = ?`).get(meetingId).n;
     },
 
     // --- full-text lookup across every transcript in the campaign (/search) ---

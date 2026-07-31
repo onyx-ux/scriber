@@ -13,7 +13,16 @@ function optional(name, fallback) {
   return v && v.trim() ? v.trim() : fallback;
 }
 
-export const config = {
+function validate(cfg) {
+  if (cfg.summaryProvider === 'anthropic' && !cfg.anthropicApiKey) {
+    throw new Error(
+      'SUMMARY_PROVIDER=anthropic requires ANTHROPIC_API_KEY. Set the key, or switch back to SUMMARY_PROVIDER=ollama.'
+    );
+  }
+  return cfg;
+}
+
+export const config = validate({
   discordToken: required('DISCORD_TOKEN'),
   discordClientId: required('DISCORD_CLIENT_ID'),
 
@@ -51,6 +60,17 @@ export const config = {
     return Number.isFinite(n) && n >= 2048 ? n : 9216;
   })(),
 
+  // Which model writes the summary. 'ollama' keeps everything on your own
+  // hardware; 'anthropic' sends the finished TRANSCRIPT TEXT to Claude for a
+  // better-quality recap. Audio and transcription stay local either way —
+  // recordings never leave the network under either setting.
+  summaryProvider: (() => {
+    const v = optional('SUMMARY_PROVIDER', 'ollama').toLowerCase();
+    return v === 'anthropic' ? 'anthropic' : 'ollama';
+  })(),
+  anthropicApiKey: optional('ANTHROPIC_API_KEY', null),
+  anthropicModel: optional('ANTHROPIC_MODEL', 'claude-opus-5'),
+
   // --- summarise-on-approval ---
   // With this on, finishing a session does NOT immediately hand the
   // transcript to Ollama; the job waits in 'awaiting_approval' and the owner
@@ -87,4 +107,4 @@ export const config = {
   // long campaign. 0 = keep forever. Only ever touches 'done' meetings —
   // anything still pending/failed/retrying is left alone.
   audioRetentionDays: parseInt(optional('AUDIO_RETENTION_DAYS', '14'), 10),
-};
+});

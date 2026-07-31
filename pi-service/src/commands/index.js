@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { startCapture } from '../voice/capture.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
-import { isOllamaReachable } from '../pipeline/summarize-client.js';
+import { isSummariserReachable, summariserLabel } from '../pipeline/model-client.js';
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { finishSession } from '../pipeline/finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
+import { applyCorrections } from '../campaign/corrections.js';
+import { importAudio } from '../pipeline/import-audio.js';
 import {
   notifyApprovalNeeded,
   buildApprovalRow,
@@ -45,6 +47,7 @@ import {
   QUEUE_PAUSED,
   QUEUE_RESUMED,
   PENDING_EMPTY,
+  CORRECT_APPLIED,
   GENERIC_ERROR,
 } from '../flavor.js';
 
@@ -92,6 +95,18 @@ export const commandDefs = [
       o.setName('query').setDescription('Word or phrase to look for (e.g. an NPC name)').setRequired(true)
     ),
   new SlashCommandBuilder()
+    .setName('correct')
+    .setDescription('Fix a name whisper keeps mishearing — across all past sessions and all future ones')
+    .addStringOption((o) =>
+      o.setName('wrong').setDescription('What it hears (e.g. "Vecks")').setRequired(true)
+    )
+    .addStringOption((o) =>
+      o.setName('right').setDescription('What it should be (e.g. "Vex")').setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('corrections')
+    .setDescription('List the saved transcript corrections for this campaign'),
+  new SlashCommandBuilder()
     .setName('pending')
     .setDescription('Show everything currently in the pipeline (recording, transcribing, awaiting approval)'),
   new SlashCommandBuilder()
@@ -103,6 +118,18 @@ export const commandDefs = [
     .setDescription('Ask a question about this campaign, answered from past sessions')
     .addStringOption((o) =>
       o.setName('question').setDescription('e.g. "who was the smuggler we met at the docks?"').setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('import')
+    .setDescription('Import a recording made outside Discord (in-person game, phone recording)')
+    .addAttachmentOption((o) =>
+      o.setName('file').setDescription('Audio or video file (Discord caps this at ~25MB)').setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName('url').setDescription('Direct download link — use this for files too big for Discord').setRequired(false)
+    )
+    .addStringOption((o) =>
+      o.setName('speaker').setDescription('Label for the speakers (default "Table")').setRequired(false)
     ),
   new SlashCommandBuilder()
     .setName('approve')
@@ -147,6 +174,9 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'resume') return await handleResume(interaction, db);
       if (interaction.commandName === 'approve') return await handleApprove(interaction, db);
       if (interaction.commandName === 'ask') return await handleAsk(interaction, db, cfg);
+      if (interaction.commandName === 'import') return await handleImport(interaction, db, cfg);
+      if (interaction.commandName === 'correct') return await handleCorrect(interaction, db);
+      if (interaction.commandName === 'corrections') return await handleCorrections(interaction, db);
     } catch (err) {
       console.error(`[command:${interaction.commandName}] error:`, err);
       const reply = { content: pick(GENERIC_ERROR, { message: err.message }), flags: MessageFlags.Ephemeral };
@@ -265,7 +295,7 @@ async function handleLeave(interaction, db, cfg) {
       meetingId: session.meetingId,
     });
   } else {
-    const reachable = await isOllamaReachable(cfg);
+    const reachable = await isSummariserReachable(cfg);
     content = reachable
       ? pick(LEAVE_SUMMARIZING_NOW, { count: result.utteranceCount })
       : pick(LEAVE_SUMMARY_QUEUED, { count: result.utteranceCount, meetingId: session.meetingId });
@@ -301,7 +331,7 @@ async function handleSummarizeNow(interaction, db, cfg) {
   const meeting = db.getMeeting(meetingId);
   if (!meeting) return interaction.reply({ content: 'No such meeting.', flags: MessageFlags.Ephemeral });
 
-  const reachable = await isOllamaReachable(cfg);
+  const reachable = await isSummariserReachable(cfg);
   if (!reachable) {
     return interaction.reply({
       content: pick(SUMMARIZE_UNREACHABLE, { url: cfg.ollamaUrl }),
@@ -346,7 +376,7 @@ async function handleSetCharacter(interaction, db) {
 
 async function handleStatus(interaction, db, cfg) {
   const jobs = db.listPendingJobs();
-  const reachable = await isOllamaReachable(cfg);
+  const reachable = await isSummariserReachable(cfg);
   const reachableText = reachable ? '✅ reachable' : '❌ not reachable';
 
   if (jobs.length === 0) {
@@ -378,6 +408,124 @@ async function handleRecap(interaction, db) {
   await interaction.reply(`${header}\n\n${notes.tldr || '_no recap available_'}`);
 }
 
+async function handleImport(interaction, db, cfg) {
+  const attachment = interaction.options.getAttachment('file');
+  const url = interaction.options.getString('url');
+  const speakerLabel = (interaction.options.getString('speaker') || 'Table').trim() || 'Table';
+
+  const source = attachment?.url || url;
+  if (!source) {
+    return interaction.reply({
+      content: '⚠️ Attach a `file:` or give a `url:` — one of the two is needed.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  if (activeSessions.has(interaction.guildId)) {
+    return interaction.reply({
+      content: "⚠️ I'm recording right now — `/leave` first, then import.",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  // Transcribing an hours-long recording on a Pi takes far longer than
+  // Discord's 15-minute interaction window, so acknowledge, then report back
+  // by editing the original reply as each phase completes.
+  await interaction.deferReply();
+  await interaction.editReply('📥 Downloading the recording…');
+
+  const stages = {
+    downloading: '📥 Downloading the recording…',
+    converting: '🎛️ Converting the audio…',
+    transcribing: `🎧 Transcribing with whisper — this takes a while for a long recording. I'll post the result here when it's done.`,
+  };
+
+  try {
+    const result = await importAudio({
+      db,
+      cfg,
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      channelName: interaction.channel?.name || 'imported',
+      url: source,
+      filename: attachment?.name,
+      speakerLabel,
+      onProgress: (stage) => {
+        if (stages[stage]) interaction.editReply(stages[stage]).catch(() => {});
+      },
+    });
+
+    const parked = result.job?.status === 'awaiting_approval';
+    const note = parked
+      ? `Parked awaiting your approval — \`/approve meeting_id:${result.meetingId}\`.`
+      : 'Summarising now.';
+
+    await interaction.editReply(
+      `✅ Imported as session #${result.meetingId} — ${result.utteranceCount} lines transcribed. ${note}\n` +
+        `_Every line is attributed to **${speakerLabel}**: a single recording has no per-speaker channels, so I can't tell voices apart the way I can in a voice call._`
+    );
+
+    if (parked) {
+      await notifyApprovalNeeded({
+        discordClient: interaction.client,
+        cfg,
+        meeting: db.getMeeting(result.meetingId),
+        jobId: result.job.id,
+        utteranceCount: result.utteranceCount,
+      });
+    }
+  } catch (err) {
+    console.error('[import] failed:', err);
+    await interaction.editReply(`❌ Import failed: ${err.message}`);
+  }
+}
+
+async function handleCorrect(interaction, db) {
+  const wrong = interaction.options.getString('wrong').trim();
+  const right = interaction.options.getString('right').trim();
+
+  if (!wrong || !right) {
+    return interaction.reply({ content: '⚠️ Both values are required.', flags: MessageFlags.Ephemeral });
+  }
+  if (wrong.toLowerCase() === right.toLowerCase()) {
+    return interaction.reply({
+      content: '⚠️ Those are the same thing — nothing to correct.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  // Save first so it applies to every future session, then replay it over
+  // everything already transcribed.
+  db.addCorrection(interaction.guildId, wrong, right);
+  const changed = db.rewriteUtterances(interaction.guildId, (text) =>
+    applyCorrections(text, [{ wrong_text: wrong, correct_text: right }])
+  );
+
+  const note =
+    changed > 0
+      ? '\n\n_Existing summaries were generated before this fix — run `/summarise meeting_id:<id>` on a session to regenerate one with the corrected name._'
+      : '';
+
+  await interaction.reply({
+    content: pick(CORRECT_APPLIED, { wrong, right, count: changed }) + note,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleCorrections(interaction, db) {
+  const rows = db.listCorrections(interaction.guildId);
+  if (rows.length === 0) {
+    return interaction.reply({
+      content: '📭 No corrections saved yet. Use `/correct` when whisper mangles a name.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  const lines = rows.map((r) => `- "${r.wrong_text}" → **${r.correct_text}**`);
+  await interaction.reply({
+    content: `✏️ **Saved corrections** (applied automatically to every new transcript):\n${lines.join('\n')}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 async function handleAsk(interaction, db, cfg) {
   const question = interaction.options.getString('question').trim();
 
@@ -387,7 +535,7 @@ async function handleAsk(interaction, db, cfg) {
       flags: MessageFlags.Ephemeral,
     });
   }
-  if (!(await isOllamaReachable(cfg))) {
+  if (!(await isSummariserReachable(cfg))) {
     // Not the SUMMARIZE_UNREACHABLE text — that promises a background retry,
     // and there's no queue behind /ask to retry with.
     return interaction.reply({
@@ -490,7 +638,7 @@ async function handlePending(interaction, db, cfg) {
     });
   }
 
-  const reachable = await isOllamaReachable(cfg);
+  const reachable = await isSummariserReachable(cfg);
   const lines = rows.map((r) => {
     const date = (r.started_at || '').slice(0, 10);
     const parts = [`**#${r.id} — ${r.channel_name} (${date})**`];
@@ -510,7 +658,7 @@ async function handlePending(interaction, db, cfg) {
     return parts.join('\n');
   });
 
-  let content = `🔧 **Pipeline** — Ollama is ${reachable ? '✅ reachable' : '❌ not reachable'}\n\n${lines.join('\n\n')}${pausedNote}`;
+  let content = `🔧 **Pipeline** — ${summariserLabel(cfg)} is ${reachable ? '✅ reachable' : '❌ not reachable'}\n\n${lines.join('\n\n')}${pausedNote}`;
   if (content.length > 1900) {
     const trimmed = content.slice(0, 1900);
     content = `${trimmed.slice(0, trimmed.lastIndexOf('\n'))}\n… _(truncated)_`;

@@ -33,7 +33,19 @@ export async function transcribeWav(wavPath, cfg) {
   const parsed = JSON.parse(raw);
 
   // whisper.cpp's JSON schema: { transcription: [{ text, offsets: { from, to } }, ...] }
-  const segments = parsed.transcription || [];
-  const text = segments.map((s) => s.text.trim()).join(' ').trim();
-  return { text };
+  const parsedSegments = parsed.transcription || [];
+  const text = parsedSegments.map((s) => s.text.trim()).join(' ').trim();
+
+  // Segments (with their offsets) are what an imported single-track recording
+  // needs — a Discord capture already has one file per speaking turn, but an
+  // in-person recording is one long file and has to be split by timestamp.
+  const segments = parsedSegments
+    .map((s) => ({
+      text: String(s.text || '').trim(),
+      fromMs: s.offsets?.from ?? 0,
+      toMs: s.offsets?.to ?? s.offsets?.from ?? 0,
+    }))
+    .filter((s) => s.text);
+
+  return { text, segments };
 }

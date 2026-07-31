@@ -1,4 +1,5 @@
 import { DND_ASK_PROMPT, buildAskUserMessage } from '../prompts/ask-prompt.js';
+import { callModel, contextTokens } from './model-client.js';
 
 const CHARS_PER_TOKEN = 3.5;
 const RESERVE_OUTPUT_TOKENS = 800;
@@ -69,7 +70,7 @@ export function gatherContext(db, guildId, question, cfg) {
   let excerpts = [...byKey.values()].sort((a, b) => a.meetingId - b.meetingId || a.time.localeCompare(b.time));
 
   // Trim to fit: drop excerpts (lowest value per token) until it fits.
-  const budgetTokens = cfg.ollamaNumCtx - estTokens(DND_ASK_PROMPT) - RESERVE_OUTPUT_TOKENS - SAFETY_TOKENS;
+  const budgetTokens = contextTokens(cfg) - estTokens(DND_ASK_PROMPT) - RESERVE_OUTPUT_TOKENS - SAFETY_TOKENS;
   while (excerpts.length > 0 && estTokens(buildAskUserMessage(question, summaries, excerpts)) > budgetTokens) {
     excerpts = excerpts.slice(0, Math.floor(excerpts.length * 0.8));
   }
@@ -78,38 +79,12 @@ export function gatherContext(db, guildId, question, cfg) {
 }
 
 export async function askCampaign({ question, summaries, excerpts, cfg, timeoutMs = 5 * 60 * 1000 }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: cfg.ollamaModel,
-        stream: false,
-        options: { num_ctx: cfg.ollamaNumCtx },
-        messages: [
-          { role: 'system', content: DND_ASK_PROMPT },
-          { role: 'user', content: buildAskUserMessage(question, summaries, excerpts) },
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Ollama returned HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    const content = data?.message?.content;
-    if (!content) throw new Error('Ollama response had no message content');
-    return content.trim();
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      throw new Error(`Ollama request timed out after ${Math.round(timeoutMs / 1000)}s`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+  const answer = await callModel(
+    DND_ASK_PROMPT,
+    buildAskUserMessage(question, summaries, excerpts),
+    cfg,
+    timeoutMs,
+    { estTokens }
+  );
+  return answer.trim();
 }

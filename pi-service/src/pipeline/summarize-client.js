@@ -6,6 +6,7 @@ import {
   buildChunkUserMessage,
   buildReduceUserMessage,
 } from '../prompts/dnd-summary-prompt.js';
+import { callModel, contextTokens } from './model-client.js';
 
 const EMPTY_NOTES = {
   tldr: '',
@@ -35,9 +36,10 @@ function estTokens(s) {
 }
 
 // How many characters of transcript we can put in one request, given the
-// configured context window and the system prompt we're pairing it with.
+// configured provider's context window and the system prompt we're pairing
+// with it.
 function inputBudgetChars(cfg, systemPrompt) {
-  const available = cfg.ollamaNumCtx - estTokens(systemPrompt) - RESERVE_OUTPUT_TOKENS - SAFETY_TOKENS;
+  const available = contextTokens(cfg) - estTokens(systemPrompt) - RESERVE_OUTPUT_TOKENS - SAFETY_TOKENS;
   // Never go below a floor — a pathologically small num_ctx shouldn't produce
   // thousands of one-line chunks.
   return Math.max(2000, Math.floor(available * CHARS_PER_TOKEN));
@@ -119,60 +121,6 @@ function normalizeNotes(parsed) {
   };
 }
 
-async function callOllama(systemPrompt, userMessage, cfg, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: cfg.ollamaModel,
-        stream: false,
-        // Without an explicit num_ctx, Ollama uses its own small default
-        // (4096, and in practice it truncated a 28k-token transcript down to
-        // ~2k) REGARDLESS of what the model actually supports — silently
-        // discarding most of the transcript instead of erroring.
-        options: { num_ctx: cfg.ollamaNumCtx },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Ollama returned HTTP ${res.status}: ${await res.text().catch(() => '')}`);
-    }
-
-    const data = await res.json();
-    const content = data?.message?.content;
-    if (!content) throw new Error('Ollama response had no message content');
-
-    // If Ollama still had to truncate, say so loudly rather than quietly
-    // returning a summary of only part of the input.
-    const sent = estTokens(systemPrompt) + estTokens(userMessage);
-    if (data.prompt_eval_count && sent > data.prompt_eval_count * 1.5) {
-      console.warn(
-        `[summarize] possible context truncation: sent ~${sent} est. tokens, Ollama evaluated ${data.prompt_eval_count} (num_ctx=${cfg.ollamaNumCtx})`
-      );
-    }
-
-    return content;
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      throw new Error(`Ollama request timed out after ${Math.round(timeoutMs / 1000)}s`);
-    }
-    // fetch's connection-refused error message differs by platform; surface it as-is,
-    // the queue worker doesn't need to distinguish "PC off" from other network errors,
-    // it retries either way.
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 // One slice failing to parse shouldn't throw away a whole 4-hour session, so
 // retry once and then fall back to an empty partial for that slice only.
@@ -180,7 +128,7 @@ async function summarizeChunk(chunk, meta, index, total, cfg, timeoutMs) {
   const userMessage = buildChunkUserMessage(chunk, meta, index, total);
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const raw = await callOllama(DND_CHUNK_PROMPT, userMessage, cfg, timeoutMs);
+      const raw = await callModel(DND_CHUNK_PROMPT, userMessage, cfg, timeoutMs, { estTokens });
       return { ok: true, partial: normalizeNotes(extractJson(raw)) };
     } catch (err) {
       if (attempt === 2) {
@@ -234,13 +182,13 @@ async function reduceToFinal(partials, meta, cfg, timeoutMs) {
     console.log(`[summarize] reduce pass ${pass}: collapsing ${level.length} slice notes into ${groups.length}`);
     const next = [];
     for (const group of groups) {
-      const raw = await callOllama(DND_REDUCE_PROMPT, buildReduceUserMessage(group, meta), cfg, timeoutMs);
+      const raw = await callModel(DND_REDUCE_PROMPT, buildReduceUserMessage(group, meta), cfg, timeoutMs, { estTokens });
       next.push(asSliceNote(normalizeNotes(extractJson(raw))));
     }
     level = next;
   }
 
-  const raw = await callOllama(DND_REDUCE_PROMPT, buildReduceUserMessage(level, meta), cfg, timeoutMs);
+  const raw = await callModel(DND_REDUCE_PROMPT, buildReduceUserMessage(level, meta), cfg, timeoutMs, { estTokens });
   return normalizeNotes(extractJson(raw));
 }
 
@@ -248,12 +196,12 @@ async function reduceToFinal(partials, meta, cfg, timeoutMs) {
 // "PC is on but slow/model still loading" (timeout). Caller (queue-worker)
 // is responsible for retry/backoff; this function does not retry itself.
 // timeoutMs applies per Ollama request, not to the whole (possibly chunked) job.
-export async function summarizeViaOllama(transcript, meta, cfg, { timeoutMs = 20 * 60 * 1000 } = {}) {
+export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 20 * 60 * 1000 } = {}) {
   const singlePassBudget = inputBudgetChars(cfg, DND_SUMMARY_PROMPT);
 
   // Short session: one call, exactly as before.
   if (transcript.length <= singlePassBudget) {
-    const raw = await callOllama(DND_SUMMARY_PROMPT, buildSummaryUserMessage(transcript, meta), cfg, timeoutMs);
+    const raw = await callModel(DND_SUMMARY_PROMPT, buildSummaryUserMessage(transcript, meta), cfg, timeoutMs, { estTokens });
     return normalizeNotes(extractJson(raw));
   }
 
@@ -261,7 +209,7 @@ export async function summarizeViaOllama(transcript, meta, cfg, { timeoutMs = 20
   // transcript is all the model would ever see.
   const chunks = splitTranscript(transcript, inputBudgetChars(cfg, DND_CHUNK_PROMPT));
   console.log(
-    `[summarize] transcript is ${transcript.length} chars — too long for one pass (num_ctx=${cfg.ollamaNumCtx}); summarising in ${chunks.length} slices`
+    `[summarize] transcript is ${transcript.length} chars — too long for one pass (context=${contextTokens(cfg)} tokens); summarising in ${chunks.length} slices`
   );
 
   const partials = [];
@@ -285,19 +233,3 @@ export async function summarizeViaOllama(transcript, meta, cfg, { timeoutMs = 20
   return reduceToFinal(partials, meta, cfg, timeoutMs);
 }
 
-// Quick reachability check, used by a "/summarise" command to give the user
-// an immediate yes/no instead of silently enqueueing when they can see the
-// PC is clearly off.
-export async function isOllamaReachable(cfg, timeoutMs = 3000) {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/tags`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
