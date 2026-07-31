@@ -10,13 +10,6 @@ import { join } from 'node:path';
 async function main() {
   const db = openDb(join(config.dataDir, 'db.sqlite'));
 
-  // Do this before the Discord client even logs in — no reason to make a
-  // reboot recovery wait on Discord connectivity, and we don't want new
-  // /join commands racing with recovery over the same meeting rows.
-  await recoverInterruptedMeetings(db, config).catch((err) =>
-    console.error('[startup] recovery pass failed:', err)
-  );
-
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
   });
@@ -31,6 +24,14 @@ async function main() {
 
   client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
+
+    // Runs after login (not before, like it used to) specifically so it can
+    // resolve real Discord display names via the now-cached guilds — a
+    // recovered transcript used to fall back to bare user IDs for every
+    // speaker because no client was available yet at this point.
+    await recoverInterruptedMeetings(db, config, client).catch((err) =>
+      console.error('[startup] recovery pass failed:', err)
+    );
 
     const rest = new REST({ version: '10' }).setToken(config.discordToken);
     await rest.put(Routes.applicationCommands(config.discordClientId), { body: commandDefs });

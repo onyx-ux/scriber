@@ -507,6 +507,30 @@ export const FUNNY_HEADER = [
   '😂 A random moment worth remembering — **{channel}** ({date}):\n\n{moment}',
 ];
 
+// {error}
+export const JOIN_FAILED = [
+  "🧙 The scribe tried to slip into the room but the door wouldn't open: {error}",
+  '📜 The quill snapped before a single word was written: {error}',
+  "🕯️ The candle refused to light — couldn't establish the connection: {error}",
+  '🔮 The crystal ball stayed dark — voice connection failed: {error}',
+  "🗝️ The lock wouldn't turn — couldn't join the voice channel: {error}",
+  '🐦 The familiar flew into a window — connection failed: {error}',
+  "🧾 The scroll never unrolled — joining failed: {error}",
+  '📖 That chapter refused to open — voice connection failed: {error}',
+  "🌙 Something in the ether blocked the way — couldn't connect: {error}",
+  "⚗️ The ritual fizzled before it began — connection failed: {error}",
+  "🕸️ The threads snapped before they could weave — couldn't connect: {error}",
+  "🧠 Lost the signal before it even started — connection failed: {error}",
+  '🎙️ Nothing came through — voice connection failed: {error}',
+  "🐉 Even the dragon couldn't force the door — connection failed: {error}",
+  '🗿 The stones stayed silent — connection failed: {error}',
+  "📯 The herald never made it through — connection failed: {error}",
+  "🧝 The chronicler got turned away at the door — connection failed: {error}",
+  '⛩️ The shrine remained sealed — connection failed: {error}',
+  '🪶 The quill never touched parchment — connection failed: {error}',
+  "😬 Couldn't actually start recording — the voice connection failed: {error}. Nothing was recorded — try `/join` again.",
+];
+
 export const GENERIC_ERROR = [
   '💥 The spell fizzled: {message}',
   '🧙 Something went wrong in the workshop: {message}',

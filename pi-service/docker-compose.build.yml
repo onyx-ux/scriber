@@ -16,8 +16,12 @@ services:
       - ./data:/data
       - ./models:/models
       - ./obsidian-export:/data/obsidian
-      # Read-only: the container only needs to use this token, never modify it.
-      - ./rclone.conf:/root/.config/rclone/rclone.conf:ro
+      # Mounted as a directory, not a single file — rclone rewrites its config
+      # in place (rename old -> .old, new -> target) to persist token
+      # refreshes, and renaming a bind-mounted file itself fails with EBUSY
+      # ("device or resource busy"), since the mount point can't be moved.
+      # Mounting the parent dir instead lets that rename happen normally.
+      - ./rclone:/root/.config/rclone
     # No ports need to be exposed — this service only makes outbound
     # connections (to Discord's gateway, to Ollama on the PC, and to
     # Google Drive if DRIVE_SYNC_ENABLED=true).

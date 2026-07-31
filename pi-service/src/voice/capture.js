@@ -12,7 +12,9 @@ const TARGET_SAMPLE_RATE = 16000; // what whisper.cpp expects
 // A WAV header is 44 bytes — anything at or below that is silence with no
 // actual audio, which happens when Discord opens a speaking segment for a
 // user but no real sound (a mic click, a brief noise gate blip) came through.
-const EMPTY_WAV_SIZE = 44;
+// Exported so recovery.js can apply the same filter when rebuilding an
+// utterance list straight from disk after a crash/restart.
+export const EMPTY_WAV_SIZE = 44;
 
 // Resample 48kHz stereo -> 16kHz mono via ffmpeg's swresample rather than a
 // hand-rolled decimator. A naive "take every 3rd sample" downsample (the
@@ -71,10 +73,36 @@ export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtt
   // crashes the process the same way an unhandled Client error would.
   connection.on('error', (err) => console.error('[voice] connection error:', err.message));
 
+  // Lightweight state-transition + close-code logging — enough to diagnose a
+  // stuck/failed handshake (e.g. the WS close code, which pinpoints things
+  // like DAVE/E2EE negotiation failures) without the full verbose packet
+  // trace, which is noisy and briefly includes the voice session token.
+  connection.on('stateChange', (oldState, newState) => {
+    console.log(`[voice] state: ${oldState.status} -> ${newState.status}`);
+    if (newState.networking && !newState.networking.__closeLogged) {
+      newState.networking.__closeLogged = true;
+      newState.networking.once('close', (code) => console.log(`[voice] networking WS closed with code: ${code}`));
+    }
+  });
+
   const receiver = connection.receiver;
   const sessionStart = Date.now();
 
+  // Discord's per-user "speaking" flag flickers off and back on during
+  // ordinary mid-sentence pauses (far shorter than our 1000ms AfterSilence
+  // threshold) — so 'start' can fire again for a user who's still mid-
+  // utterance. Without this guard, that second 'start' opens a second
+  // overlapping subscription on the same audio, producing two WAV files
+  // that both transcribe to roughly the same text (seen in practice as
+  // duplicate/near-duplicate lines back-to-back in the transcript). One
+  // active subscription per user at a time — the existing one keeps
+  // running and will only end on genuine silence.
+  const activeUsers = new Set();
+
   receiver.speaking.on('start', async (userId) => {
+    if (activeUsers.has(userId)) return;
+    activeUsers.add(userId);
+
     const startMs = Date.now() - sessionStart;
     const opusStream = receiver.subscribe(userId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
@@ -103,6 +131,8 @@ export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtt
       }
     } catch (err) {
       console.error(`[capture] stream error for user ${userId}:`, err.message);
+    } finally {
+      activeUsers.delete(userId);
     }
   });
 

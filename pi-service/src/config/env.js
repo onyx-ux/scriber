@@ -19,9 +19,12 @@ export const config = {
 
   dataDir: optional('DATA_DIR', '/data'),
 
-  // whisper.cpp
+  // whisper.cpp — WHISPER_MODEL_PATH defaults from WHISPER_MODEL_NAME rather
+  // than a fixed literal, so changing just the model name (e.g. base.en ->
+  // medium.en) can't silently leave the path pointing at a differently-named
+  // file; set WHISPER_MODEL_PATH explicitly only if you want a custom path.
   whisperBin: optional('WHISPER_BIN', '/app/whisper.cpp/build/bin/whisper-cli'),
-  whisperModelPath: optional('WHISPER_MODEL_PATH', '/models/ggml-base.en.bin'),
+  whisperModelPath: optional('WHISPER_MODEL_PATH', `/models/ggml-${optional('WHISPER_MODEL_NAME', 'base.en')}.bin`),
   whisperThreads: parseInt(optional('WHISPER_THREADS', '4'), 10),
 
   // Ollama on the PC, reachable over the LAN

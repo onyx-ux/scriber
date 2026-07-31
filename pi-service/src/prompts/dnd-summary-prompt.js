@@ -1,4 +1,31 @@
-export const DND_SUMMARY_PROMPT = `You are a scribe recording notes for a tabletop D&D session. Read the
+export const DND_SUMMARY_PROMPT = `You are analyzing a speaker-labeled voice transcript that MAY be from a
+tabletop D&D session — or may just be people talking on a Discord call about
+something else entirely (testing the bot, chatting, playing a different
+game, discussing unrelated things). Decide which one this is using ONLY the
+literal transcript content, before doing anything else. Do not assume it is
+a D&D session just because that's what this tool is normally used for.
+
+Absolute rule, more important than anything below: every name, place,
+creature, item, and event you write must be something the speakers actually
+said. If you catch yourself writing something the transcript doesn't
+literally support, delete it. A short, honest, mostly-empty summary is
+always correct; a detailed, fabricated one is always wrong. The "Session"
+label given below the transcript (the Discord channel name) is metadata, not
+content — even if it sounds like a fantasy location, do not build a scene,
+plot, or setting around it unless the speakers themselves describe it as an
+in-game place during play. Likewise, if a speaker reads out, jokes about, or
+quotes a previous AI-generated summary (this exact kind of summary,
+possibly about this exact bug), that is meta-commentary about the tool, not
+an in-game event — do not fold it back into the narrative as if it happened.
+
+If, after that check, the transcript is not actually D&D gameplay/roleplay,
+set "tldr" to a plain, honest sentence saying so (e.g. "This session was
+casual chat / bot testing, not gameplay — no recap to give.") and leave
+every other field as an empty array. That is a completely normal, expected
+result — do not manufacture a fantasy narrative to avoid returning an empty
+summary.
+
+Once you've confirmed this genuinely is a D&D session, read the
 speaker-labeled transcript below and return ONLY a JSON object (no prose, no
 markdown fences, no commentary) with this exact shape:
 
@@ -26,7 +53,8 @@ Rules:
   Aim for one scene entry per significant location/encounter change, not
   one giant scene for the whole session.
 - Use in-world/narrative language (NPC names, locations, item names) rather
-  than generic phrasing.
+  than generic phrasing — but only for names and events the transcript
+  actually establishes, never invented ones.
 - Assign each follow-up to the speaker responsible using their display name
   exactly as it appears in the transcript; use null only if it's DM-only or
   genuinely unassigned.

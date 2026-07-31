@@ -11,6 +11,7 @@ import {
   JOIN_NO_CHANNEL,
   JOIN_ALREADY_RECORDING,
   JOIN_STARTED,
+  JOIN_FAILED,
   LEAVE_NOT_RECORDING,
   LEAVE_START,
   LEAVE_NOTHING_USABLE,
@@ -69,15 +70,20 @@ export function registerCommandHandlers(client, db, cfg) {
     if (!interaction.isChatInputCommand()) return;
 
     try {
-      if (interaction.commandName === 'join') return handleJoin(interaction, db, cfg);
-      if (interaction.commandName === 'leave') return handleLeave(interaction, db, cfg);
-      if (interaction.commandName === 'history') return handleHistory(interaction, db);
-      if (interaction.commandName === 'summarise') return handleSummarizeNow(interaction, db, cfg);
-      if (interaction.commandName === 'export') return handleExport(interaction, db, cfg);
-      if (interaction.commandName === 'setcharacter') return handleSetCharacter(interaction, db);
-      if (interaction.commandName === 'status') return handleStatus(interaction, db, cfg);
-      if (interaction.commandName === 'recap') return handleRecap(interaction, db);
-      if (interaction.commandName === 'funny') return handleFunny(interaction, db);
+      // Each handler must be awaited here, not just returned — "return
+      // handleX(...)" hands back the promise without keeping this try block
+      // on the stack, so a rejection later on (e.g. the voice connection
+      // timing out well after the initial reply) would silently become an
+      // unhandled rejection instead of being caught below.
+      if (interaction.commandName === 'join') return await handleJoin(interaction, db, cfg);
+      if (interaction.commandName === 'leave') return await handleLeave(interaction, db, cfg);
+      if (interaction.commandName === 'history') return await handleHistory(interaction, db);
+      if (interaction.commandName === 'summarise') return await handleSummarizeNow(interaction, db, cfg);
+      if (interaction.commandName === 'export') return await handleExport(interaction, db, cfg);
+      if (interaction.commandName === 'setcharacter') return await handleSetCharacter(interaction, db);
+      if (interaction.commandName === 'status') return await handleStatus(interaction, db, cfg);
+      if (interaction.commandName === 'recap') return await handleRecap(interaction, db);
+      if (interaction.commandName === 'funny') return await handleFunny(interaction, db);
     } catch (err) {
       console.error(`[command:${interaction.commandName}] error:`, err);
       const reply = { content: pick(GENERIC_ERROR, { message: err.message }), ephemeral: true };
@@ -97,19 +103,14 @@ async function handleJoin(interaction, db, cfg) {
     return interaction.reply({ content: pick(JOIN_ALREADY_RECORDING), ephemeral: true });
   }
 
-  await interaction.reply(pick(JOIN_STARTED, { channel: voiceChannel.name }));
+  // Defer instead of replying immediately — we don't actually know the join
+  // succeeded until the voice connection reaches Ready (which can take up to
+  // ~20s), and claiming "recording started" before that was confirmed is
+  // exactly what caused a silent failure to look like a successful /join.
+  await interaction.deferReply();
 
-  const startedAt = new Date().toISOString();
   const audioDir = join(cfg.dataDir, 'audio', `${interaction.guildId}-${Date.now()}`);
   await mkdir(audioDir, { recursive: true });
-
-  const meetingId = db.createMeeting({
-    guildId: interaction.guildId,
-    channelId: interaction.channelId,
-    channelName: voiceChannel.name,
-    startedAt,
-    audioDir,
-  });
 
   const capturedUtterances = [];
 
@@ -129,8 +130,27 @@ async function handleJoin(interaction, db, cfg) {
     },
   });
 
-  await handle.waitUntilReady();
+  try {
+    await handle.waitUntilReady();
+  } catch (err) {
+    handle.disconnect();
+    console.error('[join] voice connection failed:', err.message);
+    return interaction.editReply(pick(JOIN_FAILED, { error: err.message }));
+  }
+
+  // Only now — once the connection is actually confirmed — do we create the
+  // meeting row and register the session, so a failed /join never leaves a
+  // dangling "recording" meeting behind for crash-recovery to trip over.
+  const meetingId = db.createMeeting({
+    guildId: interaction.guildId,
+    channelId: interaction.channelId,
+    channelName: voiceChannel.name,
+    startedAt: new Date().toISOString(),
+    audioDir,
+  });
+
   activeSessions.set(interaction.guildId, { meetingId, handle, capturedUtterances, audioDir });
+  await interaction.editReply(pick(JOIN_STARTED, { channel: voiceChannel.name }));
 }
 
 async function handleLeave(interaction, db, cfg) {

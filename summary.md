@@ -195,3 +195,174 @@ that differ only in wording.
   (rclone's built-in client is being retired sometime in 2026) is still
   unaddressed — separate from anything above, carried over from before this
   session.
+
+## Addendum (2026-07-31): first real live-session test, and what it found
+
+Matthew ran the bot for real for the first time — actual `/join`, actual
+people talking, actual `/leave`. This is exactly the "not done / needs you"
+item from the section above, and it surfaced a run of genuine bugs that
+synthetic testing couldn't have caught, several of them pre-existing (not
+introduced tonight, just never exercised before).
+
+### 4. `/join` failed outright — Discord's new mandatory voice encryption (DAVE)
+
+First symptom: `/join` said "recording started," but `/leave` said "not
+currently recording" — the same *symptom* as bug #1, but a different cause
+this time (the container hadn't crashed or restarted). Root cause, found by
+tracing the exact WebSocket close code: Discord globally enforced end-to-end
+voice encryption (the DAVE protocol) on **2 March 2026**, and this project's
+`@discordjs/voice` (`0.17.0`) predates DAVE support entirely — it couldn't
+complete the connection handshake at all anymore (close code `4017`,
+undocumented in that old library version).
+
+**Fix**: upgraded `@discordjs/voice` to `0.19.2`, which bundles
+`@snazzah/davey` (the DAVE decryption library; ships a prebuilt
+`linux-arm64-gnu` binary, so no Rust toolchain needed in the Dockerfile).
+
+Alongside this, fixed the actual UX bug that made the failure confusing in
+the first place: `/join` was replying "recording started" *before* the
+voice connection was confirmed, and a bug in the command router (`return
+handleJoin(...)` instead of `return await handleJoin(...)`) meant a failure
+partway through was silently swallowed instead of being caught and reported.
+`/join` now defers its reply, only confirms success once the connection is
+actually Ready, and reports a clear error if it isn't.
+
+### 5. Every transcription silently "failed" — even though whisper.cpp was succeeding
+
+`whisper.js` told whisper.cpp to write output via `-of <path-without-.wav>`
+(so the real output file is `<name>.json`), but then read from
+`<name>.wav.json` — a path that never existed. Every single transcription
+logged as a failure, even though whisper.cpp was quietly writing correct
+`.json` output the whole time. Never caught before tonight because bugs #1
+and #4 meant no session had ever reached this step with real audio.
+
+**Fix**: compute the read path the same way as the `-of` argument.
+
+### 6. Google Drive sync completely broken — missing CA certificates
+
+Every rclone call failed with `x509: certificate signed by unknown
+authority`. The container's `apt-get install` line for `rclone`/`ffmpeg`
+never included `ca-certificates`, so the container had no TLS trust store at
+all. This was there from the start; it went unnoticed because the original
+Drive OAuth setup (see the original section above) was done through the
+standalone `rclone/rclone` image, not this bot's own container.
+
+**Fix**: added `ca-certificates` to the Dockerfile's runtime `apt-get
+install`. Also fixed a second, related issue while in there: `rclone.conf`
+was bind-mounted as a single file, which meant rclone's own config-save
+(needed to persist a refreshed OAuth token) failed with "device or resource
+busy" — renaming a bind-mounted file's own mount point isn't possible. Same
+class of bug hit and fixed for `pc-sync/` in the original session; applied
+the same fix here (mount the parent directory instead:
+`pi-service/rclone/rclone.conf`, not `pi-service/rclone.conf`).
+
+### 7. Duplicate transcript lines — a second recording opening mid-utterance
+
+Real transcripts showed the same line (or a near-duplicate) twice in a row,
+seconds apart, over and over — e.g. "I know, right? How the fuck did I get
+away with that?" followed immediately by "How the fuck did I get away with
+that?" again. Root cause: Discord's per-user "speaking" flag flickers off
+and back on during ordinary mid-sentence pauses (much shorter than the
+1-second "AfterSilence" threshold used to end a recording), and the capture
+code had no guard against a second `'start'` event firing for a user who
+was already mid-recording — so it opened a second, overlapping subscription
+capturing roughly the same audio a second time.
+
+**Fix** (`voice/capture.js`): track one active recording per speaker; a
+`'start'` event for someone already being recorded is ignored, letting the
+existing recording keep running until genuine silence ends it.
+
+### 8. Recovered transcripts showed raw Discord IDs instead of names
+
+Not a new bug tonight, but only just exercised: when a session gets
+reconstructed from disk after an interruption (the crash-recovery path from
+the original session — see above), it had no live Discord connection
+available to resolve display names, since recovery ran *before*
+`client.login()`. It fell back to bare numeric user IDs for every speaker.
+
+**Fix**: moved `recoverInterruptedMeetings` to run from inside the `ready`
+handler (after login), and it now resolves real Discord display names the
+same way a live `/join` does, falling back to the ID only if that fails
+(e.g. someone's left the server).
+
+While in the same code path: recovery was also picking up 0-byte `.wav`
+files (an utterance truncated mid-recording by a `/leave` or restart) and
+feeding them to whisper.cpp, which understandably produced nothing. The live
+capture path already filters these out; recovery now applies the identical
+size check.
+
+### 9. The retry queue could never actually retry — a hidden datetime format mismatch
+
+This is the one I'd flag as most important to know about, because it silently
+defeats a core piece of this project's design ("PC is sometimes off, retry
+automatically"). `enqueueSummarizeJob` stores its due-time using SQLite's own
+`datetime('now')`, which produces `"2026-07-31 05:23:44"`. But
+`rescheduleJob` (used every time a summarize attempt fails) stored a
+JavaScript `Date().toISOString()` string instead: `"2026-07-31T05:31:00.712Z"`.
+The queue picks up due jobs with a plain string comparison,
+`next_attempt_at <= datetime('now')` — and because `'T'` sorts after a space
+in ASCII, the ISO-formatted string *always* compares as "later" than
+`datetime('now')`'s format, regardless of actual time. **Any job that failed
+even once would never be retried again automatically** — it would sit as
+"pending" forever, silently, with no error surfaced anywhere. This was only
+caught because a real transient Ollama connection blip during tonight's test
+triggered `rescheduleJob` for the first time in the project's life.
+
+**Fix** (`store/db.js`): wrapped both sides of the comparison in SQLite's
+`datetime()` function, which normalizes either format before comparing.
+Verified directly against the real database that a previously-stuck job
+(pending for 10+ minutes past its due time) was correctly recognized as due
+once this landed, and confirmed the queue worker picked it up and completed
+it on the very next tick.
+
+### 10. The AI summary fabricated an entire fantasy narrative from off-topic chat
+
+Tonight's test session wasn't real D&D roleplay — it was casual chat (people
+talking about a video game, testing the bot, general banter). The AI summary
+prompt had no instruction telling it to notice that, and actively encouraged
+"in-world/narrative language" unconditionally. Result: the model invented a
+complete fictional scene — "the party decided to enter Crack Animal Zoo
+despite the risks... a mysterious facility housing strange animals and
+experiments" — entirely fabricated from the **Discord voice channel's own
+name** ("Crack Animal Zoo"), which has nothing to do with any in-game
+content. Stranger still: on the next attempt, someone in the transcript
+sarcastically read that exact fabricated line back out loud as a joke about
+the bug, and the model then treated *that quote* as a real in-game event too
+and reproduced it again — a small hallucination feedback loop.
+
+**Fix** (`prompts/dnd-summary-prompt.js`): rewrote the prompt to require the
+model to first decide, from transcript content alone, whether this is
+actually a D&D session at all — explicitly instructing it to ignore the
+channel-name label as content, to never fold meta-commentary about the tool
+itself back into the narrative, and to return an honest "this wasn't
+gameplay" summary with empty fields rather than inventing one. Verified
+directly against Ollama with the real (off-topic) transcript from tonight —
+the model now correctly returns `"This session was casual chat / bot
+testing, not gameplay — no recap to give."` with everything else empty,
+instead of fabricating a scene.
+
+Worth being upfront about the limits here: this is prompt engineering
+against a 14B model, not a hard guarantee — it worked cleanly on this test
+case, but LLMs don't follow instructions with 100% reliability, especially
+smaller/local ones. Worth keeping an eye on this for the first few *real*
+sessions too, not just this synthetic one.
+
+### A mistake worth owning
+
+Partway through tonight's fixes, I rebuilt and restarted the container to
+deploy a set of changes without first checking whether a session was
+actively recording — it was, and the restart cut it off mid-session. The
+crash-recovery system (built for exactly this kind of interruption) did its
+job and reconstructed the transcript from the raw audio on disk without
+losing anything, but the interruption itself was avoidable. From this point
+on I checked the database for an active `'recording'` status before every
+subsequent restart.
+
+### Verified end-to-end tonight, for real
+
+`/join` → per-speaker recording (3-4 real people, real audio) → `/leave` →
+transcription → AI summary → posted to Discord → markdown exported →
+campaign ledger updated locally → (Drive/Cipher sync confirmed separately,
+now that certs are fixed). All ten bugs above were found, fixed, deployed,
+and re-verified against the real Pi and real Ollama instance before being
+called done.

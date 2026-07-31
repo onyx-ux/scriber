@@ -77,7 +77,12 @@ WORKDIR /app
 # ffmpeg does the 48kHz stereo -> 16kHz mono resample for captured audio
 # (see voice/capture.js) — its resampler is properly anti-aliased, unlike a
 # hand-rolled decimator, which matters for whisper's transcription accuracy.
-RUN apt-get update && apt-get install -y --no-install-recommends rclone ffmpeg \
+# ca-certificates is required too — without it rclone has no CA trust store
+# and every HTTPS call (Google's OAuth token endpoint, Drive API) fails with
+# "x509: certificate signed by unknown authority". This was missing from the
+# start; it went unnoticed because the original Drive OAuth setup was done
+# via the standalone rclone/rclone image, not this container.
+RUN apt-get update && apt-get install -y --no-install-recommends rclone ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # whisper.cpp binary + the shared libs it needs at runtime. These are plain
@@ -97,7 +102,12 @@ RUN mkdir -p /data /models && chmod +x /app/scripts/download-model.sh
 
 ENV DATA_DIR=/data
 ENV WHISPER_BIN=/app/whisper.cpp/build/bin/whisper-cli
-ENV WHISPER_MODEL_PATH=/models/ggml-base.en.bin
 ENV LD_LIBRARY_PATH=/app/whisper.cpp/build/lib
+# WHISPER_MODEL_PATH is deliberately NOT set here — baking it in would
+# always win over WHISPER_MODEL_NAME in .env (an image ENV is a real set
+# value, not just a fallback), silently defeating the derived-path logic in
+# env.js/download-model.sh any time someone changes just the model name.
+# Leaving it unset lets that derivation actually take effect; set
+# WHISPER_MODEL_PATH explicitly in .env only if a custom path is needed.
 
 CMD ["sh", "-c", "/app/scripts/download-model.sh && node src/index.js"]

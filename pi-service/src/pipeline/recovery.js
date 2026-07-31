@@ -1,6 +1,8 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { finishSession } from './finish-session.js';
+import { resolveSpeakerName } from '../campaign/character-names.js';
+import { EMPTY_WAV_SIZE } from '../voice/capture.js';
 
 // Capture writes each utterance's WAV straight to disk as it happens (see
 // voice/capture.js) — nothing sits only in memory. So if the bot process
@@ -13,7 +15,12 @@ import { finishSession } from './finish-session.js';
 // utterance list by scanning audio_dir/<userId>/<startMs>.wav directly, then
 // run it through the normal finishSession pipeline as if /leave had just
 // been called.
-export async function recoverInterruptedMeetings(db, cfg) {
+// discordClient is optional — if it's already logged in (recovery is called
+// from the 'ready' handler so this is normally the case), we use it to
+// resolve real display names the same way a live /join does; otherwise (or
+// if a member fetch fails, e.g. they left the server) we fall back to the
+// bare user ID, same as before.
+export async function recoverInterruptedMeetings(db, cfg, discordClient) {
   const stuck = db.listInterruptedMeetings();
   if (stuck.length === 0) return;
 
@@ -27,7 +34,7 @@ export async function recoverInterruptedMeetings(db, cfg) {
     }
 
     try {
-      const captured = await rebuildCapturedUtterances(db, meeting, cfg);
+      const captured = await rebuildCapturedUtterances(db, meeting, cfg, discordClient);
       if (captured.length === 0) {
         console.warn(`[recovery] meeting ${meeting.id}: no audio files found, marking empty/failed`);
         db.setMeetingStatus(meeting.id, 'transcription_failed');
@@ -46,7 +53,7 @@ export async function recoverInterruptedMeetings(db, cfg) {
   }
 }
 
-async function rebuildCapturedUtterances(db, meeting, cfg) {
+async function rebuildCapturedUtterances(db, meeting, cfg, discordClient) {
   const captured = [];
   let userDirs;
   try {
@@ -61,19 +68,36 @@ async function rebuildCapturedUtterances(db, meeting, cfg) {
     const userPath = join(meeting.audio_dir, userId);
     const files = await readdir(userPath).catch(() => []);
 
-    // Character-name resolution still works here even without a live
-    // Discord guild fetch, since it's a DB lookup keyed by user_id —
-    // recovered transcripts get the same character names as normal.
-    const displayName = db.getCharacterName(meeting.guild_id, userId) || userId;
+    // Prefer a live Discord display name (same as a normal /join), falling
+    // back to the bare user ID only if we have no client, the guild isn't
+    // cached, or the member can't be fetched (e.g. they've since left).
+    // Character-name resolution on top of that always works either way,
+    // since it's a DB lookup keyed by user_id.
+    let discordName = userId;
+    const guild = discordClient?.guilds.cache.get(meeting.guild_id);
+    if (guild) {
+      const member = await guild.members.fetch(userId).catch(() => null);
+      if (member) discordName = member.displayName;
+    }
+    const displayName = resolveSpeakerName(db, meeting.guild_id, userId, discordName);
 
     for (const file of files) {
       if (!file.endsWith('.wav')) continue;
       const startMs = parseInt(file.replace(/\.wav$/, ''), 10);
       if (Number.isNaN(startMs)) continue;
+
+      // Same filter the live capture path applies — a session that ends
+      // mid-utterance (e.g. /leave called right as someone was talking)
+      // leaves a truncated/empty WAV on disk that whisper.cpp can't do
+      // anything useful with and would otherwise just log as a failure.
+      const filePath = join(userPath, file);
+      const { size } = await stat(filePath).catch(() => ({ size: 0 }));
+      if (size <= EMPTY_WAV_SIZE) continue;
+
       captured.push({
         userId,
         displayName,
-        wavPath: join(userPath, file),
+        wavPath: filePath,
         startMs,
         endMs: startMs, // unknown after a crash; fine, only used for talk-time stats we don't compute yet
       });

@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-MODEL_PATH="${WHISPER_MODEL_PATH:-/models/ggml-base.en.bin}"
 MODEL_NAME="${WHISPER_MODEL_NAME:-base.en}"
+MODEL_PATH="${WHISPER_MODEL_PATH:-/models/ggml-${MODEL_NAME}.bin}"
 
 if [ -f "$MODEL_PATH" ]; then
   echo "Model already present at $MODEL_PATH"

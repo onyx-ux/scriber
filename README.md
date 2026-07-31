@@ -103,8 +103,9 @@ config over:**
 3. This creates a config file on the PC, typically at
    `%APPDATA%\rclone\rclone.conf` (Windows) — open it and copy the whole
    `[gdrive]` section.
-4. On the **Pi**, create `pi-service/rclone.conf` with just that section
-   pasted in.
+4. On the **Pi**, create `pi-service/rclone/rclone.conf` with just that
+   section pasted in (it's mounted as a directory, not a single file, so
+   rclone can rewrite it in place when it refreshes the OAuth token).
 5. In `.env` on the Pi, set `DRIVE_SYNC_ENABLED=true` (and
    `DRIVE_SYNC_AUDIO=true` if you also want raw audio uploaded — off by
    default since audio is large and normally deleted after processing

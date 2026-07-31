@@ -130,9 +130,19 @@ function wrap(db) {
     },
 
     nextDueJob() {
+      // next_attempt_at is stored in two different formats depending on how
+      // the row was written: enqueueSummarizeJob uses SQLite's own
+      // datetime('now') ("YYYY-MM-DD HH:MM:SS"), but rescheduleJob stores a
+      // JS Date().toISOString() string ("YYYY-MM-DDTHH:MM:SS.sssZ"). A plain
+      // string comparison against datetime('now') is wrong for the second
+      // format: 'T' (0x54) sorts after a space (0x20), so an ISO string
+      // always compares as "later" than datetime('now') regardless of the
+      // actual time, and a rescheduled job would never come due again.
+      // Wrapping both sides in datetime() normalizes either format before
+      // comparing.
       return db
         .prepare(
-          `SELECT * FROM jobs WHERE status = 'pending' AND next_attempt_at <= datetime('now') ORDER BY id ASC LIMIT 1`
+          `SELECT * FROM jobs WHERE status = 'pending' AND datetime(next_attempt_at) <= datetime('now') ORDER BY id ASC LIMIT 1`
         )
         .get();
     },

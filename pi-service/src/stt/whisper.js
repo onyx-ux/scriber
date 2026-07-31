@@ -9,7 +9,10 @@ const execFileAsync = promisify(execFile);
 // having to scrape stdout text. Requires the input to already be a WAV file
 // (16kHz mono s16le) — conversion happens in voice/capture.js at capture time.
 export async function transcribeWav(wavPath, cfg) {
-  const jsonOutPath = `${wavPath}.json`;
+  // whisper.cpp's -of takes a prefix and appends ".json" itself — so the
+  // real output path has the ".wav" stripped, not appended to the full name.
+  const outPrefix = wavPath.replace(/\.wav$/, '');
+  const jsonOutPath = `${outPrefix}.json`;
 
   await execFileAsync(
     cfg.whisperBin,
@@ -17,7 +20,7 @@ export async function transcribeWav(wavPath, cfg) {
       '-m', cfg.whisperModelPath,
       '-f', wavPath,
       '-oj',                          // output json
-      '-of', wavPath.replace(/\.wav$/, ''), // output file prefix (whisper.cpp appends .json)
+      '-of', outPrefix, // output file prefix (whisper.cpp appends .json)
       '-t', String(cfg.whisperThreads),
       '-nt',                          // no timestamps in stdout text (we use the JSON segments instead)
       '-l', 'en',
