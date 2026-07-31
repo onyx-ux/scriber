@@ -204,8 +204,8 @@ whole stack on one machine for debugging.)*
 - `/import [file:<attachment>] [url:<link>] [speaker:<label>]` — import a recording made outside Discord (an in-person game, a phone recording). Runs through the same transcribe → summarise → post pipeline. Use `url:` for anything over Discord's ~25MB attachment cap. **Every line is attributed to one label** (default "Table") — a single microphone has no per-speaker channels, so voices can't be told apart the way they can in a voice call
 - `/correct wrong:<text> right:<text>` — fix a name whisper keeps mishearing. Rewrites every past transcript in the campaign **and** is saved, so future sessions are corrected automatically
 - `/corrections` — list the saved corrections
-- `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs Ollama running
-- `/status` — see what's currently queued/retrying, and whether your PC's Ollama is reachable right now
+- `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs the configured summariser (Ollama, Claude, or Gemini) reachable
+- `/status` — see what's currently queued/retrying, and whether the configured summariser is reachable right now
 - `/pending` — everything currently in the pipeline: recording, transcribing, awaiting approval, or queued for summarising
 - `/approve [meeting_id]` — release a session parked awaiting approval (omit the ID to approve everything waiting)
 - `/pause` / `/resume` — stop and restart summarising, so you can kill Ollama or free the GPU without losing queued work
@@ -242,10 +242,15 @@ a laptop, or a USB stick. Full transcripts stay in the `.md` files beside it.
 - `ollama` (default) — everything stays on your own hardware.
 - `anthropic` — sends the finished **transcript text** to Claude for a
   noticeably better recap. Set `ANTHROPIC_API_KEY`; `ANTHROPIC_MODEL` defaults
-  to `claude-opus-5`.
+  to `claude-opus-5`. Anthropic's API is paid-tier only (no free tier).
+- `gemini` — sends the finished **transcript text** to Gemini. Set
+  `GEMINI_API_KEY` (free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey));
+  `GEMINI_MODEL` defaults to `gemini-3.1-flash-lite`, Gemini's budget tier —
+  pick this provider if the goal is a cloud recap at minimal cost rather than
+  Claude's higher quality.
 
 **Audio and transcription are always local.** Recordings never leave the
-network under either setting — the cloud option only ever sees text that has
+network under any setting — a cloud option only ever sees text that has
 already been transcribed on the Pi. Long transcripts are still sliced and
 merged automatically, so session length isn't capped either way.
 

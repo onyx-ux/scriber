@@ -19,6 +19,11 @@ function validate(cfg) {
       'SUMMARY_PROVIDER=anthropic requires ANTHROPIC_API_KEY. Set the key, or switch back to SUMMARY_PROVIDER=ollama.'
     );
   }
+  if (cfg.summaryProvider === 'gemini' && !cfg.geminiApiKey) {
+    throw new Error(
+      'SUMMARY_PROVIDER=gemini requires GEMINI_API_KEY. Set the key, or switch back to SUMMARY_PROVIDER=ollama.'
+    );
+  }
   return cfg;
 }
 
@@ -61,15 +66,24 @@ export const config = validate({
   })(),
 
   // Which model writes the summary. 'ollama' keeps everything on your own
-  // hardware; 'anthropic' sends the finished TRANSCRIPT TEXT to Claude for a
-  // better-quality recap. Audio and transcription stay local either way —
-  // recordings never leave the network under either setting.
+  // hardware; 'anthropic'/'gemini' send the finished TRANSCRIPT TEXT to a
+  // cloud model for a better-quality recap. Audio and transcription stay
+  // local either way — recordings never leave the network under any setting.
   summaryProvider: (() => {
     const v = optional('SUMMARY_PROVIDER', 'ollama').toLowerCase();
-    return v === 'anthropic' ? 'anthropic' : 'ollama';
+    return v === 'anthropic' || v === 'gemini' ? v : 'ollama';
   })(),
   anthropicApiKey: optional('ANTHROPIC_API_KEY', null),
   anthropicModel: optional('ANTHROPIC_MODEL', 'claude-opus-5'),
+
+  // Gemini: pinned to the cheapest current model by default rather than a
+  // frontier one — the whole point of choosing Gemini here was cost, since
+  // Anthropic's API is a paid-tier-only product. gemini-2.5-flash-lite was
+  // the budget pick until Google cut new API keys off from it (returns HTTP
+  // 404 "no longer available to new users"); gemini-3.1-flash-lite is its
+  // live replacement, verified against a real key on 2026-07-31.
+  geminiApiKey: optional('GEMINI_API_KEY', null),
+  geminiModel: optional('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
 
   // --- summarise-on-approval ---
   // With this on, finishing a session does NOT immediately hand the
