@@ -1,9 +1,7 @@
-import { rm } from 'node:fs/promises';
-
 import { transcribeAll } from './transcribe.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { syncSessionAudio, backupAndSyncDatabase } from '../sync/drive-sync.js';
-import { buildCompressedSessionRecording } from './session-recording.js';
+import { archiveSessionAudio } from './session-recording.js';
 import { startTranscription, updateTranscription, endTranscription } from './progress.js';
 
 // capturedUtterances: [{ userId, displayName, wavPath, startMs, endMs }]
@@ -67,27 +65,27 @@ export async function finishSession(
     provider: pinProvider,
   });
 
-  // Building + compressing a whole-session recording costs real CPU time on
-  // top of transcription, so only pay for it when the result would actually
-  // be used. When it is, this uploads ONE clean, listenable recording of the
-  // whole session instead of the raw per-utterance fragment directory
-  // (hundreds of tiny files a person was never meant to open individually).
-  // Pointless if the audio is being discarded — the upload would be the only
-  // copy of something we just decided not to keep.
-  if (cfg.keepAudio && cfg.driveSyncEnabled && cfg.driveSyncAudio) {
-    buildCompressedSessionRecording(capturedUtterances, audioDir)
-      .then((mp3Path) => (mp3Path ? syncSessionAudio(mp3Path, meetingId, cfg) : null))
-      .catch((err) => console.warn(`[session-recording] meeting ${meetingId}: ${err.message}`));
-  }
-
-  // Deliberately after finalizeTranscription, never before: until that
-  // transaction commits, these files are the ONLY copy of the session, and
-  // recovery.js rebuilds a crashed meeting by scanning this very directory.
-  // Once the transcript is in the database the audio has served its purpose.
-  if (!cfg.keepAudio) {
-    await rm(audioDir, { recursive: true, force: true }).catch((err) =>
-      console.warn(`[audio] meeting ${meetingId}: could not remove ${audioDir}: ${err.message}`)
-    );
+  // Collapse the session's per-utterance fragments into one compressed
+  // recording, then let AUDIO_RETENTION_DAYS age that out on the normal
+  // schedule. Deliberately after finalizeTranscription, never before: until
+  // that transaction commits these files are the ONLY copy of the session,
+  // and recovery.js rebuilds a crashed meeting by scanning this directory.
+  //
+  // Not awaited — ffmpeg over a few hours of audio takes minutes, and there
+  // is no reason to keep /leave waiting on it once the transcript is safe.
+  if (cfg.audioArchive) {
+    archiveSessionAudio(capturedUtterances, audioDir)
+      .then((archive) => {
+        if (!archive) return null;
+        console.log(
+          `[archive] meeting ${meetingId}: ${Math.round(archive.bytes / 1024 / 1024)}MB recording kept, ` +
+            `${archive.speakerDirsRemoved} fragment folder(s) removed`
+        );
+        return cfg.driveSyncEnabled && cfg.driveSyncAudio ? syncSessionAudio(archive.mp3Path, meetingId, cfg) : null;
+      })
+      // A failed archive leaves the raw clips in place, so nothing is lost —
+      // retention will still clear them on schedule.
+      .catch((err) => console.warn(`[archive] meeting ${meetingId} kept raw clips: ${err.message}`));
   }
 
   backupAndSyncDatabase(db, cfg).catch(() => {});

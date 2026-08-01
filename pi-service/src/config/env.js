@@ -165,15 +165,20 @@ export const config = validate({
   // anything still pending/failed/retrying is left alone.
   audioRetentionDays: parseInt(optional('AUDIO_RETENTION_DAYS', '14'), 10),
 
-  // The recordings are a means to a transcript, not an archive. With this
-  // false (the default) a meeting's audio is deleted as soon as its
-  // transcript is safely committed to the database — which also skips
-  // building and uploading the whole-session recording, since there would be
-  // nothing left to keep.
+  // What happens to a session's audio once its transcript is stored.
   //
-  // The cost is real and one-way: re-transcribing a past session (on better
-  // hardware, or a bigger model) becomes impossible, because the audio is
-  // gone. Set KEEP_AUDIO=true to keep it and let AUDIO_RETENTION_DAYS age it
-  // out instead.
-  keepAudio: optional('KEEP_AUDIO', 'false') === 'true',
+  // With this on (the default), the hundreds of per-utterance WAV fragments
+  // are collapsed into ONE compressed recording of the whole session and the
+  // fragments are deleted. That archive is a fraction of the size, is
+  // actually listenable (the fragments never were — they're a directory of
+  // one-second clips), and is then aged out by AUDIO_RETENTION_DAYS above.
+  //
+  // The trade-off is per-speaker separation: the archive is a single mixed
+  // timeline, so re-transcribing it later recovers the words but not
+  // reliably who said them. Set AUDIO_ARCHIVE=false to keep the raw
+  // fragments instead, which stays re-transcribable at ~4x the disk.
+  //
+  // Either way the archive is only built after the transcript is committed,
+  // and never at the cost of the fragments if the build fails.
+  audioArchive: optional('AUDIO_ARCHIVE', 'true') !== 'false',
 });

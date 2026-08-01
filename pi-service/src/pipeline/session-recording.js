@@ -1,4 +1,5 @@
-import { open, unlink } from 'node:fs/promises';
+import { open, unlink, stat, readdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { readPcmWav } from './wav-merge.js';
 
@@ -132,4 +133,37 @@ export async function buildCompressedSessionRecording(capturedUtterances, workDi
   } finally {
     await unlink(wavPath).catch(() => {});
   }
+}
+
+// Replaces a meeting's raw per-utterance fragments with one compressed
+// recording of the session, in place, inside the same audio directory. That
+// directory is what AUDIO_RETENTION_DAYS eventually deletes, so the archive
+// ages out on exactly the same schedule the fragments would have.
+//
+// Ordering is the whole point: the fragments are only removed AFTER a real
+// archive file exists on disk. If the merge or ffmpeg fails, everything is
+// left exactly as it was — a failed archive must never be the reason a
+// session's audio disappears.
+export async function archiveSessionAudio(capturedUtterances, audioDir) {
+  const mp3Path = await buildCompressedSessionRecording(capturedUtterances, audioDir);
+  if (!mp3Path) return null;
+
+  // Prove the archive is really there, and not empty, before deleting anything.
+  const { size } = await stat(mp3Path);
+  if (!size) {
+    await unlink(mp3Path).catch(() => {});
+    throw new Error('archive was written but is empty — keeping the raw clips');
+  }
+
+  // The fragments live in per-speaker subdirectories; the archive itself is a
+  // plain file in the same folder, so removing only directories keeps it.
+  const entries = await readdir(audioDir, { withFileTypes: true });
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    await rm(join(audioDir, entry.name), { recursive: true, force: true });
+    removed++;
+  }
+
+  return { mp3Path, bytes: size, speakerDirsRemoved: removed };
 }

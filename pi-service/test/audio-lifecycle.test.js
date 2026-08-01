@@ -70,34 +70,25 @@ async function scenario(t, cfg) {
   return { db, meetingId, audioDir, result };
 }
 
-// The recordings are a means to a transcript. Once the transcript is in the
-// database they are dead weight, and the user has said they won't be listened
-// to — so the default is to delete them.
-test('audio is deleted once the transcript is safely stored', async (t) => {
+// The audio directory itself must survive: it now holds the archive, and
+// AUDIO_RETENTION_DAYS is what eventually removes it.
+test('the audio directory outlives the transcript, for retention to age out', async (t) => {
   stubWhisper();
-  const { audioDir, result, db, meetingId } = await scenario(t, { keepAudio: false });
+  const { audioDir, result, db, meetingId } = await scenario(t, { audioArchive: false });
 
   assert.equal(result.ok, true);
-  assert.equal(await exists(audioDir), false, 'the meeting audio directory should be gone');
-  assert.equal(db.listUtterances(meetingId).length, 1, 'and the transcript must have survived it');
+  assert.equal(await exists(audioDir), true, 'nothing is deleted at commit time any more');
+  assert.equal(db.listUtterances(meetingId).length, 1);
 });
 
-test('KEEP_AUDIO=true leaves the recordings alone', async (t) => {
-  stubWhisper();
-  const { audioDir, result } = await scenario(t, { keepAudio: true });
-
-  assert.equal(result.ok, true);
-  assert.equal(await exists(audioDir), true);
-});
-
-// THE case that must never regress: deleting audio for a session we failed to
-// transcribe would destroy the only copy of it, with nothing to show for it.
-test('failed transcription never deletes the audio', async (t) => {
+// THE case that must never regress: destroying audio for a session we failed
+// to transcribe would lose the only copy of it, with nothing to show for it.
+test('failed transcription leaves the audio completely untouched', async (t) => {
   stubWhisper({ succeed: false });
-  const { audioDir, result, db, meetingId } = await scenario(t, { keepAudio: false });
+  const { audioDir, result, db, meetingId } = await scenario(t, { audioArchive: true });
 
   assert.equal(result.ok, false, 'precondition: transcription failed');
-  assert.equal(await exists(audioDir), true, 'the audio is the only remaining copy — it must stay');
+  assert.equal(await exists(join(audioDir, 'u1')), true, 'the raw clips are the only copy — they must stay');
   assert.equal(db.getMeeting(meetingId).status, 'transcription_failed');
 });
 
@@ -127,7 +118,7 @@ test('a pinned provider is recorded on the job', async (t) => {
   });
 
   const captured = [{ userId: 'u1', displayName: 'Koru', wavPath, startMs: 0, endMs: 1000 }];
-  const { job } = await finishSession(db, meetingId, captured, audioDir, { ...baseCfg, keepAudio: true }, {
+  const { job } = await finishSession(db, meetingId, captured, audioDir, { ...baseCfg, audioArchive: false }, {
     pinProvider: 'gemini',
   });
 
@@ -137,7 +128,7 @@ test('a pinned provider is recorded on the job', async (t) => {
 
 test('with no pin the job defers to the configured provider', async (t) => {
   stubWhisper();
-  const { db, meetingId } = await scenario(t, { keepAudio: true });
+  const { db, meetingId } = await scenario(t, { audioArchive: false });
   const row = db.raw.prepare('SELECT provider FROM jobs WHERE meeting_id = ?').get(meetingId);
   assert.equal(row.provider, null, 'null means "whatever the config says at run time"');
 });
