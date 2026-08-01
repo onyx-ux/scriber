@@ -17,3 +17,6 @@ pi-service/obsidian-export/
 # OS / editor cruft
 .DS_Store
 Thumbs.db
+
+# Whisper model files for the PC-side GPU server (1.5GB+, downloaded locally)
+pc-whisper/models/

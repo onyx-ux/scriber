@@ -1,0 +1,57 @@
+services:
+  # Runs on the PC (not the Pi), so transcription happens on the GPU instead
+  # of the Pi's 4-core ARM CPU.
+  #
+  # Why this exists: whisper.cpp encodes a fixed 30-second window regardless
+  # of how short the audio is, and the Pi takes ~65 SECONDS per window. A real
+  # 30-minute session measured at ~4.5 hours there. The same work on an
+  # RTX 3080 Ti takes well under a second per window.
+  #
+  # The audio still never leaves the LAN — this is your own machine, the same
+  # one already running Ollama. Nothing here talks to the internet.
+  whisper:
+    image: ghcr.io/ggml-org/whisper.cpp:main-cuda
+    container_name: scriber-whisper
+    restart: unless-stopped
+    ports:
+      # Bound to all interfaces so the Pi can reach it over the LAN. This
+      # needs a firewall rule on the PC exactly like Ollama's 11434 did —
+      # BOTH Windows Firewall and Bitdefender, or it will silently not work.
+      #
+      # 8089 rather than whisper's default 8080, which was already taken on
+      # this PC by something else.
+      - '8089:8080'
+    volumes:
+      # The model file. Download it once (see the README) — the container
+      # does not fetch models by itself.
+      - ./models:/models
+    # Docker Desktop passes the GPU through via WSL2. The older
+    # deploy.resources.reservations.devices form is silently ignored here —
+    # the container starts fine and whisper just logs "no GPU found", which
+    # looks like success until you notice it's running on CPU. `gpus: all`
+    # actually takes effect.
+    gpus: all
+    environment:
+      # The image ships CUDA "compat" driver stubs in /usr/local/cuda-13.0/
+      # compat and puts that directory FIRST on the default LD_LIBRARY_PATH.
+      # Under WSL2 those stubs shadow the real driver library the NVIDIA
+      # container runtime injects, and CUDA then fails with "no CUDA-capable
+      # device is detected" — even though nvidia-smi inside the container
+      # happily lists the GPU. Dropping compat from the path fixes it.
+      # Verified: without this it silently runs on CPU; with it, whisper logs
+      # "found 1 CUDA devices ... RTX 3080 Ti".
+      LD_LIBRARY_PATH: /usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
+    entrypoint:
+      - /app/build/bin/whisper-server
+      - --model
+      - /models/ggml-medium.en.bin
+      - --host
+      - '0.0.0.0'
+      - --port
+      - '8080'
+      # The server loads the model once at startup and keeps it resident, so
+      # the per-clip reload cost that dominates on the Pi doesn't apply here.
+      # No --convert: the Pi already sends 16kHz mono WAV, which is exactly
+      # what whisper wants, so there's nothing for ffmpeg to do.
+      - --threads
+      - '8'

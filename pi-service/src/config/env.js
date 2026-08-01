@@ -41,6 +41,20 @@ export const config = validate({
   whisperModelPath: optional('WHISPER_MODEL_PATH', `/models/ggml-${optional('WHISPER_MODEL_NAME', 'base.en')}.bin`),
   whisperThreads: parseInt(optional('WHISPER_THREADS', '4'), 10),
 
+  // Where transcription actually runs. Unset = on the Pi's CPU, which does
+  // neural inference at roughly 10x slower than realtime (a 30-minute session
+  // took ~4.5 hours). Set to a whisper.cpp HTTP server on a machine with a
+  // GPU — in this setup the same PC that runs Ollama — and the same work
+  // takes seconds. Audio still never leaves the LAN either way.
+  whisperServerUrl: optional('WHISPER_SERVER_URL', null),
+  // A long session is a lot of audio; the per-request cap is generous so a
+  // big /import doesn't fail halfway.
+  whisperServerTimeoutMs: parseInt(optional('WHISPER_SERVER_TIMEOUT_MS', '600000'), 10),
+  // If the GPU machine is off, fall back to transcribing on the Pi. Slow, but
+  // a session is never lost. Set false to fail instead, so it can be retried
+  // later on the GPU rather than grinding through it on CPU.
+  whisperLocalFallback: optional('WHISPER_LOCAL_FALLBACK', 'true') !== 'false',
+
   // whisper.cpp encodes a fixed 30-second window however short the clip is,
   // so transcribing hundreds of one-second Discord clips one at a time wastes
   // almost all of it (a real 235-clip session measured at ~4.5 hours).
