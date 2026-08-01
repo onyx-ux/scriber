@@ -27,12 +27,23 @@ const longTranscript = Array.from(
 let calls;
 let realFetch;
 
+// Ollama is called with stream:true, so a reply is newline-delimited JSON
+// rather than one object — see the note on readOllamaStream in model-client.js.
+function ollamaStream(content) {
+  const body =
+    JSON.stringify({ message: { content }, done: false }) +
+    '\n' +
+    JSON.stringify({ message: { content: '' }, done: true, prompt_eval_count: 1e9 }) +
+    '\n';
+  return new Response(body, { status: 200 });
+}
+
 function stub(reply) {
   calls = [];
   global.fetch = async (_url, opts) => {
     const body = JSON.parse(opts.body);
     calls.push({ system: body.messages[0].content, user: body.messages[1].content, numCtx: body.options?.num_ctx });
-    return { ok: true, json: async () => ({ message: { content: reply(calls.length) }, prompt_eval_count: 1e9 }) };
+    return ollamaStream(reply(calls.length));
   };
 }
 

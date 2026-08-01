@@ -29,18 +29,28 @@ test('extractKeywords handles degenerate questions', () => {
   assert.ok(extractKeywords('alpha bravo charlie delta echo foxtrot golf hotel').length <= 6, 'result count is capped');
 });
 
+// stream:true means the reply is newline-delimited JSON — see readOllamaStream.
+function ollamaStream(content) {
+  return new Response(
+    JSON.stringify({ message: { content }, done: false }) + '\n' + JSON.stringify({ done: true }) + '\n',
+    { status: 200 }
+  );
+}
+
 test('askCampaign sends a well-formed grounded request', async () => {
   let captured;
   global.fetch = async (url, opts) => {
     captured = { url, body: JSON.parse(opts.body) };
-    return { ok: true, json: async () => ({ message: { content: '  An answer (session #3).  ' } }) };
+    return ollamaStream('  An answer (session #3).  ');
   };
 
   const answer = await askCampaign({ question: 'What happened in the crypt?', summaries, excerpts, cfg });
 
   assert.equal(captured.url, 'http://stub:11434/api/chat', 'a trailing slash in the URL must not double up');
   assert.equal(captured.body.options.num_ctx, 9216);
-  assert.equal(captured.body.stream, false);
+  // Streaming is required: non-streaming Ollama withholds its headers until
+  // generation finishes, and undici hard-caps that wait at 300s.
+  assert.equal(captured.body.stream, true);
   assert.match(captured.body.messages[1].content, /What happened in the crypt\?/);
   assert.match(captured.body.messages[1].content, /Session #3/, 'recaps are included as context');
   assert.match(captured.body.messages[1].content, /I open the lantern/, 'transcript excerpts are included');
@@ -51,7 +61,7 @@ test('askCampaign surfaces failures clearly rather than returning junk', async (
   global.fetch = async () => ({ ok: false, status: 500, text: async () => 'boom' });
   await assert.rejects(() => askCampaign({ question: 'q', summaries, excerpts, cfg }), /500/);
 
-  global.fetch = async () => ({ ok: true, json: async () => ({}) });
+  global.fetch = async () => ollamaStream('');
   await assert.rejects(() => askCampaign({ question: 'q', summaries, excerpts, cfg }), /no message content/);
 
   global.fetch = async () => {

@@ -45,6 +45,61 @@ export function contextTokens(cfg) {
   return cfg.ollamaNumCtx;
 }
 
+// Ollama is asked to stream, and it matters more than it looks.
+//
+// With stream:false, Ollama withholds the response headers until the entire
+// generation has finished. Node's fetch (undici) applies a 300-SECOND default
+// headersTimeout that no AbortController or config value can raise, so every
+// summary taking longer than five minutes died as an opaque "fetch failed" —
+// long before the 20-minute timeout this function is handed. On a contended
+// GPU, or whenever a request forces Ollama to reload the model at a larger
+// num_ctx, five minutes is easy to exceed.
+//
+// Streaming makes the headers arrive immediately and every token chunk resets
+// undici's idle timer, so the AbortController below becomes the only deadline
+// that actually applies — which is what the caller expects.
+async function readOllamaStream(res, controller) {
+  const decoder = new TextDecoder();
+  let buffered = '';
+  let content = '';
+  let final = null;
+
+  const handleLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    const chunk = JSON.parse(trimmed);
+    // Ollama reports mid-stream problems as a JSON field, not an HTTP status —
+    // the response is already a 200 by then.
+    if (chunk.error) throw new Error(`Ollama error: ${chunk.error}`);
+    if (chunk.message?.content) content += chunk.message.content;
+    // The terminating chunk carries the token accounting (prompt_eval_count).
+    if (chunk.done) final = chunk;
+  };
+
+  let finished = false;
+  try {
+    for await (const bytes of res.body) {
+      buffered += decoder.decode(bytes, { stream: true });
+
+      // Chunks split at arbitrary byte boundaries, so the last line of a chunk
+      // is usually incomplete — keep it buffered until its newline arrives.
+      const lines = buffered.split('\n');
+      buffered = lines.pop() ?? '';
+      for (const line of lines) handleLine(line);
+    }
+    handleLine(buffered);
+    finished = true;
+  } finally {
+    // If we bailed out mid-stream (a JSON parse failure, an error chunk), the
+    // response is still open and Ollama is still generating into it — cancel
+    // so the socket and the GPU work are both released.
+    if (!finished) controller.abort();
+  }
+
+  return { content, final };
+}
+
 async function callOllama(systemPrompt, userMessage, cfg, timeoutMs, estTokens) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -56,7 +111,7 @@ async function callOllama(systemPrompt, userMessage, cfg, timeoutMs, estTokens) 
       signal: controller.signal,
       body: JSON.stringify({
         model: cfg.ollamaModel,
-        stream: false,
+        stream: true,
         // Without an explicit num_ctx, Ollama uses its own small default
         // (4096, and in practice it truncated a 28k-token transcript down to
         // ~2k) REGARDLESS of what the model actually supports — silently
@@ -73,17 +128,16 @@ async function callOllama(systemPrompt, userMessage, cfg, timeoutMs, estTokens) 
       throw new Error(`Ollama returned HTTP ${res.status}: ${await res.text().catch(() => '')}`);
     }
 
-    const data = await res.json();
-    const content = data?.message?.content;
+    const { content, final } = await readOllamaStream(res, controller);
     if (!content) throw new Error('Ollama response had no message content');
 
     // If Ollama still had to truncate, say so loudly rather than quietly
     // returning a summary of only part of the input.
-    if (estTokens) {
+    if (estTokens && final) {
       const sent = estTokens(systemPrompt) + estTokens(userMessage);
-      if (data.prompt_eval_count && sent > data.prompt_eval_count * 1.5) {
+      if (final.prompt_eval_count && sent > final.prompt_eval_count * 1.5) {
         console.warn(
-          `[model] possible context truncation: sent ~${sent} est. tokens, Ollama evaluated ${data.prompt_eval_count} (num_ctx=${cfg.ollamaNumCtx})`
+          `[model] possible context truncation: sent ~${sent} est. tokens, Ollama evaluated ${final.prompt_eval_count} (num_ctx=${cfg.ollamaNumCtx})`
         );
       }
     }
@@ -92,6 +146,13 @@ async function callOllama(systemPrompt, userMessage, cfg, timeoutMs, estTokens) 
   } catch (err) {
     if (err.name === 'AbortError') {
       throw new Error(`Ollama request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    // Node collapses every transport-level failure into the word "fetch
+    // failed" and hides the real reason in `cause` — the difference between
+    // "the PC is off" (ECONNREFUSED) and "it took too long" matters here, and
+    // this message is what gets stored as the job's last_error.
+    if (err.cause?.code || err.cause?.message) {
+      throw new Error(`${err.message} (${err.cause.code || err.cause.message})`);
     }
     throw err;
   } finally {
