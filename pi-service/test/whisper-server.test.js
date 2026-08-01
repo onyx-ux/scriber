@@ -200,3 +200,61 @@ test('reachability reports false without a configured server, and never throws',
   global.fetch = async () => new Response('ok', { status: 200 });
   assert.equal(await isWhisperServerReachable(serverCfg), true);
 });
+
+// whisper marks non-speech audio with bracketed tokens rather than returning
+// nothing. Left alone these read as dialogue in the transcript ("Koru:
+// [BLANK_AUDIO]") and get fed to the summariser as if someone said them.
+test('non-speech markers are stripped rather than transcribed as dialogue', async () => {
+  global.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        text: ' [BLANK_AUDIO]',
+        segments: [{ text: ' [BLANK_AUDIO]', start: 0, end: 1 }],
+      }),
+      { status: 200 }
+    );
+
+  await withClip(async (path) => {
+    const { text, segments } = await transcribeWav(path, serverCfg);
+    assert.equal(text, '', 'a silent clip yields no transcript line at all');
+    assert.deepEqual(segments, []);
+  });
+});
+
+test('markers mixed with real speech drop only the markers', async () => {
+  global.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        text: ' [SOUND] roll for initiative [BLANK_AUDIO]',
+        segments: [
+          { text: ' [SOUND]', start: 0, end: 1 },
+          { text: ' roll for initiative', start: 1, end: 3 },
+          { text: ' [BLANK_AUDIO]', start: 3, end: 4 },
+        ],
+      }),
+      { status: 200 }
+    );
+
+  await withClip(async (path) => {
+    const { text, segments } = await transcribeWav(path, serverCfg);
+    assert.equal(text, 'roll for initiative');
+    assert.equal(segments.length, 1);
+    assert.equal(segments[0].fromMs, 1000, 'the surviving segment keeps its own timing');
+  });
+});
+
+test('bracketed text inside a real sentence is not mistaken for a marker', async () => {
+  global.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        text: ' I attack [the goblin] with my axe',
+        segments: [{ text: ' I attack [the goblin] with my axe', start: 0, end: 2 }],
+      }),
+      { status: 200 }
+    );
+
+  await withClip(async (path) => {
+    const { text } = await transcribeWav(path, serverCfg);
+    assert.equal(text, 'I attack [the goblin] with my axe', 'only a whole-segment marker is dropped');
+  });
+});

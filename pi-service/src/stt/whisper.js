@@ -18,15 +18,33 @@ const execFileAsync = promisify(execFile);
 // WHISPER_SERVER_URL picks the second. Everything else in the pipeline is
 // unchanged: both paths return the same { text, segments } shape.
 
+// whisper annotates non-speech audio with bracketed markers rather than
+// leaving the segment empty — [BLANK_AUDIO] for silence, plus [SOUND],
+// [MUSIC], [LAUGHTER] and similar. They're useful to whisper, but in a
+// session transcript they read as if someone said "[BLANK_AUDIO]", and they
+// get fed to the summariser as though they were dialogue.
+const NON_SPEECH_MARKER = /^[\s]*[[(][^\])]*[\])][\s]*$/;
+
+function stripNonSpeech(value) {
+  const text = String(value || '').trim();
+  return NON_SPEECH_MARKER.test(text) ? '' : text;
+}
+
 // The two JSON schemas differ — the CLI emits whisper.cpp's own format with
 // millisecond `offsets`, the server emits an OpenAI-shaped `verbose_json`
 // with `segments` in SECONDS. Both are normalised to milliseconds here so
 // nothing downstream has to care which one produced a transcript.
 function normalise(text, segments) {
-  return {
-    text: String(text || '').trim(),
-    segments: segments.filter((s) => s.text),
-  };
+  const cleaned = segments
+    .map((s) => ({ ...s, text: stripNonSpeech(s.text) }))
+    .filter((s) => s.text);
+
+  // The top-level text is whisper's own concatenation, so it carries the same
+  // markers; rebuild it from the cleaned segments when they're available
+  // rather than trying to unpick them from the joined string.
+  const wholeText = cleaned.length ? cleaned.map((s) => s.text).join(' ') : stripNonSpeech(text);
+
+  return { text: wholeText.trim(), segments: cleaned };
 }
 
 async function transcribeLocally(wavPath, cfg, wordLevel) {
