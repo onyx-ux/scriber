@@ -8,7 +8,14 @@ const execFileAsync = promisify(execFile);
 // stdout beyond the JSON) so we get structured segments back instead of
 // having to scrape stdout text. Requires the input to already be a WAV file
 // (16kHz mono s16le) — conversion happens in voice/capture.js at capture time.
-export async function transcribeWav(wavPath, cfg) {
+// wordLevel: emit one segment per word (-ml 1 with -sow) instead of whisper's
+// own sentence-ish segmentation. Only used for merged multi-utterance files:
+// whisper's default segments there routinely span several of the clips that
+// were merged, so everything collapses onto whichever clip the segment's
+// midpoint happens to land in, and the transcript loses its timestamps.
+// Word-level segments are fine-grained enough to fall back onto the right
+// clip. Not worth it for a single clip, where there's nothing to split.
+export async function transcribeWav(wavPath, cfg, { wordLevel = false } = {}) {
   // whisper.cpp's -of takes a prefix and appends ".json" itself — so the
   // real output path has the ".wav" stripped, not appended to the full name.
   const outPrefix = wavPath.replace(/\.wav$/, '');
@@ -24,6 +31,7 @@ export async function transcribeWav(wavPath, cfg) {
       '-t', String(cfg.whisperThreads),
       '-nt',                          // no timestamps in stdout text (we use the JSON segments instead)
       '-l', 'en',
+      ...(wordLevel ? ['-ml', '1', '-sow'] : []),
     ],
     { timeout: 10 * 60 * 1000 } // 10 min hard cap per file — a single utterance shouldn't take anywhere near this
   );

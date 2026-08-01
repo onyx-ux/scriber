@@ -41,6 +41,15 @@ export const config = validate({
   whisperModelPath: optional('WHISPER_MODEL_PATH', `/models/ggml-${optional('WHISPER_MODEL_NAME', 'base.en')}.bin`),
   whisperThreads: parseInt(optional('WHISPER_THREADS', '4'), 10),
 
+  // whisper.cpp encodes a fixed 30-second window however short the clip is,
+  // so transcribing hundreds of one-second Discord clips one at a time wastes
+  // almost all of it (a real 235-clip session measured at ~4.5 hours).
+  // Batching merges clips from the SAME speaker to fill those windows: ~5x
+  // faster, speakers still exactly right, but line breaks get ragged and
+  // per-line timestamps drift by a few seconds. Set false for slower,
+  // cleaner transcripts. See pipeline/transcribe.js for the measurements.
+  transcribeBatching: optional('TRANSCRIBE_BATCHING', 'true') !== 'false',
+
   // Ollama on the PC, reachable over the LAN
   ollamaUrl: optional('OLLAMA_URL', 'http://127.0.0.1:11434'),
   ollamaModel: optional('OLLAMA_MODEL', 'qwen2.5:14b'),

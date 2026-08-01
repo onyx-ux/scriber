@@ -1,4 +1,4 @@
-import { writeFile, unlink } from 'node:fs/promises';
+import { writeFile, unlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -6,20 +6,69 @@ import { randomUUID } from 'node:crypto';
 import { transcribeWav } from '../stt/whisper.js';
 import { mergeWavs, assignSegmentsToRanges } from './wav-merge.js';
 
-// whisper.cpp reloads its entire model from disk on every invocation. A real
-// Discord session captures one short WAV per speaking turn — often under a
-// couple of seconds of actual audio — so for a session with hundreds of
-// utterances, that reload cost (measured: comparable to transcribing several
-// minutes of real audio) dwarfs the actual transcription work. Batching
-// merges each group of utterances into one file (with silence gaps between
-// them) and makes ONE whisper call per batch instead of one per utterance,
-// then splits the result back out by matching each returned segment's offset
-// against the batch's per-utterance time ranges.
-const BATCH_SIZE = 30;
+// whisper.cpp encodes a fixed 30-SECOND window no matter how short the input
+// is — measured on the Pi at ~65s of CPU per window for medium.en. A Discord
+// session is hundreds of one-to-two-second clips (one per speaking turn), so
+// transcribing them one at a time burns a full 30s window on each: a real
+// 235-clip session was measured at ~4.5 hours, essentially all of it wasted
+// encode. Merging clips so each window is actually full is worth ~6x.
+//
+// The catch, found by A/B testing against real session audio: whisper
+// re-segments merged audio however it likes and its timestamps do NOT line up
+// with the clip boundaries that went in. Merging clips from DIFFERENT people
+// therefore smears text across speakers — the transcript stops being a
+// reliable record of who said what, which is the whole point of it.
+//
+// So batches are built PER SPEAKER. Whatever whisper does with the timing
+// inside a batch, every word in it provably belongs to that one person; only
+// the line breaks within a single speaker's own run can shift. Attribution —
+// the part that matters — is exact by construction.
+//
+// (Two other approaches were measured and rejected: passing many files to one
+// whisper invocation still pays a full window each (~65s/file, no better than
+// before, so the model reload was never the real cost); and shrinking the
+// encoder window with -ac wrecks the output — at -ac 200 it looped a phrase
+// twice, at -ac 100 it returned ".".)
+//
+// WHAT THIS COSTS, measured on 20 real clips against the one-at-a-time path:
+//   speed        1389s -> 262s (5.3x)
+//   speakers     100% correct (0 lines misattributed)
+//   words kept   ~95% (109 of 114)
+//   line breaks  ragged — whisper's word timestamps drift by a few hundred
+//                ms on merged audio, which is wider than a ~1s clip, so a
+//                word can land on the neighbouring clip and sentences get
+//                chopped ("I" / "have 87," as separate lines). Widening the
+//                silence gap to 1500ms did not help and cost words, so no
+//                realistic gap fixes this.
+// The content, order and speakers are all right; it's the line breaks and
+// exact per-line timestamps that suffer. That's a fair trade for a summariser
+// (which reads the whole transcript anyway) but it IS a regression in how the
+// raw transcript reads, so TRANSCRIBE_BATCHING=false opts back out.
+
+// Target audio per batch. Just under 30s so a batch normally lands in one
+// encode window; going over would spill into a second, mostly-empty one.
+const TARGET_BATCH_MS = 27_000;
+// Silence between merged clips. Measured 700 vs 1500ms on real audio: wider
+// gaps did NOT reduce how often a word lands on a neighbouring clip (whisper's
+// word timestamps drift more than a ~1s clip is wide, so no realistic gap
+// fixes it) and cost both audio length and a few words. Kept narrow.
 const GAP_MS = 700;
+// 16kHz mono 16-bit PCM = 32 bytes per millisecond. Used to size batches from
+// file length without decoding anything.
+const BYTES_PER_MS = 32;
+const WAV_HEADER_BYTES = 44;
 
 function toResult(u, text) {
   return { userId: u.userId, displayName: u.displayName, startMs: u.startMs, endMs: u.endMs, text };
+}
+
+async function clipDurationMs(wavPath) {
+  try {
+    const { size } = await stat(wavPath);
+    return Math.max(0, (size - WAV_HEADER_BYTES) / BYTES_PER_MS);
+  } catch {
+    return 0;
+  }
 }
 
 async function transcribeIndividually(batch, cfg) {
@@ -45,7 +94,13 @@ async function transcribeMerged(batch, cfg) {
   const mergedPath = join(tmpdir(), `scriber-merge-${randomUUID()}.wav`);
   await writeFile(mergedPath, buffer);
   try {
-    const { segments } = await transcribeWav(mergedPath, cfg);
+    // Word-level segmentation, so each merged clip can get its own text back.
+    // whisper's default segments span several clips at once, which collapsed
+    // a 20-clip batch into 3 lines with timestamps minutes out of place.
+    const { segments } = await transcribeWav(mergedPath, cfg, { wordLevel: true });
+    // assignSegmentsToRanges falls back to the nearest range rather than
+    // dropping a segment that lands in one of the inserted gaps, so no speech
+    // is lost even when whisper's timing disagrees with the layout.
     const texts = assignSegmentsToRanges(segments, ranges);
     return batch.map((u, idx) => (texts[idx] ? toResult(u, texts[idx]) : null)).filter(Boolean);
   } finally {
@@ -53,33 +108,89 @@ async function transcribeMerged(batch, cfg) {
   }
 }
 
-// A lone file gets no benefit from merging (nothing to batch with) — skip
-// straight to a single whisper call so the last, short batch of a session
-// isn't carrying merge machinery for no reason.
+// One speaker's clips, in time order, grouped so each group is roughly one
+// encode window's worth of audio.
+async function batchesForSpeaker(utterances) {
+  const batches = [];
+  let current = [];
+  let currentMs = 0;
+
+  for (const u of utterances) {
+    const durationMs = await clipDurationMs(u.wavPath);
+    // A single clip longer than a whole window goes alone — merging it with
+    // anything would only spill further.
+    if (durationMs >= TARGET_BATCH_MS) {
+      if (current.length) batches.push(current);
+      batches.push([u]);
+      current = [];
+      currentMs = 0;
+      continue;
+    }
+    if (current.length && currentMs + durationMs + GAP_MS > TARGET_BATCH_MS) {
+      batches.push(current);
+      current = [];
+      currentMs = 0;
+    }
+    current.push(u);
+    currentMs += durationMs + (current.length > 1 ? GAP_MS : 0);
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
 async function transcribeBatch(batch, cfg) {
+  // Nothing to gain from the merge machinery for a lone clip.
   if (batch.length === 1) return transcribeIndividually(batch, cfg);
 
   try {
     return { results: await transcribeMerged(batch, cfg), failures: [] };
   } catch (err) {
-    // A malformed/mismatched WAV in the batch (or any other merge-time
-    // failure) would otherwise cost every utterance in the batch its
-    // transcript. Falling back to the slow one-at-a-time path for just this
-    // batch trades speed for correctness only where something's actually
-    // wrong, instead of everywhere.
+    // A malformed WAV (or any other merge-time failure) would otherwise cost
+    // every clip in the batch its transcript. Falling back to one-at-a-time
+    // for just this batch trades speed for correctness only where something
+    // is actually wrong.
     console.error(`[transcribe] merged batch failed (${err.message}) — retrying its files individually`);
     return transcribeIndividually(batch, cfg);
   }
 }
 
+// Decides which clips get merged together. Exported so the "a batch is always
+// one speaker" invariant — the thing that broke attribution when it didn't
+// hold — can be tested directly, without needing whisper.
+export async function planBatches(capturedUtterances) {
+  // Group by speaker first — see the note at the top of this file. Within a
+  // speaker, keep chronological order so merged audio runs forward in time.
+  const bySpeaker = new Map();
+  for (const u of capturedUtterances) {
+    if (!bySpeaker.has(u.userId)) bySpeaker.set(u.userId, []);
+    bySpeaker.get(u.userId).push(u);
+  }
+
+  const batches = [];
+  for (const utterances of bySpeaker.values()) {
+    utterances.sort((a, b) => a.startMs - b.startMs);
+    batches.push(...(await batchesForSpeaker(utterances)));
+  }
+  return batches;
+}
+
 // capturedUtterances: [{ userId, displayName, wavPath, startMs, endMs }]
-export async function transcribeAll(capturedUtterances, cfg, { onProgress, batchSize = BATCH_SIZE } = {}) {
+//
+// cfg.transcribeBatching = false transcribes every clip on its own instead.
+// That is ~5x slower (a 235-clip session measured at ~4.5 hours vs ~50 min)
+// but gives cleaner line breaks and exact per-clip timestamps — see the
+// trade-off note at the top of this file.
+export async function transcribeAll(capturedUtterances, cfg, { onProgress } = {}) {
   const results = [];
   const failures = [];
-  let done = 0;
 
-  for (let i = 0; i < capturedUtterances.length; i += batchSize) {
-    const batch = capturedUtterances.slice(i, i + batchSize);
+  const batches =
+    cfg.transcribeBatching === false
+      ? capturedUtterances.map((u) => [u])
+      : await planBatches(capturedUtterances);
+
+  let done = 0;
+  for (const batch of batches) {
     const { results: batchResults, failures: batchFailures } = await transcribeBatch(batch, cfg);
     results.push(...batchResults);
     failures.push(...batchFailures);
@@ -87,6 +198,9 @@ export async function transcribeAll(capturedUtterances, cfg, { onProgress, batch
     onProgress?.(done, capturedUtterances.length);
   }
 
+  // Batching walks one speaker at a time, so results come out grouped by
+  // person; the transcript needs to read chronologically.
+  results.sort((a, b) => a.startMs - b.startMs);
   return { utterances: results, failures };
 }
 
