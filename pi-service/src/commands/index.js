@@ -5,7 +5,13 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { startCapture } from '../voice/capture.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
-import { isSummariserReachable, summariserLabel } from '../pipeline/model-client.js';
+import {
+  isSummariserReachable,
+  summariserLabel,
+  withProvider,
+  isValidProvider,
+  configuredProviders,
+} from '../pipeline/model-client.js';
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { finishSession } from '../pipeline/finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
@@ -82,7 +88,18 @@ export const commandDefs = [
   new SlashCommandBuilder()
     .setName('summarise')
     .setDescription('Retry summarisation now for a meeting (useful right after turning your PC on)')
-    .addIntegerOption((o) => o.setName('meeting_id').setDescription('Meeting ID').setRequired(true)),
+    .addIntegerOption((o) => o.setName('meeting_id').setDescription('Meeting ID').setRequired(true))
+    .addStringOption((o) =>
+      o
+        .setName('provider')
+        .setDescription('Who writes it (default: whatever SUMMARY_PROVIDER is set to)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Ollama (local, on your PC)', value: 'ollama' },
+          { name: 'Gemini (cloud)', value: 'gemini' },
+          { name: 'Claude (cloud)', value: 'anthropic' }
+        )
+    ),
   new SlashCommandBuilder()
     .setName('export')
     .setDescription('Get the raw audio + transcript for a meeting')
@@ -148,6 +165,17 @@ export const commandDefs = [
     .setDescription('Release a session that is parked awaiting approval')
     .addIntegerOption((o) =>
       o.setName('meeting_id').setDescription('Meeting ID (omit to approve everything waiting)').setRequired(false)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('provider')
+        .setDescription('Who writes it (default: whatever SUMMARY_PROVIDER is set to)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Ollama (local, on your PC)', value: 'ollama' },
+          { name: 'Gemini (cloud)', value: 'gemini' },
+          { name: 'Claude (cloud)', value: 'anthropic' }
+        )
     ),
   new SlashCommandBuilder()
     .setName('uncorrect')
@@ -177,7 +205,7 @@ export function registerCommandHandlers(client, db, cfg) {
     // Approval buttons arrive as component interactions, not commands.
     if (interaction.isButton()) {
       try {
-        return await handleApprovalButton(interaction, db);
+        return await handleApprovalButton(interaction, db, cfg);
       } catch (err) {
         console.error('[button] error:', err);
         return;
@@ -205,7 +233,7 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'pending') return await handlePending(interaction, db, cfg);
       if (interaction.commandName === 'pause') return await handlePause(interaction, db);
       if (interaction.commandName === 'resume') return await handleResume(interaction, db);
-      if (interaction.commandName === 'approve') return await handleApprove(interaction, db);
+      if (interaction.commandName === 'approve') return await handleApprove(interaction, db, cfg);
       if (interaction.commandName === 'ask') return await handleAsk(interaction, db, cfg);
       if (interaction.commandName === 'import') return await handleImport(interaction, db, cfg);
       if (interaction.commandName === 'correct') return await handleCorrect(interaction, db);
@@ -371,19 +399,41 @@ async function handleHistory(interaction, db) {
 
 async function handleSummarizeNow(interaction, db, cfg) {
   const meetingId = interaction.options.getInteger('meeting_id');
+  const provider = interaction.options.getString('provider');
   const meeting = db.getMeeting(meetingId);
   if (!meeting) return interaction.reply({ content: 'No such meeting.', flags: MessageFlags.Ephemeral });
 
-  const reachable = await isSummariserReachable(cfg);
-  if (!reachable) {
+  // Check the provider actually being used, not the configured default —
+  // otherwise picking Gemini while Ollama is off would be refused, and vice
+  // versa.
+  const effectiveCfg = withProvider(cfg, provider);
+  const unusable = providerUnusableReason(effectiveCfg, provider);
+  if (unusable) return interaction.reply({ content: unusable, flags: MessageFlags.Ephemeral });
+
+  if (!(await isSummariserReachable(effectiveCfg))) {
     return interaction.reply({
-      content: pick(SUMMARIZE_UNREACHABLE, { label: summariserLabel(cfg) }),
+      content: pick(SUMMARIZE_UNREACHABLE, { label: summariserLabel(effectiveCfg) }),
       flags: MessageFlags.Ephemeral,
     });
   }
 
-  db.requeueSummarizeNow(meetingId);
-  await interaction.reply(pick(SUMMARIZE_QUEUED, { meetingId }));
+  db.requeueSummarizeNow(meetingId, provider);
+  const note = provider ? `\n_Summarising with ${summariserLabel(effectiveCfg)}._` : '';
+  await interaction.reply(pick(SUMMARIZE_QUEUED, { meetingId }) + note);
+}
+
+// A provider the user explicitly asked for but that isn't set up (no API key)
+// should say so plainly, rather than silently falling back to the default and
+// producing a summary from something they didn't choose.
+function providerUnusableReason(cfg, requested) {
+  if (!requested) return null;
+  if (!isValidProvider(requested)) return `⚠️ Unknown provider "${requested}".`;
+  if (!configuredProviders(cfg).includes(requested)) {
+    return `⚠️ **${requested}** isn't set up on this bot — its API key is missing. Configured right now: ${configuredProviders(
+      cfg
+    ).join(', ')}.`;
+  }
+  return null;
 }
 
 async function handleExport(interaction, db, cfg) {
@@ -681,21 +731,24 @@ async function handleAsk(interaction, db, cfg) {
   await interaction.editReply(body.length > 1990 ? `${body.slice(0, 1980)}…` : body);
 }
 
-async function handleApprovalButton(interaction, db) {
+async function handleApprovalButton(interaction, db, cfg) {
   const { customId } = interaction;
 
   if (customId.startsWith(APPROVE_PREFIX)) {
-    const jobId = parseInt(customId.slice(APPROVE_PREFIX.length), 10);
+    // "<jobId>" (use the configured default) or "<jobId>:<provider>".
+    const [rawJobId, provider = null] = customId.slice(APPROVE_PREFIX.length).split(':');
+    const jobId = parseInt(rawJobId, 10);
     const job = db.getJob(jobId);
     if (!job) {
       return interaction.update({ content: '⚠️ That job no longer exists.', components: [] });
     }
-    const released = db.approveJob(jobId);
+    const released = db.approveJob(jobId, provider);
+    const label = summariserLabel(withProvider(cfg, provider));
     // Dropping the buttons on success stops a second click re-queueing a job
     // that has already moved on.
     return interaction.update({
       content: released
-        ? pick(APPROVED_CONFIRM, { meetingId: job.meeting_id })
+        ? `${pick(APPROVED_CONFIRM, { meetingId: job.meeting_id })}\n_Summarising with ${label}._`
         : `⚠️ Session #${job.meeting_id} was already released (currently: ${job.status}).`,
       components: [],
     });
@@ -708,7 +761,7 @@ async function handleApprovalButton(interaction, db) {
     // from this same DM.
     return interaction.update({
       content: pick(PARKED_CONFIRM, { meetingId: job ? job.meeting_id : '?' }),
-      components: [buildApprovalRow(jobId)],
+      components: [buildApprovalRow(jobId, cfg)],
     });
   }
 }
@@ -723,13 +776,22 @@ async function handleResume(interaction, db) {
   await interaction.reply({ content: pick(QUEUE_RESUMED), flags: MessageFlags.Ephemeral });
 }
 
-async function handleApprove(interaction, db) {
+async function handleApprove(interaction, db, cfg) {
   const meetingId = interaction.options.getInteger('meeting_id');
+  const provider = interaction.options.getString('provider');
+
+  const effectiveCfg = withProvider(cfg, provider);
+  const unusable = providerUnusableReason(effectiveCfg, provider);
+  if (unusable) return interaction.reply({ content: unusable, flags: MessageFlags.Ephemeral });
+  const note = provider ? `\n_Summarising with ${summariserLabel(effectiveCfg)}._` : '';
 
   if (meetingId === null) {
-    const count = db.approveAllWaiting();
+    const count = db.approveAllWaiting(provider);
     return interaction.reply({
-      content: count === 0 ? '📭 Nothing was awaiting approval.' : `✅ Released ${count} parked session(s) for summarising.`,
+      content:
+        count === 0
+          ? '📭 Nothing was awaiting approval.'
+          : `✅ Released ${count} parked session(s) for summarising.${note}`,
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -741,9 +803,9 @@ async function handleApprove(interaction, db) {
       flags: MessageFlags.Ephemeral,
     });
   }
-  db.approveJob(job.id);
+  db.approveJob(job.id, provider);
   await interaction.reply({
-    content: pick(APPROVED_CONFIRM, { meetingId }),
+    content: pick(APPROVED_CONFIRM, { meetingId }) + note,
     flags: MessageFlags.Ephemeral,
   });
 }

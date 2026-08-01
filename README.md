@@ -204,7 +204,7 @@ whole stack on one machine for debugging.)*
 - `/join` — start recording the voice channel you're in
 - `/leave` — stop recording, transcribe, queue the AI summary
 - `/history [count]` — list recent sessions
-- `/summarise meeting_id:<id>` — force an immediate summarise retry (useful right after turning your PC on)
+- `/summarise meeting_id:<id> [provider:<ollama|gemini|anthropic>]` — force an immediate summarise retry (useful right after turning your PC on). `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it — e.g. use Gemini for a session while your PC is off, and keep Ollama as the default
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
 - `/funny` — pull a random funny/memorable moment from any completed session in this campaign's history (the AI summariser flags these, if any, as part of the normal per-session summary)
@@ -216,7 +216,7 @@ whole stack on one machine for debugging.)*
 - `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs the configured summariser (Ollama, Claude, or Gemini) reachable
 - `/status` — see what's currently queued/retrying, and whether the configured summariser is reachable right now
 - `/pending` — everything currently in the pipeline: recording, transcribing, awaiting approval, or queued for summarising
-- `/approve [meeting_id]` — release a session parked awaiting approval (omit the ID to approve everything waiting)
+- `/approve [meeting_id] [provider:<ollama|gemini|anthropic>]` — release a session parked awaiting approval (omit the ID to approve everything waiting; `provider:` works the same as on `/summarise`)
 - `/pause` / `/resume` — stop and restart summarising, so you can kill Ollama or free the GPU without losing queued work
 - `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
 - `/whoami` — show what name you currently appear as in transcripts and notes
@@ -266,6 +266,31 @@ a laptop, or a USB stick. Full transcripts stay in the `.md` files beside it.
 network under any setting — a cloud option only ever sees text that has
 already been transcribed on the Pi. Long transcripts are still sliced and
 merged automatically, so session length isn't capped either way.
+
+### Picking a summariser per session
+
+`SUMMARY_PROVIDER` is only the *default*. Once a session finishes
+transcribing you can send that one summary somewhere else, without changing
+the config:
+
+- **The approval DM** (with `SUMMARY_REQUIRE_APPROVAL=true`) shows one button
+  per configured provider — **Ollama (local)**, **Gemini**, **Claude** — plus
+  **Not yet**. Whichever you press is what writes that session. The message
+  lists which model sits behind each button, since a button label only has
+  room for the provider name.
+- **`/summarise meeting_id:<id> provider:<...>`** and
+  **`/approve [meeting_id] provider:<...>`** do the same thing from a command.
+
+Only providers that are actually set up appear — Ollama is always available
+(no key needed), Gemini and Claude only once their API key is present. Asking
+for one that isn't configured gets a clear refusal rather than a silent
+fallback to something you didn't choose. With just one provider set up, the
+button stays a plain **Summarise now** instead of a pointless one-item picker.
+
+The choice is stored on the job, so it survives a bot restart and is still
+honoured when a queued session is retried later. This is the practical answer
+to "my PC is off tonight": approve with Gemini and the recap lands now, rather
+than waiting for the Ollama retry queue.
 
 ## Campaign ledger (Obsidian)
 

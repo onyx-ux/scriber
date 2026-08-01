@@ -207,3 +207,29 @@ export function summariserLabel(cfg) {
   if (cfg.summaryProvider === GEMINI) return `Gemini (${cfg.geminiModel})`;
   return `Ollama (${cfg.ollamaModel})`;
 }
+
+export const PROVIDERS = [OLLAMA, ANTHROPIC, GEMINI];
+
+export function isValidProvider(name) {
+  return PROVIDERS.includes(name);
+}
+
+// A copy of cfg pinned to one specific provider, for running a single job on
+// something other than SUMMARY_PROVIDER. Returns cfg unchanged for a null or
+// unrecognised name, so a stale/hand-edited value in the database degrades to
+// "use the configured default" rather than breaking the job.
+export function withProvider(cfg, provider) {
+  if (!provider || !isValidProvider(provider)) return cfg;
+  return { ...cfg, summaryProvider: provider };
+}
+
+// Which providers this deployment could actually use right now. Ollama is
+// always listed (it needs no key — it may still be unreachable, which is a
+// separate runtime question answered by isSummariserReachable); the cloud
+// ones only count as usable once their key is set.
+export function configuredProviders(cfg) {
+  const available = [OLLAMA];
+  if (cfg.anthropicApiKey) available.push(ANTHROPIC);
+  if (cfg.geminiApiKey) available.push(GEMINI);
+  return available;
+}

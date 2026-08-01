@@ -1,4 +1,5 @@
 import { summarizeTranscript } from './summarize-client.js';
+import { withProvider, summariserLabel } from './model-client.js';
 import { buildTranscriptText } from './transcribe.js';
 import { exportMarkdown } from '../export/markdown.js';
 import { exportCampaignSite } from '../export/site.js';
@@ -37,6 +38,10 @@ export async function tick(db, discordClient, cfg) {
   db.markJobRunning(job.id);
   const meeting = db.getMeeting(job.meeting_id);
 
+  // A job can pin its own summariser (chosen per-session via an approval
+  // button or /summarise provider:...); otherwise this is just cfg.
+  const jobCfg = withProvider(cfg, job.provider);
+
   try {
     const utterances = db.listUtterances(meeting.id);
     const transcript = buildTranscriptText(utterances);
@@ -46,7 +51,10 @@ export async function tick(db, discordClient, cfg) {
       attendees: [...new Set(utterances.map((u) => u.display_name))],
     };
 
-    const notes = await summarizeTranscript(transcript, meta, cfg);
+    if (job.provider) {
+      console.log(`[queue] meeting ${meeting.id}: using per-session summariser ${summariserLabel(jobCfg)}`);
+    }
+    const notes = await summarizeTranscript(transcript, meta, jobCfg);
 
     // Store the FULL summary — /recap, /funny and the ledger all read this,
     // and it should stay the complete record of the session.

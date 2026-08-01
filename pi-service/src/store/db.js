@@ -69,16 +69,34 @@ CREATE TABLE IF NOT EXISTS jobs (
   attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_error TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Which summariser to use for THIS job, overriding SUMMARY_PROVIDER.
+  -- NULL means "whatever the config says at the time it runs" — the normal
+  -- case. Set when a specific provider is chosen per-session (an approval
+  -- button, or /summarise provider:...).
+  provider TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, next_attempt_at);
 `;
+
+// CREATE TABLE IF NOT EXISTS won't add a column to a table that already
+// exists, so an existing deployment's jobs table needs the new column added
+// explicitly. Checked-then-added rather than blindly ALTERing, since
+// re-running the ALTER on an already-migrated database errors.
+function migrate(db) {
+  const jobColumns = db.prepare(`PRAGMA table_info(jobs)`).all().map((c) => c.name);
+  if (!jobColumns.includes('provider')) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN provider TEXT`);
+    console.log('[db] migrated: added jobs.provider');
+  }
+}
 
 export function openDb(path) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.exec(SCHEMA);
+  migrate(db);
   return wrap(db);
 }
 
@@ -196,7 +214,10 @@ function wrap(db) {
     // its backoff) instead of adding a second one — otherwise running
     // /summarise while a job was already waiting would queue a duplicate and
     // the session would be summarised, and posted to Discord, twice.
-    requeueSummarizeNow(meetingId) {
+    //
+    // provider: null leaves whatever the job already had (so re-running
+    // /summarise without naming one doesn't silently wipe an earlier choice).
+    requeueSummarizeNow(meetingId, provider = null) {
       const existing = db
         .prepare(
           `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize'
@@ -206,14 +227,17 @@ function wrap(db) {
 
       // Also the manual approval path: /summarise on a parked job releases it.
       if (existing) {
-        db.prepare(`UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now') WHERE id = ?`).run(
-          existing.id
-        );
+        db.prepare(
+          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now'),
+                           provider = COALESCE(?, provider)
+            WHERE id = ?`
+        ).run(provider, existing.id);
         return;
       }
       db.prepare(
-        `INSERT INTO jobs (meeting_id, type, status, next_attempt_at) VALUES (?, 'summarize', 'pending', datetime('now'))`
-      ).run(meetingId);
+        `INSERT INTO jobs (meeting_id, type, status, next_attempt_at, provider)
+         VALUES (?, 'summarize', 'pending', datetime('now'), ?)`
+      ).run(meetingId, provider);
     },
 
     nextDueJob() {
@@ -269,23 +293,27 @@ function wrap(db) {
     },
 
     // Release a parked job so the worker can pick it up on its next tick.
-    approveJob(jobId) {
+    // provider: null keeps whatever the job already had (normally nothing,
+    // meaning "use the configured default").
+    approveJob(jobId, provider = null) {
       const info = db
         .prepare(
-          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now')
+          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now'),
+                           provider = COALESCE(?, provider)
             WHERE id = ? AND status = 'awaiting_approval'`
         )
-        .run(jobId);
+        .run(provider, jobId);
       return info.changes > 0;
     },
 
-    approveAllWaiting() {
+    approveAllWaiting(provider = null) {
       const info = db
         .prepare(
-          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now')
+          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now'),
+                           provider = COALESCE(?, provider)
             WHERE status = 'awaiting_approval'`
         )
-        .run();
+        .run(provider);
       return info.changes;
     },
 
