@@ -14,6 +14,23 @@ import {
 } from '../pipeline/model-client.js';
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { finishSession } from '../pipeline/finish-session.js';
+import { isWhisperServerReachable } from '../stt/whisper.js';
+import { listTranscriptions, describeTranscription, formatDuration } from '../pipeline/progress.js';
+import {
+  choiceAvailable,
+  buildTranscribeChoiceRow,
+  parseTranscribeChoice,
+  defaultTarget,
+  applyTranscribeTarget,
+  transcribeChoicePrompt,
+  transcribeChosenNote,
+  TARGET_PI,
+} from '../pipeline/transcribe-target.js';
+
+// How long the "PC or Pi?" prompt waits before taking the default. Long
+// enough to notice after a session wraps up, short enough that a transcript
+// isn't held hostage by nobody looking at Discord.
+const TRANSCRIBE_CHOICE_MS = 120_000;
 import { resolveSpeakerName } from '../campaign/character-names.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -325,6 +342,45 @@ async function handleJoin(interaction, db, cfg) {
   }
 }
 
+// Asks where this session should be transcribed and returns the cfg to run
+// under. Never throws: a session that has already been recorded must always
+// end up transcribed somewhere, so every failure path falls through to the
+// sensible default rather than leaving the audio stranded.
+async function resolveTranscribeChoice(interaction, meetingId, cfg) {
+  if (!choiceAvailable(cfg)) return { cfg, serverReachable: null, target: null };
+
+  const serverReachable = await isWhisperServerReachable(cfg);
+  const row = buildTranscribeChoiceRow(meetingId, { serverReachable });
+
+  let prompt;
+  try {
+    prompt = await interaction.followUp({
+      content: transcribeChoicePrompt(cfg, { serverReachable }),
+      components: [row],
+    });
+  } catch {
+    // Couldn't even ask (missing permissions, deleted channel) — just get on
+    // with it rather than losing the session over a UI problem.
+    const target = defaultTarget({ serverReachable });
+    return { cfg: applyTranscribeTarget(cfg, target), serverReachable, target };
+  }
+
+  let target;
+  try {
+    const click = await prompt.awaitMessageComponent({ time: TRANSCRIBE_CHOICE_MS });
+    target = parseTranscribeChoice(click.customId)?.target ?? defaultTarget({ serverReachable });
+    await click.update({ content: transcribeChosenNote(cfg, target), components: [] }).catch(() => {});
+  } catch {
+    // Nobody pressed anything before the timeout.
+    target = defaultTarget({ serverReachable });
+    await prompt
+      .edit({ content: `${transcribeChosenNote(cfg, target)} _(no answer — went with the default)_`, components: [] })
+      .catch(() => {});
+  }
+
+  return { cfg: applyTranscribeTarget(cfg, target), serverReachable, target };
+}
+
 async function handleLeave(interaction, db, cfg) {
   const session = activeSessions.get(interaction.guildId);
   if (!session) {
@@ -336,7 +392,26 @@ async function handleLeave(interaction, db, cfg) {
   session.handle.disconnect();
   db.endMeeting(session.meetingId, new Date().toISOString());
 
-  const result = await finishSession(db, session.meetingId, session.capturedUtterances, session.audioDir, cfg);
+  // Ask where to transcribe before starting, because the answer changes how
+  // long this takes by two orders of magnitude and there is no way to undo it
+  // once whisper is grinding. Falls through immediately when there's nothing
+  // to ask (no GPU server configured).
+  const { cfg: runCfg, serverReachable, target } = await resolveTranscribeChoice(interaction, session.meetingId, cfg);
+
+  const result = await finishSession(
+    db,
+    session.meetingId,
+    session.capturedUtterances,
+    session.audioDir,
+    runCfg,
+    {
+      serverReachable,
+      // Pin the summariser onto the job itself when transcribing on the Pi.
+      // The queue worker reads the global config, so without this the job
+      // would fall back to Ollama on a PC we just established is off.
+      pinProvider: target === TARGET_PI ? runCfg.summaryProvider : null,
+    }
+  );
 
   if (!result.ok) {
     return interaction.followUp(pick(LEAVE_NOTHING_USABLE, { failCount: result.failures.length }));
@@ -362,13 +437,15 @@ async function handleLeave(interaction, db, cfg) {
       meetingId: session.meetingId,
     });
   } else {
-    const reachable = await isSummariserReachable(cfg);
+    // runCfg, not cfg: if the Pi was chosen the summariser has been switched,
+    // and reporting the old one would name a model that isn't going to run.
+    const reachable = await isSummariserReachable(runCfg);
     content = reachable
       ? pick(LEAVE_SUMMARIZING_NOW, { count: result.utteranceCount })
       : pick(LEAVE_SUMMARY_QUEUED, {
           count: result.utteranceCount,
           meetingId: session.meetingId,
-          label: summariserLabel(cfg),
+          label: summariserLabel(runCfg),
         });
   }
 
@@ -377,7 +454,7 @@ async function handleLeave(interaction, db, cfg) {
   if (awaitingApproval) {
     await notifyApprovalNeeded({
       discordClient: interaction.client,
-      cfg,
+      cfg: runCfg,
       meeting: db.getMeeting(session.meetingId),
       jobId: result.job.id,
       utteranceCount: result.utteranceCount,
@@ -473,7 +550,13 @@ async function handleStatus(interaction, db, cfg) {
   const reachableText = reachable ? '✅ reachable' : '❌ not reachable';
   const label = summariserLabel(cfg);
 
-  if (jobs.length === 0) {
+  // Transcription runs before a summarise job exists, so a session being
+  // ground through on the Pi shows up here and nowhere else — this is the
+  // one that can legitimately take hours and prompt "is it stuck?".
+  const now = Date.now();
+  const transcribing = listTranscriptions().map((entry) => `- Meeting #${entry.meetingId}: ${describeTranscription(entry, now)}`);
+
+  if (jobs.length === 0 && transcribing.length === 0) {
     return interaction.reply({
       content: pick(STATUS_IDLE, { reachable: reachableText, label }),
       flags: MessageFlags.Ephemeral,
@@ -481,14 +564,22 @@ async function handleStatus(interaction, db, cfg) {
   }
 
   const lines = jobs.map((j) => {
-    const age = Math.round((Date.now() - new Date(j.created_at).getTime()) / 60000);
-    return `- Meeting #${j.meeting_id}: ${j.status}, ${j.attempts} attempt(s), waiting ~${age}m${j.last_error ? ` (last error: ${j.last_error.slice(0, 100)})` : ''}`;
+    const age = Math.round((now - new Date(j.created_at).getTime()) / 60000);
+    // For a job that failed and is backing off, when it next tries is more
+    // useful than how long it has already been waiting.
+    const dueMs = j.next_attempt_at ? new Date(j.next_attempt_at).getTime() - now : null;
+    const retry =
+      j.status === 'pending' && dueMs !== null && Number.isFinite(dueMs) && dueMs > 0
+        ? `, retry in ~${formatDuration(dueMs)}`
+        : '';
+    return `- Meeting #${j.meeting_id}: ${j.status}, ${j.attempts} attempt(s), waiting ~${age}m${retry}${j.last_error ? ` (last error: ${j.last_error.slice(0, 100)})` : ''}`;
   });
 
-  await interaction.reply({
-    content: `${pick(STATUS_QUEUED_HEADER, { reachable: reachableText, label })}\n${lines.join('\n')}`,
-    flags: MessageFlags.Ephemeral,
-  });
+  const sections = [pick(STATUS_QUEUED_HEADER, { reachable: reachableText, label })];
+  if (transcribing.length > 0) sections.push(transcribing.join('\n'));
+  if (lines.length > 0) sections.push(lines.join('\n'));
+
+  await interaction.reply({ content: sections.join('\n'), flags: MessageFlags.Ephemeral });
 }
 
 async function handleRecap(interaction, db) {

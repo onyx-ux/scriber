@@ -174,20 +174,36 @@ export async function planBatches(capturedUtterances) {
   return batches;
 }
 
+// Batching trades transcript quality for speed, so it should only be paid for
+// where the speed is actually needed. The GPU server does a clip in ~0.17s —
+// a whole session finishes in minutes untouched, so there is nothing to buy
+// and the cleaner transcript wins. The Pi's CPU does the same clip in ~65s,
+// where 5x decides whether a session is readable tomorrow morning at all.
+//
+// Exported for the tests, which is also where the fallback case is pinned: a
+// configured-but-unreachable server ends up transcribing on the CPU, so it
+// must resolve to batched, not clean.
+export function shouldBatch(cfg, { serverReachable = null } = {}) {
+  if (cfg.transcribeBatching !== 'auto') return cfg.transcribeBatching !== false;
+  // No server configured, or a configured one that is not answering: this is
+  // going to run on the Pi's CPU, so take the 5x.
+  if (!cfg.whisperServerUrl) return true;
+  return serverReachable === false;
+}
+
 // capturedUtterances: [{ userId, displayName, wavPath, startMs, endMs }]
 //
-// cfg.transcribeBatching = false transcribes every clip on its own instead.
-// That is ~5x slower (a 235-clip session measured at ~4.5 hours vs ~50 min)
-// but gives cleaner line breaks and exact per-clip timestamps — see the
-// trade-off note at the top of this file.
-export async function transcribeAll(capturedUtterances, cfg, { onProgress } = {}) {
+// Set cfg.transcribeBatching = false to transcribe every clip on its own
+// instead. That is ~5x slower on CPU (a 235-clip session measured at ~4.5
+// hours vs ~50 min) but gives cleaner line breaks and exact per-clip
+// timestamps — see the trade-off note at the top of this file.
+export async function transcribeAll(capturedUtterances, cfg, { onProgress, serverReachable = null } = {}) {
   const results = [];
   const failures = [];
 
-  const batches =
-    cfg.transcribeBatching === false
-      ? capturedUtterances.map((u) => [u])
-      : await planBatches(capturedUtterances);
+  const batches = shouldBatch(cfg, { serverReachable })
+    ? await planBatches(capturedUtterances)
+    : capturedUtterances.map((u) => [u]);
 
   let done = 0;
   for (const batch of batches) {

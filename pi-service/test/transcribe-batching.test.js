@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { writePcmWav } from '../src/pipeline/wav-merge.js';
-import { planBatches, transcribeAll } from '../src/pipeline/transcribe.js';
+import { planBatches, transcribeAll, shouldBatch } from '../src/pipeline/transcribe.js';
 
 const FORMAT = { sampleRate: 16000, channels: 1, bitsPerSample: 16 };
 const BYTES_PER_MS = 32;
@@ -213,5 +213,78 @@ test('TRANSCRIBE_BATCHING=false transcribes every clip on its own', async () => 
 
     const result = await transcribeAll(utterances, { ...BROKEN_WHISPER, transcribeBatching: false });
     assert.equal(result.failures.length, 4, 'each clip was attempted individually');
+  });
+});
+
+// --- where batching is worth its accuracy cost ---
+//
+// Batching buys ~5x speed for ragged line breaks. On the GPU a session is
+// already over in minutes, so paying that is pure loss; on the Pi's CPU it is
+// the difference between "ready in the morning" and "ready next week".
+
+const AUTO = { transcribeBatching: 'auto' };
+
+test('auto stays clean when the GPU server is there to do the work', () => {
+  assert.equal(
+    shouldBatch({ ...AUTO, whisperServerUrl: 'http://pc:8089' }, { serverReachable: true }),
+    false,
+    'a ~0.17s/clip backend has no speed problem worth degrading the transcript for'
+  );
+});
+
+test('auto batches when there is no server, so it is the Pi doing it', () => {
+  assert.equal(shouldBatch({ ...AUTO, whisperServerUrl: null }), true);
+});
+
+// The case that would otherwise quietly hurt most: the PC is configured but
+// switched off, so every clip falls back to the CPU one at a time.
+test('auto batches when the configured server is unreachable', () => {
+  assert.equal(
+    shouldBatch({ ...AUTO, whisperServerUrl: 'http://pc:8089' }, { serverReachable: false }),
+    true,
+    'a configured-but-off PC means CPU transcription, which needs the 5x'
+  );
+});
+
+test('an explicit setting overrides auto in both directions', () => {
+  const withServer = { whisperServerUrl: 'http://pc:8089' };
+  assert.equal(shouldBatch({ ...withServer, transcribeBatching: true }, { serverReachable: true }), true);
+  assert.equal(shouldBatch({ ...withServer, transcribeBatching: false }, { serverReachable: false }), false);
+});
+
+// Proves transcribeAll actually routes on the decision rather than ignoring
+// it. Kept entirely on the local path (no whisperServerUrl) so the test never
+// touches the network — the server-vs-CPU choice itself is covered above.
+test('transcribeAll routes through the batching decision', async () => {
+  await withTempDir(async (dir) => {
+    const utterances = [];
+    for (let i = 0; i < 4; i++) {
+      utterances.push({
+        userId: 'alice',
+        displayName: 'alice',
+        wavPath: await clip(dir, `auto${i}.wav`, 500),
+        startMs: i * 1000,
+        endMs: i * 1000 + 500,
+      });
+    }
+
+    // auto with no server means the Pi is doing it, so these four merge into
+    // one batch; progress therefore arrives in a single step of 4.
+    const batchedSteps = [];
+    await transcribeAll(
+      utterances,
+      { ...BROKEN_WHISPER, transcribeBatching: 'auto', whisperServerUrl: null },
+      { onProgress: (done) => batchedSteps.push(done) }
+    );
+    assert.deepEqual(batchedSteps, [4], 'one merged batch reports once');
+
+    // Forced off, each clip is its own unit of work.
+    const cleanSteps = [];
+    await transcribeAll(
+      utterances,
+      { ...BROKEN_WHISPER, transcribeBatching: false },
+      { onProgress: (done) => cleanSteps.push(done) }
+    );
+    assert.deepEqual(cleanSteps, [1, 2, 3, 4], 'unbatched reports per clip');
   });
 });

@@ -62,13 +62,38 @@ export function buildSessionBody(notes) {
   return sections.join('\n\n');
 }
 
-export async function postSessionNotes({ discordClient, meeting, notes, mdPath, cfg }) {
+// Where a finished session's notes go.
+//
+// The default is the server channel the session happened in, which is right
+// when the whole table wants the recap. Setting NOTES_TO_OWNER_DM sends them
+// to one person's DMs instead, so the bot can be used across several servers
+// without each one needing a notes channel set up — the notes follow the
+// owner rather than the guild.
+//
+// Falls back to the channel rather than failing: a DM can be refused by the
+// recipient's privacy settings (Discord returns 50007, "cannot send messages
+// to this user"), and losing a session's notes over that would be far worse
+// than posting them where they would have gone anyway.
+async function resolveDestination(discordClient, meeting, cfg) {
+  if (cfg.notesToOwnerDm && cfg.ownerUserId) {
+    const owner = await discordClient.users.fetch(cfg.ownerUserId).catch(() => null);
+    const dm = owner ? await owner.createDM().catch(() => null) : null;
+    if (dm) return { channel: dm, viaDm: true };
+    console.warn(`[delivery] could not open a DM with ${cfg.ownerUserId} — falling back to the session channel`);
+  }
+
   const channelId = cfg.notesChannelId || meeting.channel_id;
   const channel = await discordClient.channels.fetch(channelId).catch(() => null);
+  return { channel, viaDm: false, channelId };
+}
+
+export async function postSessionNotes({ discordClient, meeting, notes, mdPath, cfg }) {
+  const { channel, viaDm, channelId } = await resolveDestination(discordClient, meeting, cfg);
   if (!channel) {
     console.error(`[delivery] could not fetch channel ${channelId}, notes not posted`);
     return;
   }
+  if (viaDm) console.log(`[delivery] meeting ${meeting.id}: notes sent to the owner's DMs`);
 
   const date = (meeting.started_at || '').slice(0, 10);
   const header = pick(POST_SESSION_HEADER, { channel: meeting.channel_name, date });

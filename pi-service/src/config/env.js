@@ -60,9 +60,20 @@ export const config = validate({
   // almost all of it (a real 235-clip session measured at ~4.5 hours).
   // Batching merges clips from the SAME speaker to fill those windows: ~5x
   // faster, speakers still exactly right, but line breaks get ragged and
-  // per-line timestamps drift by a few seconds. Set false for slower,
-  // cleaner transcripts. See pipeline/transcribe.js for the measurements.
-  transcribeBatching: optional('TRANSCRIBE_BATCHING', 'true') !== 'false',
+  // per-line timestamps drift by a few seconds. See pipeline/transcribe.js.
+  //
+  // 'auto' (the default) spends that accuracy only where it buys something.
+  // On the GPU server a clip costs ~0.17s, so a whole session is over in a
+  // couple of minutes unbatched — there is nothing to buy, so it stays clean.
+  // On the Pi's CPU the same session is measured in HOURS, and 5x is the
+  // difference between "overnight" and "next week", so batching turns on.
+  // true/false force it either way regardless of where transcription runs.
+  transcribeBatching: (() => {
+    const v = optional('TRANSCRIBE_BATCHING', 'auto').toLowerCase();
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    return 'auto';
+  })(),
 
   // Ollama on the PC, reachable over the LAN
   ollamaUrl: optional('OLLAMA_URL', 'http://127.0.0.1:11434'),
@@ -130,6 +141,11 @@ export const config = validate({
 
   // Discord delivery
   notesChannelId: optional('NOTES_CHANNEL_ID', null), // falls back to the voice session's text channel
+  // Send finished notes to OWNER_USER_ID's DMs instead of a server channel,
+  // so one bot can serve several servers without each needing its own notes
+  // channel. Requires OWNER_USER_ID; falls back to the channel if the DM
+  // can't be opened (Discord lets people refuse DMs from bots).
+  notesToOwnerDm: optional('NOTES_TO_OWNER_DM', 'false') === 'true',
 
   // Google Drive sync via rclone. Pi remains the source of truth for
   // /history and /export (fast, works offline) — this just pushes copies
@@ -148,4 +164,16 @@ export const config = validate({
   // long campaign. 0 = keep forever. Only ever touches 'done' meetings —
   // anything still pending/failed/retrying is left alone.
   audioRetentionDays: parseInt(optional('AUDIO_RETENTION_DAYS', '14'), 10),
+
+  // The recordings are a means to a transcript, not an archive. With this
+  // false (the default) a meeting's audio is deleted as soon as its
+  // transcript is safely committed to the database — which also skips
+  // building and uploading the whole-session recording, since there would be
+  // nothing left to keep.
+  //
+  // The cost is real and one-way: re-transcribing a past session (on better
+  // hardware, or a bigger model) becomes impossible, because the audio is
+  // gone. Set KEEP_AUDIO=true to keep it and let AUDIO_RETENTION_DAYS age it
+  // out instead.
+  keepAudio: optional('KEEP_AUDIO', 'false') === 'true',
 });

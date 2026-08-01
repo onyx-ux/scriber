@@ -154,7 +154,11 @@ function wrap(db) {
     //     sits in 'awaiting_summary' with no job, and recovery only scans
     //     'recording'/'transcribing', so it never gets summarised at all.
     // Deleting first also makes a recovery re-run idempotent rather than additive.
-    finalizeTranscription(meetingId, utterances, { requireApproval = false } = {}) {
+    // provider pins which summariser this meeting's job must use, for when
+    // the choice was made at /leave rather than left to the global default —
+    // notably "transcribed on the Pi, so the PC is off, so Ollama can't run".
+    // null keeps the existing behaviour of deferring to the config at run time.
+    finalizeTranscription(meetingId, utterances, { requireApproval = false, provider = null } = {}) {
       const del = db.prepare(`DELETE FROM utterances WHERE meeting_id = ?`);
       const ins = db.prepare(
         `INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text)
@@ -166,7 +170,8 @@ function wrap(db) {
            AND status IN ('awaiting_approval', 'pending', 'running')`
       );
       const enqueue = db.prepare(
-        `INSERT INTO jobs (meeting_id, type, status, next_attempt_at) VALUES (?, 'summarize', ?, datetime('now'))`
+        `INSERT INTO jobs (meeting_id, type, status, provider, next_attempt_at)
+         VALUES (?, 'summarize', ?, ?, datetime('now'))`
       );
 
       const tx = db.transaction((rows) => {
@@ -177,7 +182,7 @@ function wrap(db) {
         setStatus.run(meetingId);
         // Don't stack a duplicate job if one is already waiting for this meeting.
         if (!existingJob.get(meetingId)) {
-          enqueue.run(meetingId, requireApproval ? 'awaiting_approval' : 'pending');
+          enqueue.run(meetingId, requireApproval ? 'awaiting_approval' : 'pending', provider);
         }
       });
 
