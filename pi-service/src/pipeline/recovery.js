@@ -1,9 +1,10 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { finishSession } from './finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
 import { notifyApprovalNeeded } from '../delivery/approval-notify.js';
-import { EMPTY_WAV_SIZE } from '../voice/capture.js';
+import { MIN_UTTERANCE_MS } from '../voice/capture.js';
+import { wavDurationMs } from './wav-merge.js';
 
 // Capture writes each utterance's WAV straight to disk as it happens (see
 // voice/capture.js) — nothing sits only in memory. So if the bot process
@@ -133,8 +134,7 @@ async function rebuildCapturedUtterances(db, meeting, cfg, discordClient) {
       // leaves a truncated/empty WAV on disk that whisper.cpp can't do
       // anything useful with and would otherwise just log as a failure.
       const filePath = join(userPath, file);
-      const { size } = await stat(filePath).catch(() => ({ size: 0 }));
-      if (size <= EMPTY_WAV_SIZE) continue;
+      if ((await wavDurationMs(filePath)) < MIN_UTTERANCE_MS) continue;
 
       captured.push({
         userId,

@@ -1,20 +1,28 @@
 import { joinVoiceChannel, EndBehaviorType, VoiceConnectionStatus, entersState } from '@discordjs/voice';
 import prism from 'prism-media';
 import { spawn } from 'node:child_process';
-import { stat, unlink } from 'node:fs/promises';
-import { mkdir } from 'node:fs/promises';
+import { unlink, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { wavDurationMs } from '../pipeline/wav-merge.js';
 
 const DISCORD_SAMPLE_RATE = 48000;
 const DISCORD_CHANNELS = 2;
 const TARGET_SAMPLE_RATE = 16000; // what whisper.cpp expects
 
-// A WAV header is 44 bytes — anything at or below that is silence with no
-// actual audio, which happens when Discord opens a speaking segment for a
-// user but no real sound (a mic click, a brief noise gate blip) came through.
-// Exported so recovery.js can apply the same filter when rebuilding an
-// utterance list straight from disk after a crash/restart.
-export const EMPTY_WAV_SIZE = 44;
+// Shortest clip worth transcribing. Discord opens a speaking segment whenever
+// its voice-activity flag flickers — a mic click, a noise-gate blip, someone
+// bumping their desk — and those produce WAVs with little or no audio in them.
+//
+// This used to be a file-SIZE check ("anything <= 44 bytes, a bare WAV header,
+// is empty"), which silently failed: ffmpeg also writes a LIST/INFO metadata
+// chunk, so a WAV containing zero samples is 78 bytes and passed the test.
+// Those empty clips went on to whisper, where each one cost a full 30-second
+// encode window (~65s on the Pi) to transcribe nothing at all, and the GPU
+// transcription server rejects them with HTTP 400.
+//
+// 100ms is deliberately conservative — well under the shortest real word, so
+// nothing anyone actually said gets dropped.
+export const MIN_UTTERANCE_MS = 100;
 
 // Resample 48kHz stereo -> 16kHz mono via ffmpeg's swresample rather than a
 // hand-rolled decimator. A naive "take every 3rd sample" downsample (the
@@ -122,9 +130,8 @@ export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtt
 
     try {
       await resampleToWav(pcmStream, wavPath);
-      const { size } = await stat(wavPath);
       const endMs = Date.now() - sessionStart;
-      if (size > EMPTY_WAV_SIZE) {
+      if ((await wavDurationMs(wavPath)) >= MIN_UTTERANCE_MS) {
         onUtterance(userId, displayName, wavPath, startMs, endMs);
       } else {
         await unlink(wavPath).catch(() => {});

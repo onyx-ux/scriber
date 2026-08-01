@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { writeFile, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { writePcmWav, mergeWavs, assignSegmentsToRanges } from '../src/pipeline/wav-merge.js';
+import { writePcmWav, mergeWavs, assignSegmentsToRanges, wavDurationMs } from '../src/pipeline/wav-merge.js';
 
 const FORMAT = { sampleRate: 16000, channels: 1, bitsPerSample: 16 };
 const BYTES_PER_MS = (FORMAT.sampleRate * FORMAT.channels * FORMAT.bitsPerSample) / 8 / 1000; // 32
@@ -128,4 +128,60 @@ test('assignSegmentsToRanges gives a segment stranded in a gap to whichever rang
   // Midpoint 180 is 80ms past range 0's end and 20ms before range 1's start.
   const closerToSecond = assignSegmentsToRanges([{ fromMs: 170, toMs: 190, text: 'y' }], ranges);
   assert.deepEqual(closerToSecond, ['', 'y']);
+});
+
+// Regression: Discord opens a speaking segment for mic clicks and noise-gate
+// blips, and ffmpeg writes a valid-but-empty WAV for those. The old guard
+// tested file SIZE against a bare 44-byte header, but ffmpeg also writes a
+// LIST/INFO chunk, so a zero-sample WAV is 78 bytes and passed. Those files
+// reached whisper, cost a full ~65s encode window each on the Pi to transcribe
+// nothing, and the GPU server rejects them with HTTP 400.
+test('an empty WAV reads as zero duration even with ffmpeg metadata padding it past 44 bytes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scriber-empty-'));
+  try {
+    // Exactly the shape ffmpeg produces: header + LIST/INFO + empty data.
+    const listChunk = Buffer.alloc(8 + 26);
+    listChunk.write('LIST', 0, 'ascii');
+    listChunk.writeUInt32LE(26, 4);
+    listChunk.write('INFOISFT', 8, 'ascii');
+
+    const withData = writePcmWav(FORMAT, Buffer.alloc(0));
+    const header = withData.subarray(0, 36); // up to but excluding the data chunk
+    const dataChunk = Buffer.alloc(8);
+    dataChunk.write('data', 0, 'ascii');
+    dataChunk.writeUInt32LE(0, 4);
+    const empty = Buffer.concat([header, listChunk, dataChunk]);
+
+    const p = join(dir, 'empty.wav');
+    await writeFile(p, empty);
+
+    const { size } = await stat(p);
+    assert.ok(size > 44, `precondition: the file is ${size} bytes, past the old 44-byte guard`);
+    assert.equal(await wavDurationMs(p), 0, 'it must still read as no audio');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a real clip reports its true duration', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scriber-dur-'));
+  try {
+    const p = join(dir, 'real.wav');
+    await writeFile(p, toneWav(250));
+    assert.equal(Math.round(await wavDurationMs(p)), 250);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an unreadable or non-WAV file reports zero rather than throwing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scriber-bad-'));
+  try {
+    const p = join(dir, 'junk.wav');
+    await writeFile(p, Buffer.from('not a wav at all'));
+    assert.equal(await wavDurationMs(p), 0);
+    assert.equal(await wavDurationMs(join(dir, 'missing.wav')), 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

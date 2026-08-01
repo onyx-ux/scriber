@@ -47,6 +47,25 @@ export async function readPcmWav(path) {
   return parsePcmWav(await readFile(path));
 }
 
+// How much actual audio a WAV holds, from its data chunk — NOT from the file
+// size. Discord opens a speaking segment whenever its voice-activity flag
+// flickers, including for mic clicks and noise-gate blips that contain no
+// audio at all; ffmpeg still writes a valid file for those. Judging emptiness
+// by file size gets this wrong, because ffmpeg also writes a LIST/INFO
+// metadata chunk, so a WAV with zero samples is 78 bytes rather than the bare
+// 44-byte header. Those files reached whisper, where they cost a full encode
+// window each (~65s on the Pi) to transcribe nothing, and the GPU server
+// rejects them outright with HTTP 400.
+export async function wavDurationMs(path) {
+  try {
+    const { data, sampleRate, channels, bitsPerSample } = parsePcmWav(await readFile(path));
+    const bytesPerMs = (sampleRate * channels * (bitsPerSample / 8)) / 1000;
+    return bytesPerMs > 0 ? data.length / bytesPerMs : 0;
+  } catch {
+    return 0; // unreadable or not a WAV — treated as nothing worth transcribing
+  }
+}
+
 export function writePcmWav({ sampleRate, channels, bitsPerSample }, data) {
   const byteRate = (sampleRate * channels * bitsPerSample) / 8;
   const blockAlign = (channels * bitsPerSample) / 8;

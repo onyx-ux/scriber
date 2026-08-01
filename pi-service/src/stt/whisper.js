@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile, unlink, stat } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { basename } from 'node:path';
 
 const execFileAsync = promisify(execFile);
@@ -155,16 +155,5 @@ export async function isWhisperServerReachable(cfg, timeoutMs = 3000) {
     return res.status < 500;
   } catch {
     return false;
-  }
-}
-
-// Bytes-per-second of the 16kHz mono 16-bit PCM the pipeline works in, used
-// to report how much audio is queued up.
-export async function wavDurationMs(wavPath) {
-  try {
-    const { size } = await stat(wavPath);
-    return Math.max(0, (size - 44) / 32);
-  } catch {
-    return 0;
   }
 }
