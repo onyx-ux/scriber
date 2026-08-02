@@ -15,7 +15,8 @@ import {
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { finishSession } from '../pipeline/finish-session.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
-import { listTranscriptions, describeTranscription, formatDuration } from '../pipeline/progress.js';
+import { listTranscriptions, describeTranscription, formatDuration, getTranscription } from '../pipeline/progress.js';
+import { startLiveProgress } from '../delivery/live-progress.js';
 import {
   choiceAvailable,
   buildTranscribeChoiceRow,
@@ -398,20 +399,32 @@ async function handleLeave(interaction, db, cfg) {
   // to ask (no GPU server configured).
   const { cfg: runCfg, serverReachable, target } = await resolveTranscribeChoice(interaction, session.meetingId, cfg);
 
-  const result = await finishSession(
-    db,
-    session.meetingId,
-    session.capturedUtterances,
-    session.audioDir,
-    runCfg,
-    {
+  // Transcribing is the long silence in this pipeline — minutes on the GPU,
+  // potentially hours on the Pi — so keep a live count up rather than saying
+  // nothing until it finishes.
+  const live = startLiveProgress({
+    channel: interaction.channel,
+    initial: `🎧 Transcribing session #${session.meetingId} — ${session.capturedUtterances.length} clips…`,
+    render: () => {
+      const entry = getTranscription(session.meetingId);
+      return entry ? `🎧 Session #${session.meetingId}: ${describeTranscription(entry)}` : null;
+    },
+  });
+
+  let result;
+  try {
+    result = await finishSession(db, session.meetingId, session.capturedUtterances, session.audioDir, runCfg, {
       serverReachable,
       // Pin the summariser onto the job itself when transcribing on the Pi.
       // The queue worker reads the global config, so without this the job
       // would fall back to Ollama on a PC we just established is off.
       pinProvider: target === TARGET_PI ? runCfg.summaryProvider : null,
-    }
-  );
+    });
+  } finally {
+    // The transcript (or the failure) is posted below, so this line has served
+    // its purpose either way.
+    await live.remove();
+  }
 
   if (!result.ok) {
     return interaction.followUp(pick(LEAVE_NOTHING_USABLE, { failCount: result.failures.length }));

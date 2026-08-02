@@ -201,12 +201,25 @@ async function reduceToFinal(partials, meta, cfg, timeoutMs) {
 // "PC is on but slow/model still loading" (timeout). Caller (queue-worker)
 // is responsible for retry/backoff; this function does not retry itself.
 // timeoutMs applies per Ollama request, not to the whole (possibly chunked) job.
-export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 20 * 60 * 1000 } = {}) {
+// onProgress({ phase, done, total }) reports which stage the job has reached,
+// so the bot can keep a status message current instead of going silent for
+// what can be an hour. Purely observational — never affects the result.
+export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 20 * 60 * 1000, onProgress } = {}) {
+  const report = (event) => {
+    try {
+      onProgress?.(event);
+    } catch {
+      /* a broken reporter must not fail the summary */
+    }
+  };
+
   const singlePassBudget = inputBudgetChars(cfg, DND_SUMMARY_PROMPT);
 
   // Short session: one call, exactly as before.
   if (transcript.length <= singlePassBudget) {
+    report({ phase: 'single', done: 0, total: 1 });
     const raw = await callModel(DND_SUMMARY_PROMPT, buildSummaryUserMessage(transcript, meta), cfg, timeoutMs, { estTokens });
+    report({ phase: 'single', done: 1, total: 1 });
     return normalizeNotes(extractJson(raw));
   }
 
@@ -219,6 +232,7 @@ export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 2
 
   const partials = [];
   let failed = 0;
+  report({ phase: 'slices', done: 0, total: chunks.length, failed: 0 });
   for (let i = 0; i < chunks.length; i++) {
     const { ok, partial } = await summarizeChunk(chunks[i], meta, i + 1, chunks.length, cfg, timeoutMs);
     if (!ok) failed++;
@@ -226,6 +240,7 @@ export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 2
     // Only claim success when it actually succeeded — the failure path has
     // already logged its own error above.
     if (ok) console.log(`[summarize] slice ${i + 1}/${chunks.length} done`);
+    report({ phase: 'slices', done: i + 1, total: chunks.length, failed });
   }
 
   // A summary built from a minority of the session is not a summary — it is a
@@ -241,7 +256,9 @@ export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 2
     );
   }
 
+  report({ phase: 'reduce', done: 0, total: 1 });
   const notes = await reduceToFinal(partials, meta, cfg, timeoutMs);
+  report({ phase: 'reduce', done: 1, total: 1 });
 
   // Below the threshold the summary is worth keeping, but the reader still has
   // to know it is incomplete — silence here is what made the bad summary
