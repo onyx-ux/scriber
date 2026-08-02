@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile);
 //            whisper encodes a fixed 30-second window at ~65s per window, so
 //            a real session takes hours.
 //   server — whisper.cpp's HTTP server on a machine with a GPU (in this setup,
-//            the same PC that runs Ollama). Two to three orders of magnitude
+//            the Windows PC on the LAN). Two to three orders of magnitude
 //            faster, and the audio never leaves the LAN.
 //
 // WHISPER_SERVER_URL picks the second. Everything else in the pipeline is

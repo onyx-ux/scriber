@@ -6,7 +6,7 @@ import {
   buildChunkUserMessage,
   buildReduceUserMessage,
 } from '../prompts/dnd-summary-prompt.js';
-import { callModel, contextTokens } from './model-client.js';
+import { callModel as defaultCallModel, contextTokens } from './model-client.js';
 
 const EMPTY_NOTES = {
   tldr: '',
@@ -129,11 +129,11 @@ const MAX_FAILED_SLICE_RATIO = 1 / 3;
 
 // One slice failing to parse shouldn't throw away a whole 4-hour session, so
 // retry once and then fall back to an empty partial for that slice only.
-async function summarizeChunk(chunk, meta, index, total, cfg, timeoutMs) {
+async function summarizeChunk(chunk, meta, index, total, cfg, timeoutMs, call) {
   const userMessage = buildChunkUserMessage(chunk, meta, index, total);
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const raw = await callModel(DND_CHUNK_PROMPT, userMessage, cfg, timeoutMs, { estTokens });
+      const raw = await call(DND_CHUNK_PROMPT, userMessage, cfg, timeoutMs);
       return { ok: true, partial: normalizeNotes(extractJson(raw)) };
     } catch (err) {
       if (attempt === 2) {
@@ -173,7 +173,7 @@ function groupToFit(partials, meta, cfg) {
   return groups;
 }
 
-async function reduceToFinal(partials, meta, cfg, timeoutMs) {
+async function reduceToFinal(partials, meta, cfg, timeoutMs, call) {
   const budget = inputBudgetChars(cfg, DND_REDUCE_PROMPT);
   let level = partials;
 
@@ -187,24 +187,31 @@ async function reduceToFinal(partials, meta, cfg, timeoutMs) {
     console.log(`[summarize] reduce pass ${pass}: collapsing ${level.length} slice notes into ${groups.length}`);
     const next = [];
     for (const group of groups) {
-      const raw = await callModel(DND_REDUCE_PROMPT, buildReduceUserMessage(group, meta), cfg, timeoutMs, { estTokens });
+      const raw = await call(DND_REDUCE_PROMPT, buildReduceUserMessage(group, meta), cfg, timeoutMs);
       next.push(asSliceNote(normalizeNotes(extractJson(raw))));
     }
     level = next;
   }
 
-  const raw = await callModel(DND_REDUCE_PROMPT, buildReduceUserMessage(level, meta), cfg, timeoutMs, { estTokens });
+  const raw = await call(DND_REDUCE_PROMPT, buildReduceUserMessage(level, meta), cfg, timeoutMs);
   return normalizeNotes(extractJson(raw));
 }
 
 // Throws on any failure — including "PC is off" (connection refused) and
 // "PC is on but slow/model still loading" (timeout). Caller (queue-worker)
 // is responsible for retry/backoff; this function does not retry itself.
-// timeoutMs applies per Ollama request, not to the whole (possibly chunked) job.
+// timeoutMs applies per model request, not to the whole (possibly chunked) job.
 // onProgress({ phase, done, total }) reports which stage the job has reached,
 // so the bot can keep a status message current instead of going silent for
 // what can be an hour. Purely observational — never affects the result.
-export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 20 * 60 * 1000, onProgress } = {}) {
+export async function summarizeTranscript(
+  transcript,
+  meta,
+  cfg,
+  // callModel is injectable so the slicing/reduce/failure logic can be tested
+  // without standing up a provider — the default is the real thing.
+  { timeoutMs = 20 * 60 * 1000, onProgress, callModel = defaultCallModel } = {}
+) {
   const report = (event) => {
     try {
       onProgress?.(event);
@@ -218,7 +225,7 @@ export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 2
   // Short session: one call, exactly as before.
   if (transcript.length <= singlePassBudget) {
     report({ phase: 'single', done: 0, total: 1 });
-    const raw = await callModel(DND_SUMMARY_PROMPT, buildSummaryUserMessage(transcript, meta), cfg, timeoutMs, { estTokens });
+    const raw = await callModel(DND_SUMMARY_PROMPT, buildSummaryUserMessage(transcript, meta), cfg, timeoutMs);
     report({ phase: 'single', done: 1, total: 1 });
     return normalizeNotes(extractJson(raw));
   }
@@ -234,7 +241,7 @@ export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 2
   let failed = 0;
   report({ phase: 'slices', done: 0, total: chunks.length, failed: 0 });
   for (let i = 0; i < chunks.length; i++) {
-    const { ok, partial } = await summarizeChunk(chunks[i], meta, i + 1, chunks.length, cfg, timeoutMs);
+    const { ok, partial } = await summarizeChunk(chunks[i], meta, i + 1, chunks.length, cfg, timeoutMs, callModel);
     if (!ok) failed++;
     partials.push(asSliceNote(partial));
     // Only claim success when it actually succeeded — the failure path has
@@ -257,7 +264,7 @@ export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 2
   }
 
   report({ phase: 'reduce', done: 0, total: 1 });
-  const notes = await reduceToFinal(partials, meta, cfg, timeoutMs);
+  const notes = await reduceToFinal(partials, meta, cfg, timeoutMs, callModel);
   report({ phase: 'reduce', done: 1, total: 1 });
 
   // Below the threshold the summary is worth keeping, but the reader still has

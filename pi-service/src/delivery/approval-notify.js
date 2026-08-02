@@ -11,7 +11,6 @@ export const PARK_PREFIX = 'scriber:park:';
 // approve:<jobId> form (no provider) still works and means "use the default",
 // so approval DMs sent before this existed keep working after an upgrade.
 const PROVIDER_BUTTON_STYLE = {
-  ollama: ButtonStyle.Primary,
   gemini: ButtonStyle.Success,
   anthropic: ButtonStyle.Success,
 };
@@ -19,7 +18,6 @@ const PROVIDER_BUTTON_STYLE = {
 // Short label per provider — the full summariserLabel (with model name) is
 // too long for a button and gets truncated by Discord.
 function providerButtonLabel(provider) {
-  if (provider === 'ollama') return 'Ollama (local)';
   if (provider === 'gemini') return 'Gemini';
   if (provider === 'anthropic') return 'Claude';
   return provider;

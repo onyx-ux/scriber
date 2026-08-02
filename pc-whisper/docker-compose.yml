@@ -8,14 +8,14 @@ services:
   # RTX 3080 Ti takes well under a second per window.
   #
   # The audio still never leaves the LAN — this is your own machine, the same
-  # one already running Ollama. Nothing here talks to the internet.
+  # the gaming PC. Nothing here talks to the internet.
   whisper:
     image: ghcr.io/ggml-org/whisper.cpp:main-cuda
     container_name: scriber-whisper
     restart: unless-stopped
     ports:
       # Bound to all interfaces so the Pi can reach it over the LAN. This
-      # needs a firewall rule on the PC exactly like Ollama's 11434 did —
+      # needs a firewall rule on the PC allowing it on the Private profile —
       # BOTH Windows Firewall and Bitdefender, or it will silently not work.
       #
       # 8089 rather than whisper's default 8080, which was already taken on

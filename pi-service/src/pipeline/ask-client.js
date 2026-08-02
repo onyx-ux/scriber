@@ -1,5 +1,5 @@
 import { DND_ASK_PROMPT, buildAskUserMessage } from '../prompts/ask-prompt.js';
-import { callModel, contextTokens } from './model-client.js';
+import { callModel as defaultCallModel, contextTokens } from './model-client.js';
 
 const CHARS_PER_TOKEN = 3.5;
 const RESERVE_OUTPUT_TOKENS = 800;
@@ -78,13 +78,16 @@ export function gatherContext(db, guildId, question, cfg) {
   return { summaries, excerpts, keywords };
 }
 
-export async function askCampaign({ question, summaries, excerpts, cfg, timeoutMs = 5 * 60 * 1000 }) {
-  const answer = await callModel(
-    DND_ASK_PROMPT,
-    buildAskUserMessage(question, summaries, excerpts),
-    cfg,
-    timeoutMs,
-    { estTokens }
-  );
+// callModel is injectable so the grounding/context-trimming logic can be
+// tested without standing up a provider; the default is the real thing.
+export async function askCampaign({
+  question,
+  summaries,
+  excerpts,
+  cfg,
+  timeoutMs = 5 * 60 * 1000,
+  callModel = defaultCallModel,
+}) {
+  const answer = await callModel(DND_ASK_PROMPT, buildAskUserMessage(question, summaries, excerpts), cfg, timeoutMs);
   return answer.trim();
 }

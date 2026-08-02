@@ -695,7 +695,7 @@ export const QUEUE_PAUSED = [
   '🧝 The chronicler downs tools. Summarising paused.',
   '⛩️ The shrine is closed. Summarising paused.',
   '🪶 Ink stoppered — summarising paused.',
-  '⏸️ Paused. Nothing will be sent to Ollama until you run `/resume`.',
+  '⏸️ Paused. Nothing will be summarised until you run `/resume`.',
 ];
 
 export const QUEUE_RESUMED = [

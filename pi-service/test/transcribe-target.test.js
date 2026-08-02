@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import {
   applyTranscribeTarget,
-  targetSummary,
   choiceAvailable,
   parseTranscribeChoice,
   buildTranscribeChoiceRow,
@@ -18,7 +17,7 @@ import {
 
 const cfg = {
   whisperServerUrl: 'http://192.168.0.153:8089',
-  summaryProvider: 'ollama',
+  summaryProvider: 'gemini',
   geminiApiKey: 'gm-test',
 };
 
@@ -26,34 +25,23 @@ test('choosing the PC changes nothing — it is the configured path', () => {
   assert.equal(applyTranscribeTarget(cfg, TARGET_PC), cfg);
 });
 
-// The whole point of the coupling: transcribing on the Pi means the PC is
-// off, and Ollama lives on that PC.
-test('choosing the Pi pins transcription local AND moves the summary off Ollama', () => {
+test('choosing the Pi pins transcription to the local CPU', () => {
   const run = applyTranscribeTarget(cfg, TARGET_PI);
-  assert.equal(run.whisperServerUrl, null, 'a server URL left set would send audio back to the PC');
-  assert.equal(run.summaryProvider, 'gemini', 'Ollama needs the PC that was just declared off');
+  assert.equal(run.whisperServerUrl, null, 'a server URL left set would send the audio back to the PC');
+});
+
+// This used to also switch the summariser, because the local summariser lived
+// on the same PC as the GPU. With summarising in the cloud it is independent
+// of which machine transcribed, and quietly changing it would be surprising.
+test('choosing the Pi does not change who summarises', () => {
+  assert.equal(applyTranscribeTarget(cfg, TARGET_PI).summaryProvider, 'gemini');
+  assert.equal(applyTranscribeTarget(cfg, TARGET_PC).summaryProvider, 'gemini');
 });
 
 test('the shared config is never mutated by a choice', () => {
   const original = { ...cfg };
   applyTranscribeTarget(cfg, TARGET_PI);
   assert.deepEqual(cfg, original, "one session's choice must not leak into the next");
-});
-
-// Switching to a provider with no credentials would turn a merely-delayed job
-// into one that can never succeed.
-test('without a Gemini key the summariser is left alone', () => {
-  const noKey = { ...cfg, geminiApiKey: null };
-  const run = applyTranscribeTarget(noKey, TARGET_PI);
-  assert.equal(run.whisperServerUrl, null, 'transcription still moves to the Pi');
-  assert.equal(run.summaryProvider, 'ollama', 'a delayed job beats an impossible one');
-});
-
-test('a Gemini-configured setup reports no switch, because there is none', () => {
-  const already = { ...cfg, summaryProvider: 'gemini' };
-  assert.equal(targetSummary(already, TARGET_PI).providerSwitched, false);
-  assert.equal(targetSummary(cfg, TARGET_PI).providerSwitched, true);
-  assert.equal(targetSummary(cfg, TARGET_PC).providerSwitched, false);
 });
 
 test('there is nothing to ask when no GPU server is configured', () => {
@@ -99,20 +87,17 @@ test('an unreachable PC is offered as disabled rather than silently missing', ()
   assert.notEqual(pi.data.disabled, true, 'the Pi is still a real option when the PC is off');
 });
 
-test('the prompt states the time cost and the summariser consequence', () => {
+test('the prompt states the time cost, which is the whole decision', () => {
   const text = transcribeChoicePrompt(cfg, { serverReachable: true });
   assert.match(text, /minutes/, 'the fast option says how fast');
-  assert.match(text, /hours/, 'the slow option says how slow — this is the whole decision');
-  assert.match(text, /Gemini/, 'the summariser switch is disclosed before choosing, not after');
+  assert.match(text, /hours/, 'the slow option says how slow');
 });
 
 test('the prompt does not advertise a PC that is not answering', () => {
   assert.match(transcribeChoicePrompt(cfg, { serverReachable: false }), /not answering/);
 });
 
-test('the confirmation names where it ran and what will summarise it', () => {
+test('the confirmation names where it ran', () => {
   assert.match(transcribeChosenNote(cfg, TARGET_PI), /Pi/);
-  assert.match(transcribeChosenNote(cfg, TARGET_PI), /Gemini/);
   assert.match(transcribeChosenNote(cfg, TARGET_PC), /PC/);
-  assert.match(transcribeChosenNote(cfg, TARGET_PC), /Ollama/);
 });

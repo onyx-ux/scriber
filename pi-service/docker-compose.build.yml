@@ -23,5 +23,5 @@ services:
       # Mounting the parent dir instead lets that rename happen normally.
       - ./rclone:/root/.config/rclone
     # No ports need to be exposed — this service only makes outbound
-    # connections (to Discord's gateway, to Ollama on the PC, and to
+    # connections (to Discord's gateway, to the whisper server on the PC, and to
     # Google Drive if DRIVE_SYNC_ENABLED=true).

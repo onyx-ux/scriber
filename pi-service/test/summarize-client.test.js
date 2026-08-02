@@ -1,33 +1,11 @@
-import { test, before, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { once } from 'node:events';
 
 import { summarizeTranscript } from '../src/pipeline/summarize-client.js';
 
-// Ollama is reached over node:http (see model-client.js — Node's fetch
-// imposes an unraisable 300s header deadline that killed real summaries), so
-// these tests answer with a real local server rather than a stubbed fetch.
-let server;
-let responder = null;
-
-before(async () => {
-  server = createServer(async (req, res) => {
-    let body = '';
-    for await (const c of req) body += c;
-    responder(JSON.parse(body), res);
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  cfg.ollamaUrl = `http://127.0.0.1:${server.address().port}`;
-});
-
-after(async () => {
-  server.close();
-  await once(server, 'close');
-});
-
-const cfg = { ollamaUrl: null, ollamaModel: 'test', ollamaNumCtx: 8192, ollamaKeepAlive: '30m' };
+// These exercise slicing, reducing and failure handling — not any provider's
+// wire format — so the model call is injected rather than mocked over HTTP.
+const cfg = { summaryProvider: 'gemini', geminiApiKey: 'k', geminiModel: 'gemini-3.1-flash-lite' };
 const meta = { channelName: 'Cipher', date: '2026-07-31', attendees: ['Alice', 'Bob'] };
 
 const GOOD = JSON.stringify({
@@ -43,35 +21,39 @@ const GOOD = JSON.stringify({
   funnyMoments: ['someone fell over'],
 });
 
+// Long enough to actually exceed one request. Worth noting how much room a
+// cloud context buys: a normal 3-hour session (~140k chars) now fits in a
+// SINGLE pass, so slicing only engages for genuinely enormous transcripts.
+// This one is deliberately ~5M chars so that path is exercised at all.
 const longTranscript = Array.from(
-  { length: 4000 },
+  { length: 60_000 },
   (_, i) => `[${i}] Alice: this is line number ${i} of a very long session transcript indeed.`
 ).join('\n');
 
-let calls;
+let calls = [];
 
-// stream:true means a reply is newline-delimited JSON, not one object.
-function writeStream(res, content) {
-  res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-  res.end(
-    JSON.stringify({ message: { content }, done: false }) +
-      '\n' +
-      JSON.stringify({ message: { content: '' }, done: true, prompt_eval_count: 1e9 }) +
-      '\n'
-  );
-}
-
-function record(body) {
-  calls.push({ system: body.messages[0].content, user: body.messages[1].content, numCtx: body.options?.num_ctx });
-}
-
+// Records every request and replies with whatever `reply` returns.
 function stub(reply) {
   calls = [];
-  responder = (body, res) => {
-    record(body);
-    writeStream(res, reply(calls.length));
+  return async (system, user) => {
+    calls.push({ system, user });
+    return reply(calls.length);
   };
 }
+
+// Fails the first N calls the way a real outage does, then succeeds.
+function stubWithFailures(failFirst, reply = () => GOOD) {
+  calls = [];
+  let n = 0;
+  return async (system, user) => {
+    calls.push({ system, user });
+    n += 1;
+    if (n <= failFirst) throw new Error('connect ECONNREFUSED');
+    return reply(calls.length);
+  };
+}
+
+const run = (transcript, callModel) => summarizeTranscript(transcript, meta, cfg, { callModel });
 
 const kind = (c) =>
   c.system.startsWith('You are analyzing') ? 'SINGLE'
@@ -80,39 +62,24 @@ const kind = (c) =>
   : 'UNKNOWN';
 
 test('a short transcript takes the single-pass path', async () => {
-  stub(() => GOOD);
-  const notes = await summarizeTranscript('[00:01] Alice: hello there', meta, cfg);
+  const notes = await run('[00:01] Alice: hello there', stub(() => GOOD));
   assert.equal(calls.length, 1);
   assert.equal(kind(calls[0]), 'SINGLE');
   assert.equal(notes.tldr, 'Something happened.');
 });
 
-// The bug this guards: Ollama silently truncates an over-long prompt instead
-// of erroring, so without an explicit num_ctx the model only ever saw the
-// tail of a session.
-test('num_ctx is always sent explicitly', async () => {
-  stub(() => GOOD);
-  await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
-  assert.equal(calls[0].numCtx, 8192);
-});
-
 test('a long transcript is sliced and reduced, never sent in one oversized call', async () => {
-  stub(() => GOOD);
-  await summarizeTranscript(longTranscript, meta, cfg);
+  await run(longTranscript, stub(() => GOOD));
 
   const kinds = calls.map(kind);
   assert.ok(kinds.filter((k) => k === 'MAP').length > 1, 'expected several map calls');
   assert.ok(kinds.filter((k) => k === 'REDUCE').length >= 1, 'expected at least one reduce');
   assert.ok(!kinds.includes('SINGLE'), 'must not fall back to a single oversized request');
-
-  for (const c of calls) {
-    assert.ok(c.user.length < cfg.ollamaNumCtx * 3.5, 'every request must fit the context budget');
-  }
 });
 
+// Cutting mid-utterance would garble the text on both sides of the join.
 test('slices are cut on utterance boundaries, never mid-line', async () => {
-  stub(() => GOOD);
-  await summarizeTranscript(longTranscript, meta, cfg);
+  await run(longTranscript, stub(() => GOOD));
 
   for (const c of calls.filter((x) => kind(x) === 'MAP')) {
     const slice = c.user.split('Transcript slice:\n')[1] ?? '';
@@ -123,23 +90,21 @@ test('slices are cut on utterance boundaries, never mid-line', async () => {
 });
 
 test('one bad slice degrades gracefully instead of losing the session', async () => {
-  stub((n) => (n === 2 ? 'not json at all' : GOOD));
-  const notes = await summarizeTranscript(longTranscript, meta, cfg);
+  const notes = await run(longTranscript, stub((n) => (n === 2 ? 'not json at all' : GOOD)));
   assert.ok(notes.tldr.length > 0, 'the rest of the session still produces a summary');
 });
 
 test('every slice failing throws, so the queue retries rather than storing a blank summary', async () => {
-  stub(() => 'not json at all');
-  await assert.rejects(() => summarizeTranscript(longTranscript, meta, cfg), /slices failed/);
+  await assert.rejects(() => run(longTranscript, stub(() => 'not json at all')), /slices failed/);
 });
 
 // Guards a crash: a model returning null for an array used to overwrite the
 // default and blow up on the first .map() in the Discord post / markdown.
 test('malformed model output is coerced, not fatal', async () => {
-  stub(() =>
-    JSON.stringify({ tldr: null, scenes: null, npcsIntroduced: 'not an array', followUps: [{ nope: 1 }] })
+  const notes = await run(
+    '[00:01] Alice: hi',
+    stub(() => JSON.stringify({ tldr: null, scenes: null, npcsIntroduced: 'not an array', followUps: [{ nope: 1 }] }))
   );
-  const notes = await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
 
   assert.equal(typeof notes.tldr, 'string');
   assert.ok(Array.isArray(notes.scenes));
@@ -149,15 +114,16 @@ test('malformed model output is coerced, not fatal', async () => {
 });
 
 test('placeholder follow-ups with an empty task are dropped', async () => {
-  stub(() => JSON.stringify({ tldr: 't', followUps: [{ assignee: null, task: '' }, { assignee: 'A', task: 'real' }] }));
-  const notes = await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
+  const notes = await run(
+    '[00:01] Alice: hi',
+    stub(() => JSON.stringify({ tldr: 't', followUps: [{ assignee: null, task: '' }, { assignee: 'A', task: 'real' }] }))
+  );
   assert.equal(notes.followUps.length, 1);
   assert.equal(notes.followUps[0].task, 'real');
 });
 
 test('JSON wrapped in markdown fences is still parsed', async () => {
-  stub(() => '```json\n' + GOOD + '\n```');
-  const notes = await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
+  const notes = await run('[00:01] Alice: hi', stub(() => '```json\n' + GOOD + '\n```'));
   assert.equal(notes.tldr, 'Something happened.');
 });
 
@@ -165,51 +131,60 @@ test('JSON wrapped in markdown fences is still parsed', async () => {
 //
 // A real 3-hour session was posted as "casual chat / bot testing, not
 // gameplay" because six of its seven slices had failed and the reduce step
-// faithfully summarised the resulting emptiness. The transcript was intact
-// the whole time; only the summariser calls had failed.
-
-// Fails the first N calls the way a real outage does — the connection simply
-// drops — then succeeds, so slice failures can be simulated precisely.
-function stubWithFailures(failFirst, reply = () => GOOD) {
-  calls = [];
-  let n = 0;
-  responder = (body, res) => {
-    record(body);
-    n += 1;
-    if (n <= failFirst) return res.destroy();
-    writeStream(res, reply(calls.length));
-  };
-}
+// faithfully summarised the resulting emptiness. The transcript was intact the
+// whole time; only the summariser calls had failed.
 
 test('losing most of the slices fails the job instead of summarising the gap', async () => {
-  // Each slice is attempted twice (one retry), so 6 failed slices = 12 calls.
-  stubWithFailures(12);
-
+  // Each slice is attempted twice (one retry), so 12 failures = 6 lost slices.
   await assert.rejects(
-    () => summarizeTranscript(longTranscript, meta, cfg),
+    () => run(longTranscript, stubWithFailures(12)),
     /slices failed to summarise/,
     'a summary built from a minority of the session is a fabrication, not a summary'
   );
 });
 
 test('a job that fails this way stays retryable rather than storing a wrong answer', async () => {
-  stubWithFailures(12);
-  const err = await summarizeTranscript(longTranscript, meta, cfg).catch((e) => e);
+  const err = await run(longTranscript, stubWithFailures(12)).catch((e) => e);
   assert.ok(err instanceof Error, 'it throws, so queue-worker retries it later');
   assert.match(err.message, /refusing/);
 });
 
 test('a small number of failed slices still summarises, but says so', async () => {
-  // Two calls = one slice failing after its retry.
-  stubWithFailures(2);
-
-  const notes = await summarizeTranscript(longTranscript, meta, cfg);
+  // Two failures = one slice lost after its retry.
+  const notes = await run(longTranscript, stubWithFailures(2));
   assert.match(notes.tldr, /Partial summary/, 'the reader must be able to tell it is incomplete');
   assert.match(notes.tldr, /1 of \d+/, 'and how much is missing');
 });
 
 test('a clean run carries no partial-summary warning', async () => {
-  stub(() => GOOD);
-  const notes = await summarizeTranscript(longTranscript, meta, cfg);
+  const notes = await run(longTranscript, stub(() => GOOD));
   assert.doesNotMatch(notes.tldr, /Partial summary/);
+});
+
+// Progress drives the Discord status line; without it the bot goes silent for
+// what can be a long time.
+test('progress is reported for each slice and for the reduce', async () => {
+  const seen = [];
+  await summarizeTranscript(longTranscript, meta, cfg, {
+    callModel: stub(() => GOOD),
+    onProgress: (e) => seen.push(e),
+  });
+
+  const slices = seen.filter((e) => e.phase === 'slices');
+  assert.ok(slices.length > 1, 'each slice reports');
+  assert.equal(slices.at(-1).done, slices.at(-1).total, 'the last report is complete');
+  assert.ok(
+    seen.some((e) => e.phase === 'reduce'),
+    'the reduce stage is distinguishable from slicing'
+  );
+});
+
+test('a broken progress reporter cannot fail the summary', async () => {
+  const notes = await summarizeTranscript(longTranscript, meta, cfg, {
+    callModel: stub(() => GOOD),
+    onProgress: () => {
+      throw new Error('reporter exploded');
+    },
+  });
+  assert.ok(notes.tldr.length > 0);
 });

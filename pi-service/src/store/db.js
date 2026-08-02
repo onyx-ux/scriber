@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_utterances_meeting ON utterances(meeting_id);
 
 -- The job queue is what makes "PC is sometimes off" safe: a summarize job
 -- is enqueued the moment transcription finishes, independent of whether
--- Ollama is currently reachable. queue-worker.js polls this table.
+-- the summariser is currently reachable. queue-worker.js polls this table.
 CREATE TABLE IF NOT EXISTS characters (
   guild_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
@@ -156,7 +156,7 @@ function wrap(db) {
     // Deleting first also makes a recovery re-run idempotent rather than additive.
     // provider pins which summariser this meeting's job must use, for when
     // the choice was made at /leave rather than left to the global default —
-    // notably "transcribed on the Pi, so the PC is off, so Ollama can't run".
+    // e.g. a one-off /summarise that must not use the configured default.
     // null keeps the existing behaviour of deferring to the config at run time.
     finalizeTranscription(meetingId, utterances, { requireApproval = false, provider = null } = {}) {
       const del = db.prepare(`DELETE FROM utterances WHERE meeting_id = ?`);

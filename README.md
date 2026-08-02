@@ -7,15 +7,23 @@ machines on your home network:
 - **Raspberry Pi** (always-on): joins voice, captures per-speaker audio,
   transcribes locally with **whisper.cpp** (no Python, no CUDA deps, ARM-fast),
   stores history in SQLite, exports Markdown for Obsidian, posts to Discord.
-- **Desktop PC** (only on sometimes): runs **Ollama** with a large model for
-  the actual AI summary. The Pi calls it over your LAN and queues/retries if
-  the PC is off.
+- **Desktop PC** (only on sometimes): runs a **whisper.cpp GPU server**, which
+  transcribes ~400x faster than the Pi's CPU. The Pi uses it when it's up and
+  falls back to its own CPU when it isn't. Audio never leaves your LAN.
 
-No Tailscale/VPN needed — this design assumes Pi and PC are always on the
-same LAN, per your setup. If that ever changes (e.g. you want this working
-away from home), Tailscale would be the right add-on later; nothing here
-needs to change to support that, you'd just point `OLLAMA_URL` at a Tailscale
-IP instead of a LAN IP.
+The AI summary is written by a cloud model (Gemini by default, Claude
+optionally) from the finished transcript TEXT. The recordings themselves never
+leave your network under any setting.
+
+A local summariser (Ollama on the PC) used to fill that role and was removed:
+on a 12GB card a 14B model took ~7.5 minutes per transcript slice — about an
+hour for a session Gemini summarises in under a minute — and the results were
+not as good. The trade-off is that summarising now needs the internet; when
+it's unavailable, jobs queue and retry exactly as they did when the PC was off.
+
+No Tailscale/VPN needed — this design assumes Pi and PC are on the same LAN.
+If that ever changes, Tailscale would be the right add-on; you'd point
+`WHISPER_SERVER_URL` at a Tailscale IP instead of a LAN IP.
 
 ## Status of this scaffold
 
@@ -41,16 +49,12 @@ Discord voice connection or compile ARM binaries from here):
 1. Give your PC a static local IP via a DHCP reservation in your router admin
    page (search "[your router model] DHCP reservation" if unfamiliar) — e.g.
    `192.168.1.50`.
-2. On the PC, set Ollama to listen on the LAN, not just localhost (same as
-   we did for Parley):
-   ```powershell
-   [System.Environment]::SetEnvironmentVariable('OLLAMA_HOST', '0.0.0.0', 'User')
-   ```
-   Restart Ollama fully (tray icon → Quit → relaunch) after setting this.
-3. Windows Firewall: allow inbound TCP 11434 on your **Private** network
+2. On the PC, start the whisper GPU server — see `pc-whisper/README.md`.
+3. Windows Firewall: allow inbound TCP 8089 on your **Private** network
    profile only (not Public) — Windows will usually prompt for this the first
    time the Pi connects.
-4. On the Pi, set `OLLAMA_URL=http://192.168.1.50:11434` in `.env`.
+4. On the Pi, set `WHISPER_SERVER_URL=http://192.168.1.50:8089` in `.env`, and
+   put a `GEMINI_API_KEY` in there too (https://aistudio.google.com/apikey).
 
 ## Folder layout
 
@@ -63,7 +67,7 @@ pi-service/          # everything that runs on the Raspberry Pi
     store/db.js            # SQLite: meetings, utterances, job queue
     pipeline/
       transcribe.js         # orchestrates capture -> whisper.cpp -> text
-      summarize-client.js    # HTTP call to PC's Ollama, with retries
+      summarize-client.js    # slice/reduce a transcript into a summary
       queue-worker.js         # background job processor (handles PC-off case)
     export/markdown.js      # Obsidian-formatted .md export
     delivery/discord-post.js  # posts to channel (no thread) + attaches files
@@ -74,7 +78,8 @@ pi-service/          # everything that runs on the Raspberry Pi
   .env.example
 ```
 
-There is no `pc-service/` folder — the PC side is just Ollama itself, no
+There is no `pc-service/` folder — the PC side is just the whisper GPU
+server (`pc-whisper/`), no
 custom code needed there. See "Network setup" above.
 
 ## Google Drive sync (optional, off by default)
@@ -194,7 +199,7 @@ pull && docker compose up -d` on whichever machine(s) you're actually
 running the bot on to pick up the new image.
 
 *(Note: only the Pi is meant to actually run this bot day-to-day per the
-architecture above — the PC's role is Ollama, not this container. Being
+architecture above — the PC's role is the whisper server, not this container. Being
 able to `docker compose pull` it on the PC too is mainly useful for testing
 changes locally before they reach the Pi, or if you ever want to run the
 whole stack on one machine for debugging.)*
@@ -204,7 +209,7 @@ whole stack on one machine for debugging.)*
 - `/join` — start recording the voice channel you're in
 - `/leave` — stop recording, transcribe, queue the AI summary
 - `/history [count]` — list recent sessions
-- `/summarise meeting_id:<id> [provider:<ollama|gemini|anthropic>]` — force an immediate summarise retry (useful right after turning your PC on). `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it — e.g. use Gemini for a session while your PC is off, and keep Ollama as the default
+- `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
 - `/funny` — pull a random funny/memorable moment from any completed session in this campaign's history (the AI summariser flags these, if any, as part of the normal per-session summary)
@@ -213,11 +218,11 @@ whole stack on one machine for debugging.)*
 - `/correct wrong:<text> right:<text>` — fix a name whisper keeps mishearing. Rewrites every past transcript in the campaign **and** is saved, so future sessions are corrected automatically
 - `/corrections` — list the saved corrections
 - `/uncorrect wrong:<text>` — remove a saved correction (undoes `/correct`; past transcripts already rewritten stay as they are)
-- `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs the configured summariser (Ollama, Claude, or Gemini) reachable
+- `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs the configured summariser (Gemini or Claude) reachable
 - `/status` — see what's currently queued/retrying, and whether the configured summariser is reachable right now
 - `/pending` — everything currently in the pipeline: recording, transcribing, awaiting approval, or queued for summarising
-- `/approve [meeting_id] [provider:<ollama|gemini|anthropic>]` — release a session parked awaiting approval (omit the ID to approve everything waiting; `provider:` works the same as on `/summarise`)
-- `/pause` / `/resume` — stop and restart summarising, so you can kill Ollama or free the GPU without losing queued work
+- `/approve [meeting_id] [provider:<gemini|anthropic>]` — release a session parked awaiting approval (omit the ID to approve everything waiting; `provider:` works the same as on `/summarise`)
+- `/pause` / `/resume` — stop and restart summarising without losing queued work
 - `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
 - `/whoami` — show what name you currently appear as in transcripts and notes
 - `/stats` — campaign-wide totals: sessions, hours recorded, lines transcribed, and who talks the most
@@ -226,7 +231,8 @@ whole stack on one machine for debugging.)*
 
 ## Summarise on approval (optional)
 
-By default, finishing a session hands the transcript straight to Ollama. If
+By default, finishing a session hands the transcript straight to the
+summariser. If
 your PC doubles as your gaming machine that's a problem — a 14B model
 suddenly claiming ~10GB of VRAM mid-match is very noticeable.
 
@@ -236,7 +242,7 @@ stops one step short instead: the transcript is written, the job parks in
 touches the GPU until you press it. `/pending` shows everything waiting and
 `/approve` releases it if you'd rather not use the button.
 
-`/pause` goes further — it stops the queue entirely, so you can kill Ollama
+`/pause` goes further — it stops the queue entirely, so you can hold work back
 outright. Queued sessions stay exactly where they are and resume on `/resume`.
 
 ## Browsable archive
@@ -252,7 +258,7 @@ a laptop, or a USB stick. Full transcripts stay in the `.md` files beside it.
 
 `SUMMARY_PROVIDER` decides which model writes the recap:
 
-- `ollama` (default) — everything stays on your own hardware.
+- `gemini` (default) — cheapest cloud option, with a free tier.
 - `anthropic` — sends the finished **transcript text** to Claude for a
   noticeably better recap. Set `ANTHROPIC_API_KEY`; `ANTHROPIC_MODEL` defaults
   to `claude-opus-5`. Anthropic's API is paid-tier only (no free tier).
@@ -274,23 +280,21 @@ transcribing you can send that one summary somewhere else, without changing
 the config:
 
 - **The approval DM** (with `SUMMARY_REQUIRE_APPROVAL=true`) shows one button
-  per configured provider — **Ollama (local)**, **Gemini**, **Claude** — plus
+  per configured provider — **Gemini**, **Claude** — plus
   **Not yet**. Whichever you press is what writes that session. The message
   lists which model sits behind each button, since a button label only has
   room for the provider name.
 - **`/summarise meeting_id:<id> provider:<...>`** and
   **`/approve [meeting_id] provider:<...>`** do the same thing from a command.
 
-Only providers that are actually set up appear — Ollama is always available
-(no key needed), Gemini and Claude only once their API key is present. Asking
-for one that isn't configured gets a clear refusal rather than a silent
-fallback to something you didn't choose. With just one provider set up, the
-button stays a plain **Summarise now** instead of a pointless one-item picker.
+Only providers that are actually set up appear — each needs its API key
+present. Asking for one that isn't configured gets a clear refusal rather than
+a silent fallback to something you didn't choose. With just one provider set
+up, the button stays a plain **Summarise now** instead of a pointless
+one-item picker.
 
 The choice is stored on the job, so it survives a bot restart and is still
-honoured when a queued session is retried later. This is the practical answer
-to "my PC is off tonight": approve with Gemini and the recap lands now, rather
-than waiting for the Ollama retry queue.
+honoured when a queued session is retried later.
 
 ## Campaign ledger (Obsidian)
 
@@ -344,7 +348,7 @@ summarise pipeline automatically — no manual intervention needed.
   to run the command manually.
 - **XP/loot ledger with running totals** — beyond just listing loot per
   session, tally running totals per character over the campaign.
-- **Ollama model fallback** — if your primary model is slow/OOMs, fall back
+- **Summariser fallback** — if the primary provider errors, fall back
   to a smaller one automatically rather than failing the job outright.
 - **Audio clip attachments** — clip and attach the actual audio for a
   specific dramatic moment, rather than only text.

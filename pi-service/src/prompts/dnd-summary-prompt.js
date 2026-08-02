@@ -80,10 +80,9 @@ ${transcript}`;
 
 // ---------------------------------------------------------------------------
 // Chunked (map-reduce) summarisation, for sessions too long to fit in the
-// model's context window in one pass. A real 3-4 hour session is far larger
-// than any practical num_ctx, and an over-long prompt is silently TRUNCATED
-// by Ollama rather than rejected — so without this the summary would only
-// ever reflect the tail end of the session. The MAP prompt extracts raw
+// model's context window in one pass. Providers differ in how they handle an
+// over-long prompt, and some truncate silently rather than rejecting — so
+// without this the summary could quietly reflect only part of the session. The MAP prompt extracts raw
 // facts from one slice; the REDUCE prompt merges slice results into the
 // single final summary. Both deliberately reuse the same output schema as
 // the single-pass prompt above.

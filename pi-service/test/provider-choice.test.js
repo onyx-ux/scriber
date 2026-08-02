@@ -15,14 +15,12 @@ import { buildApprovalRow, providerChoiceNote, APPROVE_PREFIX } from '../src/del
 import { openDb } from '../src/store/db.js';
 
 const baseCfg = {
-  summaryProvider: 'ollama',
-  ollamaUrl: 'http://stub:11434',
-  ollamaModel: 'qwen2.5:14b',
-  ollamaNumCtx: 9216,
+  summaryProvider: 'gemini',
   geminiApiKey: 'gm-test',
   geminiModel: 'gemini-3.1-flash-lite',
   anthropicApiKey: null,
   anthropicModel: 'claude-opus-5',
+  obsidianWikilinks: true,
 };
 
 async function freshDb(t) {
@@ -54,30 +52,32 @@ function seedParkedJob(db) {
 // --- withProvider ---
 
 test('withProvider swaps the provider without disturbing the rest of the config', () => {
-  const gemini = withProvider(baseCfg, 'gemini');
-  assert.equal(gemini.summaryProvider, 'gemini');
-  assert.equal(gemini.ollamaModel, 'qwen2.5:14b', 'unrelated settings are preserved');
-  assert.equal(baseCfg.summaryProvider, 'ollama', 'the original config is not mutated');
+  const claude = withProvider(baseCfg, 'anthropic');
+  assert.equal(claude.summaryProvider, 'anthropic');
+  assert.equal(claude.geminiModel, 'gemini-3.1-flash-lite', 'unrelated settings are preserved');
+  assert.equal(baseCfg.summaryProvider, 'gemini', 'the original config is not mutated');
 });
 
 test('withProvider ignores null/unknown values rather than producing a broken config', () => {
-  assert.equal(withProvider(baseCfg, null).summaryProvider, 'ollama');
-  assert.equal(withProvider(baseCfg, undefined).summaryProvider, 'ollama');
+  assert.equal(withProvider(baseCfg, null).summaryProvider, 'gemini');
+  assert.equal(withProvider(baseCfg, undefined).summaryProvider, 'gemini');
   // A hand-edited or stale value in the database must degrade to the default,
-  // not silently select a provider that doesn't exist.
-  assert.equal(withProvider(baseCfg, 'gpt5').summaryProvider, 'ollama');
+  // not silently select a provider that doesn't exist. 'ollama' specifically
+  // can still be sitting in old job rows, since it used to be valid.
+  assert.equal(withProvider(baseCfg, 'gpt5').summaryProvider, 'gemini');
+  assert.equal(withProvider(baseCfg, 'ollama').summaryProvider, 'gemini', 'a retired provider degrades safely');
 });
 
 test('the overridden config actually drives the downstream provider behaviour', () => {
-  // Not just the field — the things that read it must follow too, otherwise a
-  // job could "use Gemini" while still budgeting for Ollama's tiny context.
-  assert.match(summariserLabel(withProvider(baseCfg, 'gemini')), /Gemini/);
-  assert.equal(contextTokens(baseCfg), 9216);
-  assert.ok(contextTokens(withProvider(baseCfg, 'gemini')) > 100_000);
+  // Not just the field — the things that read it must follow too.
+  assert.match(summariserLabel(withProvider(baseCfg, 'anthropic')), /Claude/);
+  assert.match(summariserLabel(baseCfg), /Gemini/);
+  assert.ok(contextTokens(baseCfg) > 100_000);
 });
 
-test('isValidProvider accepts exactly the three real providers', () => {
-  assert.ok(isValidProvider('ollama') && isValidProvider('gemini') && isValidProvider('anthropic'));
+test('isValidProvider accepts exactly the real providers', () => {
+  assert.ok(isValidProvider('gemini') && isValidProvider('anthropic'));
+  assert.ok(!isValidProvider('ollama'), 'the local provider was removed');
   assert.ok(!isValidProvider('openai'));
   assert.ok(!isValidProvider(''));
   assert.ok(!isValidProvider(null));
@@ -85,22 +85,22 @@ test('isValidProvider accepts exactly the three real providers', () => {
 
 // --- configuredProviders ---
 
-test('configuredProviders lists only what has credentials, with Ollama always available', () => {
-  assert.deepEqual(configuredProviders(baseCfg), ['ollama', 'gemini']);
-  assert.deepEqual(configuredProviders({ ...baseCfg, geminiApiKey: null }), ['ollama']);
-  assert.deepEqual(configuredProviders({ ...baseCfg, anthropicApiKey: 'sk-x' }), ['ollama', 'anthropic', 'gemini']);
+test('configuredProviders lists only what has credentials', () => {
+  assert.deepEqual(configuredProviders(baseCfg), ['gemini']);
+  assert.deepEqual(configuredProviders({ ...baseCfg, anthropicApiKey: 'sk-x' }), ['gemini', 'anthropic']);
+  assert.deepEqual(configuredProviders({ ...baseCfg, geminiApiKey: null }), [], 'no keys means nothing can run');
 });
 
 // --- approval buttons ---
 
 test('one button per configured provider, plus "Not yet"', () => {
-  const row = buildApprovalRow(42, baseCfg).toJSON();
+  const row = buildApprovalRow(42, { ...baseCfg, anthropicApiKey: 'sk-x' }).toJSON();
   const ids = row.components.map((c) => c.custom_id);
-  assert.deepEqual(ids, ['scriber:approve:42:ollama', 'scriber:approve:42:gemini', 'scriber:park:42']);
+  assert.deepEqual(ids, ['scriber:approve:42:gemini', 'scriber:approve:42:anthropic', 'scriber:park:42']);
 });
 
 test('with only one provider set up, the button stays a plain "Summarise now"', () => {
-  const row = buildApprovalRow(42, { ...baseCfg, geminiApiKey: null }).toJSON();
+  const row = buildApprovalRow(42, baseCfg).toJSON();
   const ids = row.components.map((c) => c.custom_id);
   assert.deepEqual(ids, ['scriber:approve:42', 'scriber:park:42'], 'no pointless provider picker for a single option');
 });
@@ -116,10 +116,10 @@ test('button custom_ids stay within Discord\'s 100-character limit', () => {
 // The DM's buttons only have room for a provider name, so the message body has
 // to say which model each one actually means.
 test('the DM note names the model behind each button, and is empty when there is no choice', () => {
-  const note = providerChoiceNote(baseCfg);
-  assert.match(note, /qwen2\.5:14b/);
+  const note = providerChoiceNote({ ...baseCfg, anthropicApiKey: 'sk-x' });
   assert.match(note, /gemini-3\.1-flash-lite/);
-  assert.equal(providerChoiceNote({ ...baseCfg, geminiApiKey: null }), '', 'no note when there is nothing to choose');
+  assert.match(note, /claude-opus-5/);
+  assert.equal(providerChoiceNote(baseCfg), '', 'no note when only one provider is set up');
 });
 
 // --- parsing the button id back out (mirrors handleApprovalButton) ---
@@ -166,8 +166,8 @@ test('re-running /summarise without a provider keeps the earlier choice', async 
   db.requeueSummarizeNow(meetingId); // no provider named
   assert.equal(db.getJob(job.id).provider, 'gemini', 'an omitted provider must not wipe a deliberate choice');
 
-  db.requeueSummarizeNow(meetingId, 'ollama'); // explicitly changed
-  assert.equal(db.getJob(job.id).provider, 'ollama');
+  db.requeueSummarizeNow(meetingId, 'anthropic'); // explicitly changed
+  assert.equal(db.getJob(job.id).provider, 'anthropic');
 });
 
 test('requeue on a meeting with no existing job records the provider on the new job', async (t) => {

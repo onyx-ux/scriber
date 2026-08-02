@@ -25,7 +25,6 @@ import {
   applyTranscribeTarget,
   transcribeChoicePrompt,
   transcribeChosenNote,
-  TARGET_PI,
 } from '../pipeline/transcribe-target.js';
 
 // How long the "PC or Pi?" prompt waits before taking the default. Long
@@ -113,9 +112,8 @@ export const commandDefs = [
         .setDescription('Who writes it (default: whatever SUMMARY_PROVIDER is set to)')
         .setRequired(false)
         .addChoices(
-          { name: 'Ollama (local, on your PC)', value: 'ollama' },
-          { name: 'Gemini (cloud)', value: 'gemini' },
-          { name: 'Claude (cloud)', value: 'anthropic' }
+          { name: 'Gemini', value: 'gemini' },
+          { name: 'Claude', value: 'anthropic' }
         )
     ),
   new SlashCommandBuilder()
@@ -158,7 +156,7 @@ export const commandDefs = [
     .setDescription('Show everything currently in the pipeline (recording, transcribing, awaiting approval)'),
   new SlashCommandBuilder()
     .setName('pause')
-    .setDescription('Pause summarising so Ollama can be killed or the GPU freed — nothing is lost'),
+    .setDescription('Pause summarising — queued sessions wait rather than being sent out'),
   new SlashCommandBuilder().setName('resume').setDescription('Resume summarising after a /pause'),
   new SlashCommandBuilder()
     .setName('ask')
@@ -190,9 +188,8 @@ export const commandDefs = [
         .setDescription('Who writes it (default: whatever SUMMARY_PROVIDER is set to)')
         .setRequired(false)
         .addChoices(
-          { name: 'Ollama (local, on your PC)', value: 'ollama' },
-          { name: 'Gemini (cloud)', value: 'gemini' },
-          { name: 'Claude (cloud)', value: 'anthropic' }
+          { name: 'Gemini', value: 'gemini' },
+          { name: 'Claude', value: 'anthropic' }
         )
     ),
   new SlashCommandBuilder()
@@ -415,10 +412,9 @@ async function handleLeave(interaction, db, cfg) {
   try {
     result = await finishSession(db, session.meetingId, session.capturedUtterances, session.audioDir, runCfg, {
       serverReachable,
-      // Pin the summariser onto the job itself when transcribing on the Pi.
-      // The queue worker reads the global config, so without this the job
-      // would fall back to Ollama on a PC we just established is off.
-      pinProvider: target === TARGET_PI ? runCfg.summaryProvider : null,
+      // Nothing to pin: transcribing on the Pi no longer implies a different
+      // summariser, now that summarising doesn't depend on the PC at all.
+      pinProvider: null,
     });
   } finally {
     // The transcript (or the failure) is posted below, so this line has served
@@ -493,9 +489,8 @@ async function handleSummarizeNow(interaction, db, cfg) {
   const meeting = db.getMeeting(meetingId);
   if (!meeting) return interaction.reply({ content: 'No such meeting.', flags: MessageFlags.Ephemeral });
 
-  // Check the provider actually being used, not the configured default —
-  // otherwise picking Gemini while Ollama is off would be refused, and vice
-  // versa.
+  // Check the provider actually being used, not the configured default, so
+  // asking for one that is set up isn't refused because the other isn't.
   const effectiveCfg = withProvider(cfg, provider);
   const unusable = providerUnusableReason(effectiveCfg, provider);
   if (unusable) return interaction.reply({ content: unusable, flags: MessageFlags.Ephemeral });

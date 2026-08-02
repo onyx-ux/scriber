@@ -71,9 +71,8 @@ async function startSummaryProgress({ discordClient, meeting, cfg, jobCfg }) {
 
 // Call once at startup: setInterval(() => tick(...), 15000)
 export async function tick(db, discordClient, cfg) {
-  // /pause sets this so Ollama can be killed or the GPU freed without the
-  // worker repeatedly trying to reach it. Queued work is untouched and
-  // resumes exactly where it left off.
+  // /pause sets this so nothing is sent to the summariser for a while.
+  // Queued work is untouched and resumes exactly where it left off.
   if (db.getSetting('summarize_paused') === 'true') return;
 
   const job = db.nextDueJob();

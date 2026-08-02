@@ -16,12 +16,12 @@ function optional(name, fallback) {
 function validate(cfg) {
   if (cfg.summaryProvider === 'anthropic' && !cfg.anthropicApiKey) {
     throw new Error(
-      'SUMMARY_PROVIDER=anthropic requires ANTHROPIC_API_KEY. Set the key, or switch back to SUMMARY_PROVIDER=ollama.'
+      'SUMMARY_PROVIDER=anthropic requires ANTHROPIC_API_KEY.'
     );
   }
   if (cfg.summaryProvider === 'gemini' && !cfg.geminiApiKey) {
     throw new Error(
-      'SUMMARY_PROVIDER=gemini requires GEMINI_API_KEY. Set the key, or switch back to SUMMARY_PROVIDER=ollama.'
+      'SUMMARY_PROVIDER=gemini requires GEMINI_API_KEY. Get one from https://aistudio.google.com/apikey'
     );
   }
   return cfg;
@@ -44,7 +44,7 @@ export const config = validate({
   // Where transcription actually runs. Unset = on the Pi's CPU, which does
   // neural inference at roughly 10x slower than realtime (a 30-minute session
   // took ~4.5 hours). Set to a whisper.cpp HTTP server on a machine with a
-  // GPU — in this setup the same PC that runs Ollama — and the same work
+  // GPU — in this setup, the Windows PC on the LAN — and the same work
   // takes seconds. Audio still never leaves the LAN either way.
   whisperServerUrl: optional('WHISPER_SERVER_URL', null),
   // A long session is a lot of audio; the per-request cap is generous so a
@@ -75,46 +75,16 @@ export const config = validate({
     return 'auto';
   })(),
 
-  // Ollama on the PC, reachable over the LAN
-  ollamaUrl: optional('OLLAMA_URL', 'http://127.0.0.1:11434'),
-  ollamaModel: optional('OLLAMA_MODEL', 'qwen2.5:14b'),
-  // Context window for summarisation. Ollama does NOT use the model's full
-  // advertised context by default — it applies its own small default (4096)
-  // and silently TRUNCATES anything longer, so a long session would be
-  // summarised from only its tail. Transcripts longer than this are split
-  // and summarised in slices (see pipeline/summarize-client.js), so this
-  // doesn't cap session length; it only trades VRAM for fewer slices.
-  // Raise it if your GPU has headroom beyond the model weights.
-  // Sanitised rather than raw parseInt: a typo'd or absurdly small value
-  // would otherwise propagate NaN into the chunk-size maths and collapse the
-  // whole transcript back into one oversized (silently truncated) request.
+  // Which model writes the summary. Both send the finished TRANSCRIPT TEXT to
+  // a cloud provider; audio and transcription always stay local, so the
+  // recordings never leave the network under any setting.
   //
-  // 9216 is the measured ceiling for a 12GB RTX 3080 Ti running qwen2.5:14b
-  // Q4_K_M: at 9216 the model + KV cache occupy 9996 MiB and stay entirely on
-  // the GPU; at 10240 Ollama spills to CPU and the same request went from
-  // ~4s to ~176s. If summaries suddenly get drastically slower, the desktop
-  // is probably using more VRAM than usual — drop this to 8192.
-  ollamaNumCtx: (() => {
-    const n = parseInt(optional('OLLAMA_NUM_CTX', '9216'), 10);
-    return Number.isFinite(n) && n >= 2048 ? n : 9216;
-  })(),
-
-  // How long Ollama holds the model in VRAM after a request. Its own default
-  // is 5 minutes, which is shorter than the gap between slices of a long
-  // transcript — so a multi-slice summary could pay the cold-load cost more
-  // than once, and on a card with a desktop competing for VRAM that load was
-  // measured at 570 SECONDS (vs 0.5s once warm). Keeping it resident for the
-  // duration of a job is the difference between minutes and hours.
-  // Set '0' to release it immediately, or '-1' to keep it loaded forever.
-  ollamaKeepAlive: optional('OLLAMA_KEEP_ALIVE', '30m'),
-
-  // Which model writes the summary. 'ollama' keeps everything on your own
-  // hardware; 'anthropic'/'gemini' send the finished TRANSCRIPT TEXT to a
-  // cloud model for a better-quality recap. Audio and transcription stay
-  // local either way — recordings never leave the network under any setting.
+  // There is no local option any more — see pipeline/model-client.js for why
+  // Ollama was dropped. The practical consequence is that summarising needs
+  // the internet: when it's unavailable, jobs queue and retry.
   summaryProvider: (() => {
-    const v = optional('SUMMARY_PROVIDER', 'ollama').toLowerCase();
-    return v === 'anthropic' || v === 'gemini' ? v : 'ollama';
+    const v = optional('SUMMARY_PROVIDER', 'gemini').toLowerCase();
+    return v === 'anthropic' ? v : 'gemini';
   })(),
   anthropicApiKey: optional('ANTHROPIC_API_KEY', null),
   anthropicModel: optional('ANTHROPIC_MODEL', 'claude-opus-5'),
@@ -129,15 +99,15 @@ export const config = validate({
   geminiModel: optional('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
 
   // --- summarise-on-approval ---
-  // With this on, finishing a session does NOT immediately hand the
-  // transcript to Ollama; the job waits in 'awaiting_approval' and the owner
-  // gets a DM with a button. Stops a summary firing on the PC mid-game.
+  // With this on, finishing a session does NOT immediately summarise; the
+  // job waits in 'awaiting_approval' and the owner gets a DM with a button,
+  // so nothing is sent to a cloud model until someone says so.
   summaryRequireApproval: optional('SUMMARY_REQUIRE_APPROVAL', 'false') === 'true',
   // Discord user ID to DM for that approval (and for pipeline nudges).
   // Without it, approval still works via /pending, there's just no DM.
   ownerUserId: optional('OWNER_USER_ID', null),
 
-  // Job queue / retry behavior for when the PC is off
+  // Job queue / retry behaviour for when the summariser can't be reached
   summarizeRetryBaseMs: parseInt(optional('SUMMARIZE_RETRY_BASE_MS', '60000'), 10), // 1 min
   summarizeRetryMaxMs: parseInt(optional('SUMMARIZE_RETRY_MAX_MS', '1800000'), 10), // 30 min cap
   summarizeMaxAttempts: parseInt(optional('SUMMARIZE_MAX_ATTEMPTS', '0'), 10), // 0 = retry forever
