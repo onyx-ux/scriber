@@ -62,7 +62,7 @@ async function transcribeLocally(wavPath, cfg, wordLevel) {
       '-of', outPrefix, // output file prefix (whisper.cpp appends .json)
       '-t', String(cfg.whisperThreads),
       '-nt',                          // no timestamps in stdout text (we use the JSON segments instead)
-      '-l', 'en',
+      '-l', cfg.whisperLanguage || 'en',
       ...(wordLevel ? ['-ml', '1', '-sow'] : []),
     ],
     { timeout: 10 * 60 * 1000 } // 10 min hard cap per file — a single utterance shouldn't take anywhere near this
@@ -95,6 +95,12 @@ async function transcribeOnServer(wavPath, cfg, wordLevel) {
     // /import needs to split one long recording into utterances.
     form.append('response_format', 'verbose_json');
     form.append('temperature', '0.0');
+    // Pin the language rather than letting whisper detect it. The multilingual
+    // models (large-v3-turbo and friends) will happily decide a short, noisy
+    // Discord clip is Welsh and transcribe it as such — and a session is
+    // hundreds of short clips, so it only has to misfire occasionally to put
+    // nonsense in the transcript. The English-only models ignore this.
+    form.append('language', cfg.whisperLanguage || 'en');
     if (wordLevel) {
       form.append('max_len', '1');
       form.append('split_on_word', 'true');

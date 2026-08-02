@@ -258,3 +258,46 @@ test('bracketed text inside a real sentence is not mistaken for a marker', async
     assert.equal(text, 'I attack [the goblin] with my axe', 'only a whole-segment marker is dropped');
   });
 });
+
+// large-v3-turbo is multilingual, unlike the medium.en it replaced. Left to
+// auto-detect, whisper will occasionally decide a short noisy clip is another
+// language and transcribe it as such — and a session is hundreds of short
+// clips, so a rare misfire still lands nonsense in the transcript.
+test('the language is pinned rather than left to auto-detection', async () => {
+  let seen = null;
+  global.fetch = async (_url, opts) => {
+    seen = opts.body.get('language');
+    return new Response(JSON.stringify({ text: 'x', segments: [] }), { status: 200 });
+  };
+
+  await withClip(async (path) => {
+    await transcribeWav(path, { ...serverCfg, whisperLanguage: 'en' });
+    assert.equal(seen, 'en');
+  });
+});
+
+test('a config with no language still pins one instead of sending "undefined"', async () => {
+  let seen = null;
+  global.fetch = async (_url, opts) => {
+    seen = opts.body.get('language');
+    return new Response(JSON.stringify({ text: 'x', segments: [] }), { status: 200 });
+  };
+
+  await withClip(async (path) => {
+    await transcribeWav(path, serverCfg); // serverCfg has no whisperLanguage
+    assert.equal(seen, 'en', 'the string "undefined" would be a nonsense language code');
+  });
+});
+
+test('a non-English language is passed through rather than forced to en', async () => {
+  let seen = null;
+  global.fetch = async (_url, opts) => {
+    seen = opts.body.get('language');
+    return new Response(JSON.stringify({ text: 'x', segments: [] }), { status: 200 });
+  };
+
+  await withClip(async (path) => {
+    await transcribeWav(path, { ...serverCfg, whisperLanguage: 'fr' });
+    assert.equal(seen, 'fr');
+  });
+});

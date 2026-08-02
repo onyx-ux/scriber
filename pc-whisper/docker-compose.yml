@@ -43,8 +43,20 @@ services:
       LD_LIBRARY_PATH: /usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
     entrypoint:
       - /app/build/bin/whisper-server
+      # large-v3-turbo: the full large-v3 encoder with a distilled 4-layer
+      # decoder (vs 32), so it is close to large-v3 on accuracy while decoding
+      # several times faster. ~1.6GB on disk, comfortably within this card now
+      # that nothing else is competing for its VRAM.
+      #
+      # It is MULTILINGUAL, unlike the medium.en it replaced — which is why
+      # the Pi now sends an explicit `language` with every request. Left to
+      # auto-detect, whisper will occasionally decide a short noisy clip is
+      # another language and transcribe it as such.
+      #
+      # ggml-medium.en.bin is kept alongside it as a fallback; swap this line
+      # back if the bigger model ever misbehaves.
       - --model
-      - /models/ggml-medium.en.bin
+      - /models/ggml-large-v3-turbo.bin
       - --host
       - '0.0.0.0'
       - --port

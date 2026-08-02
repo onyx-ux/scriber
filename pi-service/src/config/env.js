@@ -40,6 +40,12 @@ export const config = validate({
   whisperBin: optional('WHISPER_BIN', '/app/whisper.cpp/build/bin/whisper-cli'),
   whisperModelPath: optional('WHISPER_MODEL_PATH', `/models/ggml-${optional('WHISPER_MODEL_NAME', 'base.en')}.bin`),
   whisperThreads: parseInt(optional('WHISPER_THREADS', '4'), 10),
+  // Pinned rather than auto-detected. A multilingual model (large-v3-turbo,
+  // large-v3) will sometimes decide a short, noisy clip is another language
+  // and transcribe it that way; a session is hundreds of such clips, so it
+  // only has to be wrong occasionally to corrupt the transcript. English-only
+  // models (*.en) ignore this setting entirely.
+  whisperLanguage: optional('WHISPER_LANGUAGE', 'en'),
 
   // Where transcription actually runs. Unset = on the Pi's CPU, which does
   // neural inference at roughly 10x slower than realtime (a 30-minute session

@@ -14,17 +14,27 @@ Measured on this setup:
 | 235-clip session (28 min) | ~4.5 hours | **~40 seconds** |
 | ~3-hour session | ~30 hours | **~4 minutes** |
 
-The audio never leaves your network — this is your own PC on the LAN, the same
-one already running Ollama.
+The audio never leaves your network — this is your own PC on the LAN.
 
 ## Setup
 
-1. **Get the model.** The container does not download models itself. Either
-   copy the one the Pi already has, or download it:
+1. **Get the model.** The container does not download models itself:
 
    ```bash
-   scp pihouse:/home/mattpi/scriber/pi-service/models/ggml-medium.en.bin ./models/
+   curl -L -o models/ggml-large-v3-turbo.bin      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
    ```
+
+   large-v3-turbo is the full large-v3 encoder with a distilled 4-layer
+   decoder (large-v3 has 32), so it is close to large-v3 on accuracy while
+   decoding several times faster. ~1.6GB on disk, ~2.5GB resident.
+
+   Measured against the medium.en it replaced, on four real session clips:
+   1.25s vs 1.71s total, and it got words right that medium.en did not
+   ("decided to pay them back" vs "decided to face them back").
+
+   It is **multilingual**, so the Pi sends an explicit `language` with every
+   request (`WHISPER_LANGUAGE`, default `en`). Left to auto-detect, whisper
+   will occasionally decide a short noisy clip is another language.
 
 2. **Start it:**
 
@@ -43,12 +53,12 @@ one already running Ollama.
    WHISPER_SERVER_URL=http://192.168.0.153:8089
    ```
 
-   (Use the PC's LAN IP, the same one `OLLAMA_URL` uses.) Restart the bot.
+   (Use the PC's LAN IP.) Restart the bot.
 
 4. **Firewall.** Docker Desktop opened this port automatically here, so no
-   manual rule was needed — unlike Ollama's 11434. If the Pi can't reach it,
+   manual rule was needed. If the Pi can't reach it,
    add an inbound TCP rule for 8089 in **both** Windows Firewall and
-   Bitdefender, exactly as you did for Ollama.
+   Bitdefender, on the Private profile only.
 
    Check from the Pi with:
 
