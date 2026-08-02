@@ -1,142 +1,196 @@
-import { test, afterEach } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 import { callModel } from '../src/pipeline/model-client.js';
 
-const realFetch = global.fetch;
-afterEach(() => {
-  global.fetch = realFetch;
-});
-
-const cfg = {
-  summaryProvider: 'ollama',
-  ollamaUrl: 'http://pc.local:11434',
-  ollamaModel: 'qwen2.5:14b',
-  ollamaNumCtx: 9216,
-};
-
-// Build an NDJSON body the way Ollama streams it, optionally splitting the
-// bytes at awkward places to prove the line buffering survives it.
-function ndjsonResponse(objects, { splitEvery = null } = {}) {
-  const text = objects.map((o) => JSON.stringify(o)).join('\n') + '\n';
-  const bytes = new TextEncoder().encode(text);
-
-  const stream = new ReadableStream({
-    start(controller) {
-      const size = splitEvery ?? bytes.length;
-      for (let i = 0; i < bytes.length; i += size) {
-        controller.enqueue(bytes.slice(i, i + size));
-      }
-      controller.close();
-    },
-  });
-
-  return new Response(stream, { status: 200 });
+// These run against a REAL http server rather than a stubbed fetch, because
+// the transport is the thing under test: the bug being guarded here was
+// Node's fetch imposing a 300s headersTimeout that silently killed slow
+// Ollama requests, so a test that stubs fetch away would prove nothing.
+async function withServer(handler, run) {
+  const server = createServer(handler);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const cfg = {
+    summaryProvider: 'ollama',
+    ollamaUrl: `http://127.0.0.1:${server.address().port}`,
+    ollamaModel: 'qwen2.5:14b',
+    ollamaNumCtx: 9216,
+    ollamaKeepAlive: '30m',
+  };
+  try {
+    return await run(cfg);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
 }
 
-const chunks = [
+const ndjson = (objects) => objects.map((o) => JSON.stringify(o)).join('\n') + '\n';
+
+const CHUNKS = [
   { message: { content: 'The party ' }, done: false },
   { message: { content: 'entered the ' }, done: false },
   { message: { content: 'crypt.' }, done: false },
   { message: { content: '' }, done: true, prompt_eval_count: 500 },
 ];
 
-// The whole point of the change: a non-streaming request makes Ollama withhold
-// its headers until generation finishes, and undici kills that at 300s no
-// matter what timeout we pass in.
-test('the request asks Ollama to stream', async () => {
-  let sentBody = null;
-  global.fetch = async (_url, opts) => {
-    sentBody = JSON.parse(opts.body);
-    return ndjsonResponse(chunks);
-  };
+const readRequest = async (req) => {
+  let body = '';
+  for await (const c of req) body += c;
+  return JSON.parse(body);
+};
 
-  await callModel('sys', 'user', cfg, 60_000);
-  assert.equal(sentBody.stream, true, 'stream:false reintroduces the 5-minute undici ceiling');
-  assert.equal(sentBody.options.num_ctx, 9216, 'the context size must still be sent');
+test('the request streams, pins the context, and holds the model in VRAM', async () => {
+  let seen = null;
+  await withServer(
+    async (req, res) => {
+      seen = await readRequest(req);
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+      res.end(ndjson(CHUNKS));
+    },
+    async (cfg) => {
+      await callModel('sys', 'user', cfg, 60_000);
+      assert.equal(seen.stream, true);
+      assert.equal(seen.options.num_ctx, 9216);
+      // Without this the model can be evicted between slices of one job, and
+      // the next slice pays a cold load measured at 570s on this hardware.
+      assert.equal(seen.keep_alive, '30m');
+      assert.equal(seen.messages[0].content, 'sys');
+    }
+  );
 });
 
 test('streamed chunks are reassembled into the full message', async () => {
-  global.fetch = async () => ndjsonResponse(chunks);
-  assert.equal(await callModel('sys', 'user', cfg, 60_000), 'The party entered the crypt.');
+  await withServer(
+    (req, res) => {
+      res.writeHead(200);
+      res.end(ndjson(CHUNKS));
+    },
+    async (cfg) => assert.equal(await callModel('s', 'u', cfg, 60_000), 'The party entered the crypt.')
+  );
 });
 
-// A chunk boundary in the middle of a JSON line would throw a parse error if
-// the buffering were wrong, losing a summary that had already been generated.
-test('a response split mid-line still parses', async () => {
-  global.fetch = async () => ndjsonResponse(chunks, { splitEvery: 7 });
-  assert.equal(await callModel('sys', 'user', cfg, 60_000), 'The party entered the crypt.');
+// A chunk boundary mid-JSON would throw a parse error if buffering were wrong,
+// losing a summary that had already been generated.
+test('a response split at awkward byte boundaries still parses', async () => {
+  await withServer(
+    (req, res) => {
+      res.writeHead(200);
+      const bytes = Buffer.from(ndjson(CHUNKS));
+      for (let i = 0; i < bytes.length; i += 7) res.write(bytes.subarray(i, i + 7));
+      res.end();
+    },
+    async (cfg) => assert.equal(await callModel('s', 'u', cfg, 60_000), 'The party entered the crypt.')
+  );
 });
 
-test('a final line arriving without a trailing newline is not dropped', async () => {
-  global.fetch = async () => {
-    const text = chunks.map((o) => JSON.stringify(o)).join('\n'); // no trailing \n
-    return new Response(text, { status: 200 });
-  };
-  assert.equal(await callModel('sys', 'user', cfg, 60_000), 'The party entered the crypt.');
+test('a final line without a trailing newline is not dropped', async () => {
+  await withServer(
+    (req, res) => {
+      res.writeHead(200);
+      res.end(CHUNKS.map((o) => JSON.stringify(o)).join('\n'));
+    },
+    async (cfg) => assert.equal(await callModel('s', 'u', cfg, 60_000), 'The party entered the crypt.')
+  );
 });
 
-// Ollama reports mid-stream failures in the body, after a 200 has been sent.
+// THE regression this transport exists for. Node's fetch would abort this at
+// 300s no matter what timeout was configured; a cold Ollama model load was
+// measured at 570s, so every such request died.
+test('headers arriving long after the request are NOT cut off at a hidden deadline', async () => {
+  await withServer(
+    (req, res) => {
+      // Well past undici's 300s headersTimeout, scaled down so the test is
+      // quick: what matters is that no deadline other than ours exists.
+      setTimeout(() => {
+        res.writeHead(200);
+        res.end(ndjson(CHUNKS));
+      }, 300);
+    },
+    async (cfg) => {
+      const text = await callModel('s', 'u', cfg, 60_000);
+      assert.equal(text, 'The party entered the crypt.', 'a slow first byte must not fail the request');
+    }
+  );
+});
+
+test('our own timeout still applies and is reported as a timeout', async () => {
+  await withServer(
+    () => {
+      /* never respond at all */
+    },
+    async (cfg) => await assert.rejects(() => callModel('s', 'u', cfg, 300), /timed out after/)
+  );
+});
+
 test('an error inside the stream fails loudly rather than truncating', async () => {
-  global.fetch = async () =>
-    ndjsonResponse([
-      { message: { content: 'partial' }, done: false },
-      { error: 'model requires more system memory' },
-    ]);
-
-  await assert.rejects(
-    () => callModel('sys', 'user', cfg, 60_000),
-    /more system memory/,
-    'a half-generated summary must never be stored as if it were complete'
+  await withServer(
+    (req, res) => {
+      res.writeHead(200);
+      res.end(ndjson([{ message: { content: 'partial' }, done: false }, { error: 'model requires more system memory' }]));
+    },
+    async (cfg) =>
+      await assert.rejects(
+        () => callModel('s', 'u', cfg, 60_000),
+        /more system memory/,
+        'a half-generated summary must never be stored as if it were complete'
+      )
   );
 });
 
 test('an empty stream is an error, not an empty summary', async () => {
-  global.fetch = async () => ndjsonResponse([{ message: { content: '' }, done: true }]);
-  await assert.rejects(() => callModel('sys', 'user', cfg, 60_000), /no message content/);
+  await withServer(
+    (req, res) => {
+      res.writeHead(200);
+      res.end(ndjson([{ message: { content: '' }, done: true }]));
+    },
+    async (cfg) => await assert.rejects(() => callModel('s', 'u', cfg, 60_000), /no message content/)
+  );
 });
 
-test('an HTTP error is still reported with its status', async () => {
-  global.fetch = async () => new Response('model not found', { status: 404 });
-  await assert.rejects(() => callModel('sys', 'user', cfg, 60_000), /HTTP 404/);
+test('an HTTP error is reported with its status and body', async () => {
+  await withServer(
+    (req, res) => {
+      res.writeHead(404);
+      res.end('model not found');
+    },
+    async (cfg) => await assert.rejects(() => callModel('s', 'u', cfg, 60_000), /HTTP 404.*model not found/s)
+  );
 });
 
-// "fetch failed" on its own gave no way to tell a powered-off PC from a slow
-// one; this is what lands in the job's last_error column.
-test('the underlying cause is surfaced instead of a bare "fetch failed"', async () => {
-  global.fetch = async () => {
-    const err = new Error('fetch failed');
-    err.cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
-    throw err;
+// "fetch failed" gave no way to tell a powered-off PC from a slow one; this
+// string is what lands in the job's last_error column.
+test('a refused connection names the real cause', async () => {
+  const cfg = {
+    summaryProvider: 'ollama',
+    // Port 1 is reserved and nothing listens on it.
+    ollamaUrl: 'http://127.0.0.1:1',
+    ollamaModel: 'm',
+    ollamaNumCtx: 4096,
+    ollamaKeepAlive: '30m',
   };
-
-  await assert.rejects(() => callModel('sys', 'user', cfg, 60_000), /fetch failed \(ECONNREFUSED\)/);
-});
-
-test('our own timeout is reported as a timeout', async () => {
-  global.fetch = async (_url, opts) =>
-    new Promise((_resolve, reject) => {
-      opts.signal.addEventListener('abort', () => {
-        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-      });
-    });
-
-  await assert.rejects(() => callModel('sys', 'user', cfg, 50), /timed out after/);
+  await assert.rejects(() => callModel('s', 'u', cfg, 5_000), /ECONNREFUSED/);
 });
 
 test('truncation is still detected from the terminating chunk', async () => {
-  global.fetch = async () => ndjsonResponse(chunks);
-
-  const warnings = [];
-  const realWarn = console.warn;
-  console.warn = (msg) => warnings.push(String(msg));
-  try {
-    // prompt_eval_count is 500 in the final chunk, so claiming ~5000 tokens
-    // were sent means Ollama silently dropped most of the transcript.
-    await callModel('sys', 'user', cfg, 60_000, { estTokens: () => 2500 });
-  } finally {
-    console.warn = realWarn;
-  }
-
-  assert.match(warnings.join('\n'), /possible context truncation/);
+  await withServer(
+    (req, res) => {
+      res.writeHead(200);
+      res.end(ndjson(CHUNKS));
+    },
+    async (cfg) => {
+      const warnings = [];
+      const realWarn = console.warn;
+      console.warn = (m) => warnings.push(String(m));
+      try {
+        await callModel('s', 'u', cfg, 60_000, { estTokens: () => 2500 });
+      } finally {
+        console.warn = realWarn;
+      }
+      assert.match(warnings.join('\n'), /possible context truncation/);
+    }
+  );
 });

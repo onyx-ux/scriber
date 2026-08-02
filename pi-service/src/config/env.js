@@ -99,6 +99,15 @@ export const config = validate({
     return Number.isFinite(n) && n >= 2048 ? n : 9216;
   })(),
 
+  // How long Ollama holds the model in VRAM after a request. Its own default
+  // is 5 minutes, which is shorter than the gap between slices of a long
+  // transcript — so a multi-slice summary could pay the cold-load cost more
+  // than once, and on a card with a desktop competing for VRAM that load was
+  // measured at 570 SECONDS (vs 0.5s once warm). Keeping it resident for the
+  // duration of a job is the difference between minutes and hours.
+  // Set '0' to release it immediately, or '-1' to keep it loaded forever.
+  ollamaKeepAlive: optional('OLLAMA_KEEP_ALIVE', '30m'),
+
   // Which model writes the summary. 'ollama' keeps everything on your own
   // hardware; 'anthropic'/'gemini' send the finished TRANSCRIPT TEXT to a
   // cloud model for a better-quality recap. Audio and transcription stay

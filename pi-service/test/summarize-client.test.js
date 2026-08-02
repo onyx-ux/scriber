@@ -1,9 +1,33 @@
-import { test, beforeEach, afterEach } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 import { summarizeTranscript } from '../src/pipeline/summarize-client.js';
 
-const cfg = { ollamaUrl: 'http://stub:11434', ollamaModel: 'test', ollamaNumCtx: 8192 };
+// Ollama is reached over node:http (see model-client.js — Node's fetch
+// imposes an unraisable 300s header deadline that killed real summaries), so
+// these tests answer with a real local server rather than a stubbed fetch.
+let server;
+let responder = null;
+
+before(async () => {
+  server = createServer(async (req, res) => {
+    let body = '';
+    for await (const c of req) body += c;
+    responder(JSON.parse(body), res);
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  cfg.ollamaUrl = `http://127.0.0.1:${server.address().port}`;
+});
+
+after(async () => {
+  server.close();
+  await once(server, 'close');
+});
+
+const cfg = { ollamaUrl: null, ollamaModel: 'test', ollamaNumCtx: 8192, ollamaKeepAlive: '30m' };
 const meta = { channelName: 'Cipher', date: '2026-07-31', attendees: ['Alice', 'Bob'] };
 
 const GOOD = JSON.stringify({
@@ -25,25 +49,27 @@ const longTranscript = Array.from(
 ).join('\n');
 
 let calls;
-let realFetch;
 
-// Ollama is called with stream:true, so a reply is newline-delimited JSON
-// rather than one object — see the note on readOllamaStream in model-client.js.
-function ollamaStream(content) {
-  const body =
+// stream:true means a reply is newline-delimited JSON, not one object.
+function writeStream(res, content) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+  res.end(
     JSON.stringify({ message: { content }, done: false }) +
-    '\n' +
-    JSON.stringify({ message: { content: '' }, done: true, prompt_eval_count: 1e9 }) +
-    '\n';
-  return new Response(body, { status: 200 });
+      '\n' +
+      JSON.stringify({ message: { content: '' }, done: true, prompt_eval_count: 1e9 }) +
+      '\n'
+  );
+}
+
+function record(body) {
+  calls.push({ system: body.messages[0].content, user: body.messages[1].content, numCtx: body.options?.num_ctx });
 }
 
 function stub(reply) {
   calls = [];
-  global.fetch = async (_url, opts) => {
-    const body = JSON.parse(opts.body);
-    calls.push({ system: body.messages[0].content, user: body.messages[1].content, numCtx: body.options?.num_ctx });
-    return ollamaStream(reply(calls.length));
+  responder = (body, res) => {
+    record(body);
+    writeStream(res, reply(calls.length));
   };
 }
 
@@ -52,13 +78,6 @@ const kind = (c) =>
   : c.system.startsWith('You are extracting') ? 'MAP'
   : c.system.startsWith('You are assembling') ? 'REDUCE'
   : 'UNKNOWN';
-
-beforeEach(() => {
-  realFetch = global.fetch;
-});
-afterEach(() => {
-  global.fetch = realFetch;
-});
 
 test('a short transcript takes the single-pass path', async () => {
   stub(() => GOOD);
@@ -140,4 +159,57 @@ test('JSON wrapped in markdown fences is still parsed', async () => {
   stub(() => '```json\n' + GOOD + '\n```');
   const notes = await summarizeTranscript('[00:01] Alice: hi', meta, cfg);
   assert.equal(notes.tldr, 'Something happened.');
+});
+
+// --- losing most of a session must not read as "nothing happened" ---
+//
+// A real 3-hour session was posted as "casual chat / bot testing, not
+// gameplay" because six of its seven slices had failed and the reduce step
+// faithfully summarised the resulting emptiness. The transcript was intact
+// the whole time; only the summariser calls had failed.
+
+// Fails the first N calls the way a real outage does — the connection simply
+// drops — then succeeds, so slice failures can be simulated precisely.
+function stubWithFailures(failFirst, reply = () => GOOD) {
+  calls = [];
+  let n = 0;
+  responder = (body, res) => {
+    record(body);
+    n += 1;
+    if (n <= failFirst) return res.destroy();
+    writeStream(res, reply(calls.length));
+  };
+}
+
+test('losing most of the slices fails the job instead of summarising the gap', async () => {
+  // Each slice is attempted twice (one retry), so 6 failed slices = 12 calls.
+  stubWithFailures(12);
+
+  await assert.rejects(
+    () => summarizeTranscript(longTranscript, meta, cfg),
+    /slices failed to summarise/,
+    'a summary built from a minority of the session is a fabrication, not a summary'
+  );
+});
+
+test('a job that fails this way stays retryable rather than storing a wrong answer', async () => {
+  stubWithFailures(12);
+  const err = await summarizeTranscript(longTranscript, meta, cfg).catch((e) => e);
+  assert.ok(err instanceof Error, 'it throws, so queue-worker retries it later');
+  assert.match(err.message, /refusing/);
+});
+
+test('a small number of failed slices still summarises, but says so', async () => {
+  // Two calls = one slice failing after its retry.
+  stubWithFailures(2);
+
+  const notes = await summarizeTranscript(longTranscript, meta, cfg);
+  assert.match(notes.tldr, /Partial summary/, 'the reader must be able to tell it is incomplete');
+  assert.match(notes.tldr, /1 of \d+/, 'and how much is missing');
+});
+
+test('a clean run carries no partial-summary warning', async () => {
+  stub(() => GOOD);
+  const notes = await summarizeTranscript(longTranscript, meta, cfg);
+  assert.doesNotMatch(notes.tldr, /Partial summary/);
 });

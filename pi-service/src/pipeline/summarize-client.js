@@ -122,6 +122,11 @@ function normalizeNotes(parsed) {
 }
 
 
+// How much of a session may be missing before the summary stops being worth
+// producing at all. A third is already a lot to lose silently; beyond that the
+// remaining slices can easily imply the opposite of what happened.
+const MAX_FAILED_SLICE_RATIO = 1 / 3;
+
 // One slice failing to parse shouldn't throw away a whole 4-hour session, so
 // retry once and then fall back to an empty partial for that slice only.
 async function summarizeChunk(chunk, meta, index, total, cfg, timeoutMs) {
@@ -223,13 +228,30 @@ export async function summarizeTranscript(transcript, meta, cfg, { timeoutMs = 2
     if (ok) console.log(`[summarize] slice ${i + 1}/${chunks.length} done`);
   }
 
-  if (failed === chunks.length) {
-    throw new Error(`All ${chunks.length} transcript slices failed to summarise`);
-  }
-  if (failed > 0) {
-    console.warn(`[summarize] ${failed}/${chunks.length} slices failed — final summary may have gaps`);
+  // A summary built from a minority of the session is not a summary — it is a
+  // confident-sounding fabrication. A real 3-hour session once came back as
+  // "casual chat / bot testing, not gameplay" because six of its seven slices
+  // had failed and the reduce step faithfully summarised the resulting
+  // emptiness. Failing here instead sends the job back to the retry queue,
+  // which will run it again later (typically once the PC is free), and a late
+  // summary beats a wrong one.
+  if (failed > chunks.length * MAX_FAILED_SLICE_RATIO) {
+    throw new Error(
+      `${failed}/${chunks.length} transcript slices failed to summarise — refusing to build a summary from the rest`
+    );
   }
 
-  return reduceToFinal(partials, meta, cfg, timeoutMs);
+  const notes = await reduceToFinal(partials, meta, cfg, timeoutMs);
+
+  // Below the threshold the summary is worth keeping, but the reader still has
+  // to know it is incomplete — silence here is what made the bad summary
+  // indistinguishable from a good one.
+  if (failed > 0) {
+    console.warn(`[summarize] ${failed}/${chunks.length} slices failed — final summary may have gaps`);
+    const gap = `⚠️ Partial summary — ${failed} of ${chunks.length} sections of this session could not be processed.`;
+    notes.tldr = notes.tldr ? `${gap}\n\n${notes.tldr}` : gap;
+  }
+
+  return notes;
 }
 

@@ -1,3 +1,6 @@
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 
@@ -45,19 +48,58 @@ export function contextTokens(cfg) {
   return cfg.ollamaNumCtx;
 }
 
-// Ollama is asked to stream, and it matters more than it looks.
+// Ollama is called over node:http rather than fetch, deliberately.
 //
-// With stream:false, Ollama withholds the response headers until the entire
-// generation has finished. Node's fetch (undici) applies a 300-SECOND default
-// headersTimeout that no AbortController or config value can raise, so every
-// summary taking longer than five minutes died as an opaque "fetch failed" —
-// long before the 20-minute timeout this function is handed. On a contended
-// GPU, or whenever a request forces Ollama to reload the model at a larger
-// num_ctx, five minutes is easy to exceed.
+// Node's fetch (undici) enforces a 300-SECOND headersTimeout that no
+// AbortController, option or config value can raise. Ollama does not send
+// response headers until it produces its FIRST TOKEN — streaming does not
+// change this, it only means the first token arrives sooner than the last —
+// and the wait for that first token includes loading the model.
 //
-// Streaming makes the headers arrive immediately and every token chunk resets
-// undici's idle timer, so the AbortController below becomes the only deadline
-// that actually applies — which is what the caller expects.
+// Measured on this setup with qwen2.5:14b at num_ctx 9216:
+//   warm model, 3k-token prompt   0.5s to first byte
+//   cold model, same prompt       570s to first byte
+// A 12GB card with a desktop's worth of apps also holding VRAM has to thrash
+// to make room for a 10GB model, and that load is unavoidably on the critical
+// path of whichever request triggers it. Every one of those requests died at
+// undici's 300s mark, which is how a real 3-hour session came back summarised
+// as "casual chat / bot testing, not gameplay" — six of its seven slices had
+// been silently lost.
+//
+// node:http applies no timeout of its own, so the AbortController below is
+// the only deadline, which is what the caller already believes it is setting.
+function postJsonStream(url, payload, signal) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
+    const body = Buffer.from(JSON.stringify(payload));
+
+    const req = send(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': body.length },
+      },
+      resolve
+    );
+
+    // Deliberately no req.setTimeout(): a hidden deadline here is exactly the
+    // bug this function exists to avoid.
+    req.on('error', reject);
+
+    if (signal) {
+      const abort = () => req.destroy(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    }
+
+    req.end(body);
+  });
+}
+// res is a node:http IncomingMessage — an async iterable of Buffers.
 async function readOllamaStream(res, controller) {
   const decoder = new TextDecoder();
   let buffered = '';
@@ -79,7 +121,7 @@ async function readOllamaStream(res, controller) {
 
   let finished = false;
   try {
-    for await (const bytes of res.body) {
+    for await (const bytes of res) {
       buffered += decoder.decode(bytes, { stream: true });
 
       // Chunks split at arbitrary byte boundaries, so the last line of a chunk
@@ -100,18 +142,27 @@ async function readOllamaStream(res, controller) {
   return { content, final };
 }
 
+async function readBody(res) {
+  let text = '';
+  for await (const bytes of res) text += bytes.toString();
+  return text;
+}
+
 async function callOllama(systemPrompt, userMessage, cfg, timeoutMs, estTokens) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`${cfg.ollamaUrl.replace(/\/$/, '')}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
+    const res = await postJsonStream(
+      `${cfg.ollamaUrl.replace(/\/$/, '')}/api/chat`,
+      {
         model: cfg.ollamaModel,
         stream: true,
+        // Hold the model in VRAM across the whole job. A long transcript is
+        // summarised as several sequential slices, and letting the model be
+        // evicted between them would pay the (very expensive — see above)
+        // cold load again on the next one.
+        keep_alive: cfg.ollamaKeepAlive,
         // Without an explicit num_ctx, Ollama uses its own small default
         // (4096, and in practice it truncated a 28k-token transcript down to
         // ~2k) REGARDLESS of what the model actually supports — silently
@@ -121,11 +172,12 @@ async function callOllama(systemPrompt, userMessage, cfg, timeoutMs, estTokens) 
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },
         ],
-      }),
-    });
+      },
+      controller.signal
+    );
 
-    if (!res.ok) {
-      throw new Error(`Ollama returned HTTP ${res.status}: ${await res.text().catch(() => '')}`);
+    if (res.statusCode >= 400) {
+      throw new Error(`Ollama returned HTTP ${res.statusCode}: ${(await readBody(res)).slice(0, 200)}`);
     }
 
     const { content, final } = await readOllamaStream(res, controller);
