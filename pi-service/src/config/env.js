@@ -104,6 +104,36 @@ export const config = validate({
   geminiApiKey: optional('GEMINI_API_KEY', null),
   geminiModel: optional('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
 
+  // --- when transcription is allowed to use the PC's GPU ---
+  // Transcription is the only step that reaches into another machine, and
+  // that machine is also the gaming PC. Rather than firing the moment a
+  // session ends, a finished recording waits and runs either when the owner
+  // approves it or inside the automatic window below.
+  //
+  // The container runs in UTC, so this timezone is what makes "8am" mean 8am
+  // where the PC actually is. Getting it wrong doesn't error — it just runs
+  // at the wrong time of day — so it is stated explicitly rather than
+  // inferred from the host.
+  scheduleTimeZone: optional('SCHEDULE_TIMEZONE', 'Australia/Brisbane'),
+  transcribeRequireApproval: optional('TRANSCRIBE_REQUIRE_APPROVAL', 'true') !== 'false',
+  transcribeWindowStartHour: parseInt(optional('TRANSCRIBE_WINDOW_START_HOUR', '8'), 10),
+  transcribeWindowEndHour: parseInt(optional('TRANSCRIBE_WINDOW_END_HOUR', '16'), 10),
+  // Weekends are when the PC is most likely to be in use, so the automatic
+  // window is weekdays-only by default; a weekend session waits for Monday
+  // unless it is approved by hand.
+  transcribeWeekdaysOnly: optional('TRANSCRIBE_WEEKDAYS_ONLY', 'true') !== 'false',
+  // "Remind me later" pushes a job out by this long, and also rate-limits the
+  // nudges for a job nobody has actioned.
+  transcribeSnoozeHours: parseInt(optional('TRANSCRIBE_SNOOZE_HOURS', '24'), 10),
+  // How often the transcribe worker looks for due work.
+  transcribePollMs: parseInt(optional('TRANSCRIBE_POLL_MS', '60000'), 10),
+
+  // Once a session is transcribed its archive is moved here, for the PC to
+  // collect (scriber-pc-sync already pulls from the Pi over rclone and
+  // deletes what it takes). Keeps long campaigns off the Pi's card.
+  // Empty disables the offload and leaves the archive in the audio directory.
+  audioOffloadDir: optional('AUDIO_OFFLOAD_DIR', '/data/audio-outbox'),
+
   // --- summarise-on-approval ---
   // With this on, finishing a session does NOT immediately summarise; the
   // job waits in 'awaiting_approval' and the owner gets a DM with a button,

@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_error TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- When the owner was last nudged about this job, so an un-actioned
+  -- transcription becomes a daily reminder rather than a message per tick.
+  notified_at TEXT,
   -- Which summariser to use for THIS job, overriding SUMMARY_PROVIDER.
   -- NULL means "whatever the config says at the time it runs" — the normal
   -- case. Set when a specific provider is chosen per-session (an approval
@@ -88,6 +91,10 @@ function migrate(db) {
   if (!jobColumns.includes('provider')) {
     db.exec(`ALTER TABLE jobs ADD COLUMN provider TEXT`);
     console.log('[db] migrated: added jobs.provider');
+  }
+  if (!jobColumns.includes('notified_at')) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN notified_at TEXT`);
+    console.log('[db] migrated: added jobs.notified_at');
   }
 }
 
@@ -245,6 +252,72 @@ function wrap(db) {
       ).run(meetingId, provider);
     },
 
+    // --- transcription scheduling ---
+    //
+    // A transcribe job is deliberately allowed to sit in one of two live
+    // states, unlike a summarise job:
+    //   awaiting_approval — waiting for the owner OR for the automatic
+    //                       window; the worker may start it on its own.
+    //   pending           — the owner said go; run as soon as the PC answers.
+    // Snoozing keeps the status and pushes next_attempt_at forward, so
+    // "remind me tomorrow" suppresses the automatic window too.
+    enqueueTranscribeJob(meetingId, { requireApproval = true } = {}) {
+      const existing = db
+        .prepare(
+          `SELECT * FROM jobs WHERE meeting_id = ? AND type = 'transcribe'
+             AND status IN ('awaiting_approval', 'pending', 'running')`
+        )
+        .get(meetingId);
+      if (existing) return existing;
+
+      const info = db
+        .prepare(
+          `INSERT INTO jobs (meeting_id, type, status, next_attempt_at)
+           VALUES (?, 'transcribe', ?, datetime('now'))`
+        )
+        .run(meetingId, requireApproval ? 'awaiting_approval' : 'pending');
+      return db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(info.lastInsertRowid);
+    },
+
+    // Both live states are returned; the caller decides whether an
+    // awaiting_approval job may start, since that depends on the clock.
+    dueTranscribeJobs() {
+      return db
+        .prepare(
+          `SELECT * FROM jobs
+             WHERE type = 'transcribe' AND status IN ('awaiting_approval', 'pending')
+             ORDER BY id ASC`
+        )
+        .all();
+    },
+
+    getTranscribeJobForMeeting(meetingId) {
+      return db
+        .prepare(
+          `SELECT * FROM jobs WHERE meeting_id = ? AND type = 'transcribe'
+             ORDER BY id DESC LIMIT 1`
+        )
+        .get(meetingId);
+    },
+
+    approveTranscribeNow(jobId) {
+      db.prepare(
+        `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now')
+          WHERE id = ? AND type = 'transcribe'`
+      ).run(jobId);
+    },
+
+    snoozeTranscribeJob(jobId, untilIso) {
+      db.prepare(
+        `UPDATE jobs SET status = 'awaiting_approval', next_attempt_at = ?, notified_at = ?
+          WHERE id = ? AND type = 'transcribe'`
+      ).run(untilIso, new Date().toISOString(), jobId);
+    },
+
+    markJobNotified(jobId, whenIso = new Date().toISOString()) {
+      db.prepare(`UPDATE jobs SET notified_at = ? WHERE id = ?`).run(whenIso, jobId);
+    },
+
     nextDueJob() {
       // next_attempt_at is stored in two different formats depending on how
       // the row was written: enqueueSummarizeJob uses SQLite's own
@@ -256,9 +329,16 @@ function wrap(db) {
       // actual time, and a rescheduled job would never come due again.
       // Wrapping both sides in datetime() normalizes either format before
       // comparing.
+      // type = 'summarize' is load-bearing, not decoration: transcribe jobs
+      // live in this same table, and without the filter the summarise worker
+      // would claim one and try to summarise a meeting that has no transcript
+      // yet.
       return db
         .prepare(
-          `SELECT * FROM jobs WHERE status = 'pending' AND datetime(next_attempt_at) <= datetime('now') ORDER BY id ASC LIMIT 1`
+          `SELECT * FROM jobs
+             WHERE type = 'summarize' AND status = 'pending'
+               AND datetime(next_attempt_at) <= datetime('now')
+             ORDER BY id ASC LIMIT 1`
         )
         .get();
     },
@@ -406,11 +486,28 @@ function wrap(db) {
     // mid-summarise (restart, power loss, OOM), that job stays 'running'
     // forever and is never retried. Reset them at startup; the job itself is
     // idempotent, so re-running one that had actually finished is harmless.
+    //
+    // Transcribe jobs are reset to 'awaiting_approval' rather than 'pending',
+    // because for those two states 'pending' means "the owner said yes". A
+    // crash at 15:59 followed by a restart at 21:00 would otherwise come back
+    // pre-approved and take the GPU immediately, which is the exact thing the
+    // schedule exists to prevent — recovery.js queues interrupted meetings
+    // for the same reason. Clearing notified_at means the owner is told about
+    // it on the next tick instead of waiting out the old reminder window.
     resetStuckRunningJobs() {
-      const info = db
-        .prepare(`UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now') WHERE status = 'running'`)
+      const summarize = db
+        .prepare(
+          `UPDATE jobs SET status = 'pending', next_attempt_at = datetime('now')
+            WHERE status = 'running' AND type != 'transcribe'`
+        )
         .run();
-      return info.changes;
+      const transcribe = db
+        .prepare(
+          `UPDATE jobs SET status = 'awaiting_approval', next_attempt_at = datetime('now'), notified_at = NULL
+            WHERE status = 'running' AND type = 'transcribe'`
+        )
+        .run();
+      return summarize.changes + transcribe.changes;
     },
 
     // Meetings that finished transcription but have no live job — strandable
