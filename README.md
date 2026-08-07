@@ -207,8 +207,9 @@ whole stack on one machine for debugging.)*
 ## Commands
 
 - `/join` — start recording the voice channel you're in
-- `/leave` — stop recording, transcribe, queue the AI summary
+- `/leave` — stop recording and queue the session for transcription (see [Scheduling transcription](#scheduling-transcription) — it does not seize the GPU on the spot)
 - `/history [count]` — list recent sessions
+- `/transcribe meeting_id:<id> [when:<now|later|pi>]` — control when a queued session transcribes: `now` runs it on the PC as soon as the whisper server answers, `later` pushes it back a day, `pi` transcribes it locally on the Pi instead (slower, no GPU needed). Same three actions as the DM buttons
 - `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
@@ -229,18 +230,53 @@ whole stack on one machine for debugging.)*
 - `/npcs` / `/locations` — list everyone met / everywhere visited so far, straight from the campaign ledger, without opening Obsidian
 - `/archive` — get the browsable campaign archive (the same self-contained HTML page that syncs to Drive after every session) as a one-off attachment
 
+## Scheduling transcription
+
+Transcription is the only part of the pipeline that reaches into another
+machine's hardware — and that machine is usually also the one being played on.
+A three-hour session is only minutes of GPU time, but it also parks ~2GB of
+VRAM, which is enough to push a game into paging GPU memory over PCIe and tank
+the frame rate.
+
+So `/leave` records, queues, and stops. The session then transcribes when
+either of these is true:
+
+- **you approve it** — `TRANSCRIBE_REQUIRE_APPROVAL=true` (the default) DMs you
+  when a recording is ready, with **Transcribe now**, **Remind me later**
+  (default a day), and **Use the Pi instead**. "Now" runs whatever the hour, as
+  soon as the whisper server answers.
+- **it falls inside the automatic window** — `TRANSCRIBE_WINDOW_START_HOUR` to
+  `TRANSCRIBE_WINDOW_END_HOUR` (default 08:00–16:00) on weekdays, when the PC
+  is typically on but nobody is using it. Weekends are excluded by default
+  (`TRANSCRIBE_WEEKDAYS_ONLY`); you still get the DM, and the button still
+  works, so a Saturday session just waits for you rather than going quiet.
+
+Every hour and weekday is read in `SCHEDULE_TIMEZONE`, **not** the container's
+clock. The container runs in UTC, so leaving this unset would silently shift
+the whole window.
+
+**If the PC is off, the session waits — indefinitely, and on purpose.** It
+never quietly falls back to the Pi: that would spend hours of Pi CPU to produce
+a worse transcript, unasked. Use **Use the Pi instead** (or
+`/transcribe when:pi`) when you actually want that. A snooze suppresses the
+automatic window too, so "remind me tomorrow" genuinely means tomorrow. A
+session interrupted by a crash or restart goes back through the same gate
+rather than resuming pre-approved at whatever hour the bot came back up.
+
+`/pending` lists everything waiting, and `/pause` holds the whole queue.
+
 ## Summarise on approval (optional)
 
-By default, finishing a session hands the transcript straight to the
-summariser. If
-your PC doubles as your gaming machine that's a problem — a 14B model
-suddenly claiming ~10GB of VRAM mid-match is very noticeable.
+Summarising is separate, and no longer touches the GPU at all — it sends the
+finished transcript text to Gemini or Claude. The approval gate remains
+because it's a paid API call on somebody else's servers, and because you may
+want to look at a transcript before it leaves the network.
 
 Set `SUMMARY_REQUIRE_APPROVAL=true` (plus `OWNER_USER_ID`) and the pipeline
-stops one step short instead: the transcript is written, the job parks in
-`awaiting_approval`, and you get a DM with a **Summarise now** button. Nothing
-touches the GPU until you press it. `/pending` shows everything waiting and
-`/approve` releases it if you'd rather not use the button.
+stops one step short: the transcript is written, the job parks in
+`awaiting_approval`, and you get a DM with a **Summarise now** button.
+`/pending` shows everything waiting and `/approve` releases it if you'd rather
+not use the button.
 
 `/pause` goes further — it stops the queue entirely, so you can hold work back
 outright. Queued sessions stay exactly where they are and resume on `/resume`.
@@ -325,14 +361,35 @@ adds up fast over dozens of sessions). Only ever touches meetings that
 finished successfully; anything still pending, failed, or being retried is
 left alone regardless of age.
 
+## Offloading recordings to the PC
+
+The Pi's card is the tightest storage in the system, and a campaign's
+recordings outgrow it long before anything else does. Set `AUDIO_OFFLOAD_DIR`
+(default `/data/audio-outbox`) and a session's compressed recording is moved
+there once it has been transcribed and archived; the PC collects and deletes
+it on a schedule (see `pc-sync/`, every 6 hours by default).
+
+Two things make this safe. The move happens **only after the transcript is
+committed to the database**, so the Pi never hands over its only copy of
+something it hasn't transcribed yet. And the outbox is a handover point, not
+storage — `AUDIO_RETENTION_DAYS` still ages it out if the PC never collects,
+so a PC that's been off for a fortnight can't fill the card either.
+
+Leave `AUDIO_OFFLOAD_DIR` blank to keep recordings on the Pi.
+
 ## Crash/reboot recovery
 
 If the Pi loses power or the container restarts mid-session, nothing is
 lost: audio is written directly to disk as it's captured (never only held
 in memory), so on the next startup the bot scans for any meeting left in an
-unfinished state, reconstructs the utterance list straight from the `.wav`
-files already on disk, and runs it through the normal transcribe → queue →
-summarise pipeline automatically — no manual intervention needed.
+unfinished state and reconstructs the utterance list straight from the `.wav`
+files already on disk.
+
+Recovered sessions are then **queued**, not transcribed on the spot — a
+restart at 9pm would otherwise seize the GPU the moment the bot came back,
+which is exactly what [the schedule](#scheduling-transcription) exists to
+prevent. The audio is already safe on disk; it transcribes when it's allowed
+to, and you're DM'd about it as normal.
 
 ## Ideas not built yet (worth considering later)
 

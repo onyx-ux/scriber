@@ -13,24 +13,17 @@ import {
   configuredProviders,
 } from '../pipeline/model-client.js';
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
-import { finishSession } from '../pipeline/finish-session.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
-import { listTranscriptions, describeTranscription, formatDuration, getTranscription } from '../pipeline/progress.js';
-import { startLiveProgress } from '../delivery/live-progress.js';
+import { listTranscriptions, describeTranscription, formatDuration } from '../pipeline/progress.js';
 import {
-  choiceAvailable,
-  buildTranscribeChoiceRow,
-  parseTranscribeChoice,
-  defaultTarget,
-  applyTranscribeTarget,
-  transcribeChoicePrompt,
-  transcribeChosenNote,
-} from '../pipeline/transcribe-target.js';
-
-// How long the "PC or Pi?" prompt waits before taking the default. Long
-// enough to notice after a session wraps up, short enough that a transcript
-// isn't held hostage by nobody looking at Discord.
-const TRANSCRIBE_CHOICE_MS = 120_000;
+  parseTranscribeAction,
+  snoozeUntil,
+  withinAutoWindow,
+  ACTION_LATER,
+  ACTION_PI,
+  TRANSCRIBE_PREFIX,
+} from '../pipeline/transcribe-schedule.js';
+import { notifyTranscribeReady } from '../delivery/transcribe-notify.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -114,6 +107,21 @@ export const commandDefs = [
         .addChoices(
           { name: 'Gemini', value: 'gemini' },
           { name: 'Claude', value: 'anthropic' }
+        )
+    ),
+  new SlashCommandBuilder()
+    .setName('transcribe')
+    .setDescription('Control when a recorded session may use the PC to transcribe')
+    .addIntegerOption((o) => o.setName('meeting_id').setDescription('Meeting ID').setRequired(true))
+    .addStringOption((o) =>
+      o
+        .setName('when')
+        .setDescription('Default: start now')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Now (needs the PC)', value: 'now' },
+          { name: 'Remind me later', value: 'later' },
+          { name: 'On the Pi instead (slow, no GPU)', value: 'pi' }
         )
     ),
   new SlashCommandBuilder()
@@ -242,6 +250,7 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'export') return await handleExport(interaction, db, cfg);
       if (interaction.commandName === 'setcharacter') return await handleSetCharacter(interaction, db);
       if (interaction.commandName === 'status') return await handleStatus(interaction, db, cfg);
+      if (interaction.commandName === 'transcribe') return await handleTranscribe(interaction, db, cfg);
       if (interaction.commandName === 'recap') return await handleRecap(interaction, db);
       if (interaction.commandName === 'funny') return await handleFunny(interaction, db);
       if (interaction.commandName === 'search') return await handleSearch(interaction, db);
@@ -340,45 +349,6 @@ async function handleJoin(interaction, db, cfg) {
   }
 }
 
-// Asks where this session should be transcribed and returns the cfg to run
-// under. Never throws: a session that has already been recorded must always
-// end up transcribed somewhere, so every failure path falls through to the
-// sensible default rather than leaving the audio stranded.
-async function resolveTranscribeChoice(interaction, meetingId, cfg) {
-  if (!choiceAvailable(cfg)) return { cfg, serverReachable: null, target: null };
-
-  const serverReachable = await isWhisperServerReachable(cfg);
-  const row = buildTranscribeChoiceRow(meetingId, { serverReachable });
-
-  let prompt;
-  try {
-    prompt = await interaction.followUp({
-      content: transcribeChoicePrompt(cfg, { serverReachable }),
-      components: [row],
-    });
-  } catch {
-    // Couldn't even ask (missing permissions, deleted channel) — just get on
-    // with it rather than losing the session over a UI problem.
-    const target = defaultTarget({ serverReachable });
-    return { cfg: applyTranscribeTarget(cfg, target), serverReachable, target };
-  }
-
-  let target;
-  try {
-    const click = await prompt.awaitMessageComponent({ time: TRANSCRIBE_CHOICE_MS });
-    target = parseTranscribeChoice(click.customId)?.target ?? defaultTarget({ serverReachable });
-    await click.update({ content: transcribeChosenNote(cfg, target), components: [] }).catch(() => {});
-  } catch {
-    // Nobody pressed anything before the timeout.
-    target = defaultTarget({ serverReachable });
-    await prompt
-      .edit({ content: `${transcribeChosenNote(cfg, target)} _(no answer — went with the default)_`, components: [] })
-      .catch(() => {});
-  }
-
-  return { cfg: applyTranscribeTarget(cfg, target), serverReachable, target };
-}
-
 async function handleLeave(interaction, db, cfg) {
   const session = activeSessions.get(interaction.guildId);
   if (!session) {
@@ -390,85 +360,81 @@ async function handleLeave(interaction, db, cfg) {
   session.handle.disconnect();
   db.endMeeting(session.meetingId, new Date().toISOString());
 
-  // Ask where to transcribe before starting, because the answer changes how
-  // long this takes by two orders of magnitude and there is no way to undo it
-  // once whisper is grinding. Falls through immediately when there's nothing
-  // to ask (no GPU server configured).
-  const { cfg: runCfg, serverReachable, target } = await resolveTranscribeChoice(interaction, session.meetingId, cfg);
-
-  // Transcribing is the long silence in this pipeline — minutes on the GPU,
-  // potentially hours on the Pi — so keep a live count up rather than saying
-  // nothing until it finishes.
-  const live = startLiveProgress({
-    channel: interaction.channel,
-    initial: `🎧 Transcribing session #${session.meetingId} — ${session.capturedUtterances.length} clips…`,
-    render: () => {
-      const entry = getTranscription(session.meetingId);
-      return entry ? `🎧 Session #${session.meetingId}: ${describeTranscription(entry)}` : null;
-    },
+  // Transcription is NOT started here any more. It needs the PC's GPU, and a
+  // session usually ends in the evening — precisely when someone is most
+  // likely to be using that PC. So the recording is queued, the owner is
+  // asked, and transcribe-worker.js runs it when approved or inside the
+  // automatic window. See pipeline/transcribe-schedule.js.
+  db.setMeetingStatus(session.meetingId, 'awaiting_transcription');
+  const job = db.enqueueTranscribeJob(session.meetingId, {
+    requireApproval: cfg.transcribeRequireApproval,
   });
 
-  let result;
-  try {
-    result = await finishSession(db, session.meetingId, session.capturedUtterances, session.audioDir, runCfg, {
-      serverReachable,
-      // Nothing to pin: transcribing on the Pi no longer implies a different
-      // summariser, now that summarising doesn't depend on the PC at all.
-      pinProvider: null,
-    });
-  } finally {
-    // The transcript (or the failure) is posted below, so this line has served
-    // its purpose either way.
-    await live.remove();
-  }
+  const clipCount = session.capturedUtterances.length;
+  const serverReachable = await isWhisperServerReachable(cfg);
+  const meeting = db.getMeeting(session.meetingId);
 
-  if (!result.ok) {
-    return interaction.followUp(pick(LEAVE_NOTHING_USABLE, { failCount: result.failures.length }));
-  }
-
-  // Post the raw transcript right away rather than waiting on the AI
-  // summary — that step can be delayed indefinitely if the PC is off, but
-  // the transcript itself is already fully available at this point.
-  const utterances = db.listUtterances(session.meetingId);
-  const transcriptText = buildTranscriptText(utterances);
-  const attachment = new AttachmentBuilder(Buffer.from(transcriptText, 'utf8'), {
-    name: `meeting-${session.meetingId}-transcript.txt`,
+  await interaction.followUp({
+    content:
+      `📼 Recorded **${clipCount}** clips for session #${session.meetingId}.\n` +
+      (cfg.transcribeRequireApproval
+        ? `Transcription is queued — I've DMed you to ask when it can use the PC. Nothing touches the GPU until then.`
+        : `Transcription is queued and will start when the PC is available.`),
   });
 
-  // When approval is required the job is parked, so don't claim the summary
-  // is running (or blame the PC being off) — neither is true.
-  const awaitingApproval = result.job?.status === 'awaiting_approval';
-
-  let content;
-  if (awaitingApproval) {
-    content = pick(LEAVE_AWAITING_APPROVAL, {
-      count: result.utteranceCount,
-      meetingId: session.meetingId,
-    });
-  } else {
-    // runCfg, not cfg: if the Pi was chosen the summariser has been switched,
-    // and reporting the old one would name a model that isn't going to run.
-    const reachable = await isSummariserReachable(runCfg);
-    content = reachable
-      ? pick(LEAVE_SUMMARIZING_NOW, { count: result.utteranceCount })
-      : pick(LEAVE_SUMMARY_QUEUED, {
-          count: result.utteranceCount,
-          meetingId: session.meetingId,
-          label: summariserLabel(runCfg),
-        });
-  }
-
-  await interaction.followUp({ content, files: [attachment] });
-
-  if (awaitingApproval) {
-    await notifyApprovalNeeded({
+  if (cfg.transcribeRequireApproval) {
+    await notifyTranscribeReady({
       discordClient: interaction.client,
-      cfg: runCfg,
-      meeting: db.getMeeting(session.meetingId),
-      jobId: result.job.id,
-      utteranceCount: result.utteranceCount,
+      cfg,
+      meeting,
+      jobId: job.id,
+      utteranceCount: clipCount,
+      serverReachable,
     });
   }
+}
+
+// Shared by the DM buttons and /transcribe, so both routes behave identically.
+async function applyTranscribeAction(db, cfg, jobId, action) {
+  const job = db.raw.prepare(`SELECT * FROM jobs WHERE id = ? AND type = 'transcribe'`).get(jobId);
+  if (!job) return { ok: false, message: '⚠️ That transcription job no longer exists.' };
+  if (job.status === 'done') return { ok: false, message: '✅ That session is already transcribed.' };
+  if (job.status === 'running') return { ok: false, message: '⏳ That session is being transcribed right now.' };
+
+  if (action === ACTION_LATER) {
+    const until = snoozeUntil(new Date(), cfg);
+    db.snoozeTranscribeJob(job.id, until.toISOString());
+    return {
+      ok: true,
+      message: `⏰ Put off for ${cfg.transcribeSnoozeHours}h — I'll ask again after <t:${Math.floor(until.getTime() / 1000)}:f>. The automatic window is suppressed until then, so nothing will touch the PC.`,
+    };
+  }
+
+  if (action === ACTION_PI) {
+    // Explicitly asked for the slow path, so bypass the whole GPU schedule.
+    db.approveTranscribeNow(job.id);
+    db.setSetting(`transcribe_target_${job.id}`, 'pi');
+    return { ok: true, message: '🐌 Queued on the Pi instead — no GPU needed, but expect hours rather than minutes.' };
+  }
+
+  db.approveTranscribeNow(job.id);
+  return { ok: true, message: "▶️ Approved — it'll start within a minute, as soon as the PC answers." };
+}
+
+async function handleTranscribe(interaction, db, cfg) {
+  const meetingId = interaction.options.getInteger('meeting_id');
+  const when = interaction.options.getString('when') || 'now';
+
+  const job = db.getTranscribeJobForMeeting(meetingId);
+  if (!job) {
+    return interaction.reply({
+      content: `⚠️ No transcription job for meeting #${meetingId}. It may already be transcribed — check \`/status\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const { message } = await applyTranscribeAction(db, cfg, job.id, when);
+  await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
 }
 
 async function handleHistory(interaction, db) {
@@ -832,6 +798,18 @@ async function handleAsk(interaction, db, cfg) {
 
 async function handleApprovalButton(interaction, db, cfg) {
   const { customId } = interaction;
+
+  // Scheduling buttons from the "ready to transcribe" DM.
+  if (customId.startsWith(TRANSCRIBE_PREFIX)) {
+    const parsed = parseTranscribeAction(customId);
+    if (!parsed) {
+      return interaction.update({ content: '⚠️ Unrecognised button.', components: [] });
+    }
+    const { ok, message } = await applyTranscribeAction(db, cfg, parsed.jobId, parsed.action);
+    // Keep the buttons when nothing changed (e.g. already running), drop them
+    // once a choice has been applied so it can't be double-clicked.
+    return interaction.update({ content: message, components: ok ? [] : interaction.message.components });
+  }
 
   if (customId.startsWith(APPROVE_PREFIX)) {
     // "<jobId>" (use the configured default) or "<jobId>:<provider>".

@@ -1,8 +1,8 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { finishSession } from './finish-session.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
-import { notifyApprovalNeeded } from '../delivery/approval-notify.js';
+import { notifyTranscribeReady } from '../delivery/transcribe-notify.js';
+import { isWhisperServerReachable } from '../stt/whisper.js';
 import { MIN_UTTERANCE_MS } from '../voice/capture.js';
 import { wavDurationMs } from './wav-merge.js';
 
@@ -72,21 +72,25 @@ export async function recoverInterruptedMeetings(db, cfg, discordClient) {
         }
       }
 
-      console.log(`[recovery] meeting ${meeting.id}: recovered ${captured.length} audio file(s), transcribing...`);
-      const result = await finishSession(db, meeting.id, captured, meeting.audio_dir, cfg);
+      // Queue it rather than transcribing here. Recovery runs at startup, and
+      // a restart at 9pm would otherwise seize the PC's GPU the moment the
+      // bot came back — exactly the behaviour the schedule exists to prevent.
+      // The audio is already safe on disk; the worker will pick this up when
+      // it is allowed to.
+      db.setMeetingStatus(meeting.id, 'awaiting_transcription');
+      const job = db.enqueueTranscribeJob(meeting.id, { requireApproval: cfg.transcribeRequireApproval });
       console.log(
-        `[recovery] meeting ${meeting.id}: ${result.ok ? `recovered ${result.utteranceCount} utterances` : 'recovery transcription produced nothing usable'}`
+        `[recovery] meeting ${meeting.id}: recovered ${captured.length} audio file(s), queued for transcription (job ${job.id})`
       );
 
-      // A recovered session still needs approval if that's configured —
-      // otherwise a restart would sneak a summary onto the GPU unannounced.
-      if (result.ok && result.job?.status === 'awaiting_approval' && discordClient) {
-        await notifyApprovalNeeded({
+      if (cfg.transcribeRequireApproval && discordClient) {
+        await notifyTranscribeReady({
           discordClient,
           cfg,
           meeting: db.getMeeting(meeting.id),
-          jobId: result.job.id,
-          utteranceCount: result.utteranceCount,
+          jobId: job.id,
+          utteranceCount: captured.length,
+          serverReachable: await isWhisperServerReachable(cfg),
         });
       }
     } catch (err) {
@@ -96,7 +100,12 @@ export async function recoverInterruptedMeetings(db, cfg, discordClient) {
   }
 }
 
-async function rebuildCapturedUtterances(db, meeting, cfg, discordClient) {
+// Exported because deferred transcription needs exactly this: a session can
+// now sit for days between being recorded and being transcribed, so by the
+// time it runs the in-memory utterance list is long gone and the audio on
+// disk is the only source of truth — the same situation recovery handles
+// after a crash.
+export async function rebuildCapturedUtterances(db, meeting, cfg, discordClient) {
   const captured = [];
   let userDirs;
   try {

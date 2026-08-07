@@ -3,9 +3,20 @@ import { config } from './config/env.js';
 import { openDb } from './store/db.js';
 import { commandDefs, registerCommandHandlers } from './commands/index.js';
 import { startQueueWorker } from './pipeline/queue-worker.js';
+import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
 import { recoverInterruptedMeetings } from './pipeline/recovery.js';
 import { startRetentionTimer } from './maintenance/retention.js';
 import { join } from 'node:path';
+
+// The bot runs as root inside the container, but the files it writes are
+// collected over SFTP by an ordinary user on the host. Deleting a file needs
+// write permission on its DIRECTORY, so with the default 022 umask every
+// directory came out as root:root 755 and the collector could copy files but
+// never remove them — `rclone move` silently degraded to `rclone copy` and
+// nothing was ever freed from the Pi. 002 makes new files and directories
+// group-writable, which (with the setgid bit on the export roots) lets the
+// collector clean up after itself.
+process.umask(0o002);
 
 async function main() {
   const db = openDb(join(config.dataDir, 'db.sqlite'));
@@ -41,6 +52,12 @@ async function main() {
 
     startQueueWorker(db, client, config);
     console.log('Queue worker started — will retry summarization when the PC is reachable.');
+
+    startTranscribeWorker(db, client, config);
+    console.log(
+      `Transcribe worker started — auto window ${config.transcribeWindowStartHour}:00-${config.transcribeWindowEndHour}:00 ` +
+        `${config.transcribeWeekdaysOnly ? 'weekdays' : 'daily'} (${config.scheduleTimeZone}).`
+    );
 
     startRetentionTimer(db, config);
     console.log(`Retention timer started (${config.audioRetentionDays || 'disabled'} day(s)).`);
