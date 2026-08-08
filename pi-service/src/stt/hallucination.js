@@ -41,6 +41,40 @@ export const LANG_CONFIDENCE_FLOOR = 0.95;
 // median of 2.88s, so this only catches the very shortest.
 export const SHORT_CLIP_SECONDS = 1.0;
 
+// Loudness of a 16kHz mono s16le WAV — the format capture always writes.
+// Used to decide whether a clip is worth prompting for; see whisper.js.
+export function rmsOfWav(buffer) {
+  const samples = Math.floor((buffer.length - 44) / 2);
+  if (samples <= 0) return 0;
+
+  let sumSq = 0;
+  for (let i = 0; i < samples; i++) {
+    const v = buffer.readInt16LE(44 + i * 2) / 32768;
+    sumSq += v * v;
+  }
+  return Math.sqrt(sumSq / samples);
+}
+
+// Sits between the two clusters measured on a real session: clips whisper
+// hallucinates on averaged 0.022 RMS, real speech 0.065.
+export const PROMPT_MIN_RMS = 0.03;
+
+// Prompting is only worth doing where it can help. Measured against the live
+// server on 60 real clips:
+//
+//   loud clips   121ms bare -> 118ms prompted   (free)
+//   quiet clips   96ms bare -> 541ms prompted   (5.7x)
+//
+// The whole cost lands on near-silence, because without a prompt whisper
+// stops early on a clip with nothing in it, and with one it generates the
+// prompt back instead — which is also exactly where the prompt echoes come
+// from. Skipping the prompt on quiet clips therefore keeps all of the benefit
+// (real speech still gets the campaign vocabulary) while removing almost all
+// of the cost AND most of the echoes.
+export function worthPrompting(buffer, minRms = PROMPT_MIN_RMS) {
+  return rmsOfWav(buffer) >= minRms;
+}
+
 export function isFillerPhrase(text) {
   const t = String(text || '').trim();
   return FILLER.some((re) => re.test(t));

@@ -55,6 +55,11 @@ export const config = validate({
   // its language confidence says the clip was not really speech. Measured at
   // 17% of a real session's transcript before this existed.
   whisperDropFiller: optional('WHISPER_DROP_FILLER', 'true') !== 'false',
+  // Loudness below which a clip is transcribed WITHOUT the vocabulary prompt.
+  // Measured: prompting a near-silent clip costs 5.7x the inference time (and
+  // is where prompt echoes come from), while on real speech it is free. 0 sends
+  // the prompt on everything, which is ~4x slower overall for no extra benefit.
+  whisperPromptMinRms: parseFloat(optional('WHISPER_PROMPT_MIN_RMS', '0.03')),
 
   // Where transcription actually runs. Unset = on the Pi's CPU, which does
   // neural inference at roughly 10x slower than realtime (a 30-minute session

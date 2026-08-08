@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 import { readFile, unlink } from 'node:fs/promises';
 import { basename } from 'node:path';
 
+import { worthPrompting } from './hallucination.js';
+
 const execFileAsync = promisify(execFile);
 
 // Transcription runs in one of two places:
@@ -94,8 +96,14 @@ async function transcribeOnServer(wavPath, cfg, wordLevel, prompt) {
   const timer = setTimeout(() => controller.abort(), cfg.whisperServerTimeoutMs);
 
   try {
+    const audio = await readFile(wavPath);
+    // A prompt on a near-silent clip costs ~5.7x the inference time and is
+    // where the prompt echoes come from; on real speech it is free. So it is
+    // only sent for clips loud enough to be speech. See stt/hallucination.js.
+    const promptThisClip = prompt && worthPrompting(audio, cfg.whisperPromptMinRms);
+
     const form = new FormData();
-    form.append('file', new Blob([await readFile(wavPath)]), basename(wavPath));
+    form.append('file', new Blob([audio]), basename(wavPath));
     // verbose_json is the only format that returns per-segment timings, which
     // /import needs to split one long recording into utterances.
     form.append('response_format', 'verbose_json');
@@ -108,7 +116,7 @@ async function transcribeOnServer(wavPath, cfg, wordLevel, prompt) {
     form.append('language', cfg.whisperLanguage || 'en');
     // Campaign vocabulary — see stt/vocabulary.js. whisper.cpp's server names
     // this field 'prompt'; OpenAI's API calls the same thing initial_prompt.
-    if (prompt) form.append('prompt', prompt);
+    if (promptThisClip) form.append('prompt', prompt);
     if (wordLevel) {
       form.append('max_len', '1');
       form.append('split_on_word', 'true');

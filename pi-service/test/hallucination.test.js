@@ -66,3 +66,40 @@ test('with no evidence at all the clip is kept', () => {
 test('empty text is not a hallucination', () => {
   assert.equal(looksLikeHallucination('', NOISE), false);
 });
+
+// --- deciding which clips are worth prompting ---
+
+import { rmsOfWav, worthPrompting, PROMPT_MIN_RMS } from '../src/stt/hallucination.js';
+
+// 16kHz mono s16le, the only format capture writes.
+function wav(amplitude, seconds = 1) {
+  const samples = 16000 * seconds;
+  const buf = Buffer.alloc(44 + samples * 2);
+  for (let i = 0; i < samples; i++) {
+    buf.writeInt16LE(Math.round(Math.sin(i / 8) * amplitude * 32767), 44 + i * 2);
+  }
+  return buf;
+}
+
+test('loudness is measured from the samples, not the header', () => {
+  assert.ok(rmsOfWav(wav(0)) < 0.001, 'silence');
+  assert.ok(rmsOfWav(wav(0.5)) > 0.3, 'a loud tone');
+  assert.equal(rmsOfWav(Buffer.alloc(44)), 0, 'a header with no samples');
+  assert.equal(rmsOfWav(Buffer.alloc(0)), 0, 'an empty buffer');
+});
+
+// Prompting near-silence costs 5.7x the inference time and produces the echoes.
+test('quiet clips are not worth prompting', () => {
+  assert.equal(worthPrompting(wav(0.01)), false);
+  assert.equal(worthPrompting(wav(0)), false);
+});
+
+test('clips loud enough to be speech are prompted', () => {
+  assert.equal(worthPrompting(wav(0.2)), true);
+});
+
+test('the threshold is configurable, and 0 prompts everything', () => {
+  assert.equal(worthPrompting(wav(0.01), 0), true, 'opting back in to prompting everything');
+  assert.equal(worthPrompting(wav(0.5), 0.9), false, 'an absurd threshold prompts nothing');
+  assert.ok(PROMPT_MIN_RMS > 0 && PROMPT_MIN_RMS < 0.065, 'sits between the measured noise and speech clusters');
+});
