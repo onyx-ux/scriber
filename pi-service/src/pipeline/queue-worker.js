@@ -151,7 +151,8 @@ export async function tick(db, discordClient, cfg) {
       ),
     ];
 
-    const mdPath = await exportMarkdown({ meeting, utterances, notes: displayNotes, cfg, entities });
+    const campaignName = db.getCampaignName(meeting.guild_id);
+    const mdPath = await exportMarkdown({ meeting, utterances, notes: displayNotes, cfg, entities, campaignName });
 
     // The notes themselves are about to appear, so the status line has done
     // its job — remove it rather than leaving "summarising…" above the result.

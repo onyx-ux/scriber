@@ -14,6 +14,7 @@ import {
 } from '../pipeline/model-client.js';
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
+import { campaignFolder } from '../export/naming.js';
 import { listTranscriptions, describeTranscription, formatDuration } from '../pipeline/progress.js';
 import {
   parseTranscribeAction,
@@ -206,6 +207,25 @@ export const commandDefs = [
     .addStringOption((o) =>
       o.setName('wrong').setDescription('The mangled text to stop correcting (must match /correct exactly)').setRequired(true)
     ),
+  // Usable in DMs on purpose: naming the campaign is the owner's housekeeping,
+  // not something the table needs to watch happen. A DM has no guild to infer
+  // the campaign from, so `campaign` names one explicitly (autocompleted from
+  // the campaigns the bot has actually recorded); in a server it defaults to
+  // that server.
+  new SlashCommandBuilder()
+    .setName('campaign')
+    .setDescription('Name this campaign — used for the Obsidian folder its session notes are filed in')
+    .setDMPermission(true)
+    .addStringOption((o) =>
+      o.setName('name').setDescription('e.g. "Sunless Citadel" (leave blank to see the current name)').setRequired(false)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('campaign')
+        .setDescription('Which campaign (required in a DM, where there is no server to assume)')
+        .setRequired(false)
+        .setAutocomplete(true)
+    ),
   new SlashCommandBuilder()
     .setName('whoami')
     .setDescription('Show what name you currently appear as in transcripts and notes'),
@@ -223,6 +243,86 @@ export const commandDefs = [
     .setDescription('Get the browsable campaign archive (a single HTML file) right now'),
 ].map((c) => c.toJSON());
 
+// Shows the campaigns the bot has actually recorded, labelled by their set
+// name (or the channel they were recorded in), so a DM can pick one without
+// anyone having to know a guild id.
+async function handleCampaignAutocomplete(interaction, db) {
+  if (interaction.commandName !== 'campaign') return interaction.respond([]);
+
+  const typed = String(interaction.options.getFocused() || '').toLowerCase();
+  const choices = db
+    .listCampaigns()
+    .map((c) => ({
+      name: `${c.campaign_name || c.channel_name} — ${c.sessions} session${c.sessions === 1 ? '' : 's'}`,
+      value: c.guild_id,
+      searchable: `${c.campaign_name || ''} ${c.channel_name}`.toLowerCase(),
+    }))
+    .filter((c) => !typed || c.searchable.includes(typed))
+    // Discord rejects the whole response if it carries more than 25.
+    .slice(0, 25)
+    .map(({ name, value }) => ({ name: name.slice(0, 100), value }));
+
+  return interaction.respond(choices);
+}
+
+async function handleCampaign(interaction, db, cfg) {
+  const name = interaction.options.getString('name');
+  const chosenGuild = interaction.options.getString('campaign');
+  const guildId = chosenGuild || interaction.guildId;
+
+  // In a DM this is the owner doing housekeeping. Anywhere else, a stranger
+  // renaming the folder everyone's notes are filed in would be a nuisance.
+  if (!interaction.guildId && cfg.ownerUserId && interaction.user.id !== cfg.ownerUserId) {
+    return interaction.reply({
+      content: 'Only the bot owner can rename a campaign from a DM.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  if (!guildId) {
+    const campaigns = db.listCampaigns();
+    if (campaigns.length === 0) {
+      return interaction.reply({
+        content: "I haven't recorded any sessions yet, so there's no campaign to name.",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    const list = campaigns
+      .map((c) => `• **${c.campaign_name || c.channel_name}** — ${c.sessions} session(s)`)
+      .join('\n');
+    return interaction.reply({
+      content:
+        `You're in a DM, so I don't know which campaign you mean. Re-run with the \`campaign\` option:\n\n${list}`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const current = db.getCampaignName(guildId);
+  const fallback = db.listCampaigns().find((c) => c.guild_id === guildId)?.channel_name;
+
+  if (!name) {
+    return interaction.reply({
+      content: current
+        ? `This campaign is called **${current}** — session notes are filed in \`${campaignFolder({ channel_name: fallback }, current)}/\`.`
+        : `This campaign has no name set, so notes are filed under \`${campaignFolder({ channel_name: fallback })}/\` (from the channel name). Set one with \`/campaign name:...\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const folder = campaignFolder({ channel_name: fallback }, name);
+  db.setCampaignName(guildId, name.trim());
+
+  return interaction.reply({
+    content:
+      `📖 Campaign set to **${name.trim()}**.\n` +
+      `New session notes will be filed in \`${folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and so on.` +
+      (current && current !== name.trim()
+        ? `\n\n_Previously **${current}** — notes already exported stay where they are._`
+        : ''),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 export function registerCommandHandlers(client, db, cfg) {
   client.on('interactionCreate', async (interaction) => {
     // Approval buttons arrive as component interactions, not commands.
@@ -231,6 +331,17 @@ export function registerCommandHandlers(client, db, cfg) {
         return await handleApprovalButton(interaction, db, cfg);
       } catch (err) {
         console.error('[button] error:', err);
+        return;
+      }
+    }
+
+    // /campaign offers the recorded campaigns by name, which is the only way
+    // to pick one in a DM — there is no guild there to infer it from.
+    if (interaction.isAutocomplete()) {
+      try {
+        return await handleCampaignAutocomplete(interaction, db);
+      } catch (err) {
+        console.error('[autocomplete] error:', err.message);
         return;
       }
     }
@@ -263,6 +374,7 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'correct') return await handleCorrect(interaction, db);
       if (interaction.commandName === 'corrections') return await handleCorrections(interaction, db);
       if (interaction.commandName === 'uncorrect') return await handleUncorrect(interaction, db);
+      if (interaction.commandName === 'campaign') return await handleCampaign(interaction, db, cfg);
       if (interaction.commandName === 'whoami') return await handleWhoAmI(interaction, db);
       if (interaction.commandName === 'stats') return await handleStats(interaction, db);
       if (interaction.commandName === 'npcs') return await handleNpcs(interaction, db, cfg);

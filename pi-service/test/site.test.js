@@ -5,6 +5,7 @@ import { renderCampaignSite } from '../src/export/site.js';
 
 const session = (over = {}) => ({
   id: 3,
+  session_number: 2,
   channel_name: 'Cipher',
   started_at: '2026-07-31T10:00:00Z',
   ended_at: '2026-07-31T13:30:00Z',
@@ -35,7 +36,9 @@ test('session detail and derived stats appear', () => {
   assert.match(html, /The party entered the crypt\./);
   assert.match(html, /3h 30m/, 'duration is derived from start/end');
   assert.match(html, /412 lines/);
-  assert.match(html, /2026-07-31-cipher-session-3\.md/, 'links to the matching markdown file');
+  // Notes now live at "<Campaign>/Session NN.md" — see export/naming.js. The
+  // link uses the per-campaign session number, not the meeting id.
+  assert.match(html, /Cipher\/Session 02\.md/, 'links to the matching markdown file');
 });
 
 test('sessions are listed newest first', () => {

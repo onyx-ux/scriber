@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { splitEntryName, isUsableName } from '../campaign/entry-name.js';
 import { linkifyEntities } from './linkify.js';
+import { sessionNotePath, formatSessionNumber } from './naming.js';
 
 function slugify(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -79,16 +80,24 @@ export function fmtSpeakerStats(utterances) {
   return `${header}\n${body}`;
 }
 
-export function renderMarkdown({ meeting, utterances, notes, cfg = {}, entities = [] }) {
+export function renderMarkdown({ meeting, utterances, notes, cfg = {}, entities = [], campaignName = null }) {
   const date = (meeting.started_at || '').slice(0, 10);
   const attendees = [...new Set(utterances.map((u) => u.display_name))];
   const wikilinks = cfg.obsidianWikilinks !== false;
 
+  const campaign = campaignName || meeting.channel_name;
+  // The per-campaign number, which is what the filename uses. meeting_id is
+  // kept too: it is what /summarise, /export and the logs refer to, and the
+  // two are no longer the same thing.
+  const sessionNo = formatSessionNumber(meeting.session_number ?? meeting.id) ?? '00';
+
   const frontmatter = [
     '---',
-    `title: "Session — ${meeting.channel_name} — ${date}"`,
+    `title: "Session ${sessionNo} — ${campaign} — ${date}"`,
     `date: ${date}`,
-    `tags: [dnd-session, ${slugify(meeting.channel_name)}]`,
+    `campaign: "${campaign}"`,
+    `session: ${sessionNo}`,
+    `tags: [dnd-session, ${slugify(campaign)}]`,
     `attendees: [${attendees.map((a) => `"${a}"`).join(', ')}]`,
     `meeting_id: ${meeting.id}`,
     '---',
@@ -130,7 +139,7 @@ export function renderMarkdown({ meeting, utterances, notes, cfg = {}, entities 
   const stats = fmtSpeakerStats(utterances);
   const afterRecap = stats ? `${recap}\n\n## Who Talked\n${stats}` : recap;
 
-  const body = `# Session Recap — ${meeting.channel_name} (${date})
+  const body = `# Session ${sessionNo} — ${campaign} (${date})
 
 ${afterRecap}
 
@@ -144,11 +153,15 @@ ${utterances.map((u) => `**[${u.start_ms}] ${u.display_name}:** ${u.text}`).join
   return frontmatter + body;
 }
 
-export async function exportMarkdown({ meeting, utterances, notes, cfg, entities = [] }) {
-  await mkdir(cfg.obsidianExportDir, { recursive: true });
-  const date = (meeting.started_at || '').slice(0, 10);
-  const filename = `${date}-${slugify(meeting.channel_name)}-session-${meeting.id}.md`;
-  const path = join(cfg.obsidianExportDir, filename);
-  await writeFile(path, renderMarkdown({ meeting, utterances, notes, cfg, entities }), 'utf8');
+// campaignName comes from /campaign; without one the channel name is used.
+// See export/naming.js for why the old flat "<date>-<channel>-session-<id>.md"
+// was replaced by "<Campaign>/Session 02.md".
+export async function exportMarkdown({ meeting, utterances, notes, cfg, entities = [], campaignName = null }) {
+  const { folder, filename } = sessionNotePath(meeting, campaignName);
+  const dir = join(cfg.obsidianExportDir, folder);
+  await mkdir(dir, { recursive: true });
+
+  const path = join(dir, filename);
+  await writeFile(path, renderMarkdown({ meeting, utterances, notes, cfg, entities, campaignName }), 'utf8');
   return path;
 }

@@ -1,6 +1,8 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { sessionNotePath } from './naming.js';
+
 // A single self-contained HTML dashboard for the whole campaign, written
 // alongside the markdown exports so it syncs to Drive/Obsidian like anything
 // else. Deliberately NOT a server: no port to open on the Pi, no auth to get
@@ -33,11 +35,14 @@ function list(items) {
   return `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`;
 }
 
-function sessionCard(session) {
+function sessionCard(session, campaignName) {
   const { notes } = session;
   const date = (session.started_at || '').slice(0, 10);
   const duration = durationLabel(session.started_at, session.ended_at);
-  const mdName = `${date}-${slugify(session.channel_name)}-session-${session.id}.md`;
+  // Matches export/naming.js — the note now lives at "<Campaign>/Session NN.md",
+  // so a link built from the old flat pattern would 404 from the archive page.
+  const { folder, filename } = sessionNotePath(session, campaignName);
+  const mdName = `${folder}/${filename}`;
 
   const meta = [
     date,
@@ -111,7 +116,7 @@ function dropRepeats(sessions) {
   });
 }
 
-export function renderCampaignSite(sessions) {
+export function renderCampaignSite(sessions, campaignName = null) {
   const ordered = dropRepeats(sessions).sort((a, b) =>
     String(b.started_at).localeCompare(String(a.started_at))
   );
@@ -204,7 +209,7 @@ export function renderCampaignSite(sessions) {
   <input type="search" id="q" placeholder="Search sessions, NPCs, locations…" autocomplete="off">
 
   <div id="sessions">
-    ${ordered.length ? ordered.map(sessionCard).join('\n') : '<p class="empty">No completed sessions yet.</p>'}
+    ${ordered.length ? ordered.map((s) => sessionCard(s, campaignName)).join('\n') : '<p class="empty">No completed sessions yet.</p>'}
   </div>
   <p class="empty" id="noresults" hidden>Nothing matches that search.</p>
 
@@ -254,6 +259,9 @@ export async function exportCampaignSite(db, guildId, cfg) {
     }
     return {
       id: m.id,
+      // Carried so the link to the markdown uses the per-campaign session
+      // number the file is actually named after, not the global meeting id.
+      session_number: m.session_number,
       channel_name: m.channel_name,
       started_at: m.started_at,
       ended_at: m.ended_at,
@@ -264,6 +272,6 @@ export async function exportCampaignSite(db, guildId, cfg) {
 
   await mkdir(cfg.obsidianExportDir, { recursive: true });
   const path = join(cfg.obsidianExportDir, 'campaign-archive.html');
-  await writeFile(path, renderCampaignSite(sessions), 'utf8');
+  await writeFile(path, renderCampaignSite(sessions, db.getCampaignName(guildId)), 'utf8');
   return path;
 }

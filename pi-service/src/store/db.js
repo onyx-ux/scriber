@@ -96,6 +96,56 @@ function migrate(db) {
     db.exec(`ALTER TABLE jobs ADD COLUMN notified_at TEXT`);
     console.log('[db] migrated: added jobs.notified_at');
   }
+
+  // Sessions are numbered PER CAMPAIGN, not by meeting id: the id is global
+  // across every server the bot serves, so one table's second session was
+  // being filed as "session 16".
+  //
+  // Stored rather than computed, deliberately. A number derived by counting
+  // rows would change under its own notes: delete a meeting, or add one that
+  // failed to transcribe, and every later session silently renumbers — while
+  // the markdown files that were already exported, synced to Drive and
+  // linked from the ledger keep the old numbers.
+  const meetingColumns = db.prepare(`PRAGMA table_info(meetings)`).all().map((c) => c.name);
+  if (!meetingColumns.includes('session_number')) {
+    db.exec(`ALTER TABLE meetings ADD COLUMN session_number INTEGER`);
+    // Backfill in id order within each guild, which is the order they happened.
+    const guilds = db.prepare(`SELECT DISTINCT guild_id FROM meetings`).all();
+    const assign = db.prepare(`UPDATE meetings SET session_number = ? WHERE id = ?`);
+    for (const { guild_id: guildId } of guilds) {
+      const rows = db.prepare(`SELECT id FROM meetings WHERE guild_id = ? ORDER BY id ASC`).all(guildId);
+      rows.forEach((row, i) => assign.run(i + 1, row.id));
+    }
+    console.log(`[db] migrated: added meetings.session_number (backfilled ${guilds.length} campaign(s))`);
+  }
+
+  // Campaign display name (set with /campaign) and the session counter.
+  // Keyed by guild so one bot can serve several tables; the guild id never
+  // changes, unlike the channel name this used to be derived from.
+  //
+  // next_session is a high-water mark rather than MAX(session_number) + 1.
+  // Deriving it from the meetings table means deleting a session hands its
+  // number to the next one — and the note already exported under that name,
+  // synced to Drive and linked from the ledger, is then silently overwritten.
+  // A counter only ever goes up.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaigns (
+      guild_id TEXT PRIMARY KEY,
+      name TEXT,
+      next_session INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Seed the counter past whatever already exists, so numbering continues
+  // rather than restarting on an established campaign.
+  db.exec(`
+    INSERT INTO campaigns (guild_id, next_session)
+    SELECT guild_id, COALESCE(MAX(session_number), 0) + 1
+      FROM meetings
+     GROUP BY guild_id
+    ON CONFLICT(guild_id) DO NOTHING
+  `);
 }
 
 export function openDb(path) {
@@ -115,13 +165,56 @@ function wrap(db) {
       db.close();
     },
 
-    createMeeting({ guildId, channelId, channelName, startedAt, audioDir }) {
-      const stmt = db.prepare(
-        `INSERT INTO meetings (guild_id, channel_id, channel_name, started_at, audio_dir, status)
-         VALUES (?, ?, ?, ?, ?, 'recording')`
-      );
-      const info = stmt.run(guildId, channelId, channelName, startedAt, audioDir);
+    createMeeting: db.transaction(({ guildId, channelId, channelName, startedAt, audioDir }) => {
+      // Take the next number from the campaign's counter and advance it. The
+      // counter never goes backwards, so a deleted session's number is never
+      // handed out again — see the note on the campaigns table.
+      db.prepare(`INSERT INTO campaigns (guild_id) VALUES (?) ON CONFLICT(guild_id) DO NOTHING`).run(guildId);
+      const { next_session: sessionNumber } = db
+        .prepare(`SELECT next_session FROM campaigns WHERE guild_id = ?`)
+        .get(guildId);
+      db.prepare(`UPDATE campaigns SET next_session = next_session + 1 WHERE guild_id = ?`).run(guildId);
+
+      const info = db
+        .prepare(
+          `INSERT INTO meetings (guild_id, channel_id, channel_name, started_at, audio_dir, status, session_number)
+           VALUES (?, ?, ?, ?, ?, 'recording', ?)`
+        )
+        .run(guildId, channelId, channelName, startedAt, audioDir, sessionNumber);
       return info.lastInsertRowid;
+    }),
+
+    // --- campaign names ---
+
+    setCampaignName(guildId, name) {
+      // Must not reset next_session — the row may already exist because
+      // sessions have been recorded, and clobbering the counter would restart
+      // numbering over notes that already exist.
+      db.prepare(
+        `INSERT INTO campaigns (guild_id, name, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(guild_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`
+      ).run(guildId, name);
+    },
+
+    getCampaignName(guildId) {
+      return db.prepare(`SELECT name FROM campaigns WHERE guild_id = ?`).get(guildId)?.name ?? null;
+    },
+
+    // Campaigns the bot has actually recorded, so /campaign can offer them by
+    // name in a DM — where there is no guild to infer one from.
+    listCampaigns() {
+      return db
+        .prepare(
+          `SELECT m.guild_id,
+                  MAX(m.channel_name) AS channel_name,
+                  c.name AS campaign_name,
+                  COUNT(*) AS sessions
+             FROM meetings m
+             LEFT JOIN campaigns c ON c.guild_id = m.guild_id
+            GROUP BY m.guild_id
+            ORDER BY MAX(m.id) DESC`
+        )
+        .all();
     },
 
     setMeetingStatus(meetingId, status) {
