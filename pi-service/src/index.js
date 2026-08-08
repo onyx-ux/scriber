@@ -5,6 +5,7 @@ import { commandDefs, registerCommandHandlers } from './commands/index.js';
 import { startQueueWorker } from './pipeline/queue-worker.js';
 import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
 import { recoverInterruptedMeetings } from './pipeline/recovery.js';
+import { describeOpusBackend } from './voice/opus-backend.js';
 import { startRetentionTimer } from './maintenance/retention.js';
 import { join } from 'node:path';
 
@@ -37,6 +38,10 @@ async function main() {
   // from v15 — the gateway READY event kept the old name, hence the rename.
   client.once('clientReady', async () => {
     console.log(`Logged in as ${client.user.tag}`);
+    // Which opus implementation prism picked. Reported because the fallback
+    // is silent and limits how many people can speak at once — see
+    // voice/opus-backend.js.
+    console.log(describeOpusBackend());
 
     // Runs after login (not before, like it used to) specifically so it can
     // resolve real Discord display names via the now-cached guilds — a
