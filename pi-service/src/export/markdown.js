@@ -1,27 +1,18 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { splitEntryName, isUsableName } from '../campaign/entry-name.js';
+
 function slugify(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-// Ledger-style entries look like "Vex the Bold — a smuggler from the docks".
-// Split the leading name off the description so only the name becomes a
-// wikilink; linking the whole sentence would create one useless note per
-// phrasing variation.
-function splitEntry(entry) {
-  const s = String(entry).trim();
-  const m = s.match(/^(.*?)(\s+[—–-]\s+|,\s+|\s+\()/);
-  if (!m) return { name: s, rest: '' };
-  return { name: m[1].trim(), rest: s.slice(m[1].length) };
-}
-
+// Only the leading name becomes a wikilink — see campaign/entry-name.js for
+// why the split lives there and is shared with the ledger's dedupe key.
 function wikiEntry(entry, enabled) {
   if (!enabled) return entry;
-  const { name, rest } = splitEntry(entry);
-  // Guard against the model returning a whole sentence with no clear name —
-  // a 200-character wikilink is worse than no wikilink.
-  if (!name || name.length > 60 || !/[a-z]/i.test(name)) return entry;
+  const { name, rest } = splitEntryName(entry);
+  if (!isUsableName(name)) return entry;
   return `[[${name}]]${rest}`;
 }
 

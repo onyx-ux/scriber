@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { splitEntryName } from './entry-name.js';
 import { join } from 'node:path';
 
 function slugify(s) {
@@ -21,11 +22,12 @@ export function campaignDirInfo(cfg, guildId, channelName) {
 // name only — everything before the first dash, comma or bracket — so
 // re-mentions actually match.
 function leadingName(line) {
-  return String(line)
+  const bare = String(line)
     .replace(/^-\s*/, '')
-    .replace(/\s*_\([^)]*\)_\s*$/, '')
-    .split(/\s+[—–-]\s+|,|\(/)[0]
-    .trim();
+    .replace(/\s*_\([^)]*\)_\s*$/, '');
+  // Shared with the markdown exporter so the wikilink and the dedupe key can
+  // never disagree about where a name ends — see campaign/entry-name.js.
+  return splitEntryName(bare).name;
 }
 
 export function entryKey(line) {
