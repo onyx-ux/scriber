@@ -1,11 +1,12 @@
 import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
 import { config } from './config/env.js';
 import { openDb } from './store/db.js';
-import { commandDefs, registerCommandHandlers } from './commands/index.js';
+import { commandDefs, registerCommandHandlers, activeSessions } from './commands/index.js';
 import { startQueueWorker } from './pipeline/queue-worker.js';
 import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
 import { recoverInterruptedMeetings } from './pipeline/recovery.js';
 import { describeOpusBackend } from './voice/opus-backend.js';
+import { startStatusServer } from './web/server.js';
 import { startRetentionTimer } from './maintenance/retention.js';
 import { join } from 'node:path';
 
@@ -18,6 +19,8 @@ import { join } from 'node:path';
 // group-writable, which (with the setgid bit on the export roots) lets the
 // collector clean up after itself.
 process.umask(0o002);
+
+const startedAtMs = Date.now();
 
 async function main() {
   const db = openDb(join(config.dataDir, 'db.sqlite'));
@@ -63,6 +66,8 @@ async function main() {
       `Transcribe worker started — auto window ${config.transcribeWindowStartHour}:00-${config.transcribeWindowEndHour}:00 ` +
         `${config.transcribeWeekdaysOnly ? 'weekdays' : 'daily'} (${config.scheduleTimeZone}).`
     );
+
+    startStatusServer({ db, cfg: config, client, activeSessions, startedAtMs });
 
     startRetentionTimer(db, config);
     console.log(`Retention timer started (${config.audioRetentionDays || 'disabled'} day(s)).`);

@@ -118,6 +118,16 @@ export const config = validate({
   geminiApiKey: optional('GEMINI_API_KEY', null),
   geminiModel: optional('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
 
+  // --- read-only status API for the dashboard ---
+  // The bot otherwise makes only outbound connections, so this is the one
+  // inbound port it opens. Serves operational data only — no tokens, no keys.
+  // Empty/0 disables it entirely.
+  statusPort: parseInt(optional('STATUS_PORT', '8090'), 10) || 0,
+  statusHost: optional('STATUS_HOST', '0.0.0.0'),
+  // Optional shared secret. Unset is fine on a home LAN; set it if this port
+  // is ever reachable from anywhere else.
+  statusToken: optional('STATUS_TOKEN', null),
+
   // --- when transcription is allowed to use the PC's GPU ---
   // Transcription is the only step that reaches into another machine, and
   // that machine is also the gaming PC. Rather than firing the moment a

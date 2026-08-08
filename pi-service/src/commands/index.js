@@ -340,7 +340,17 @@ async function handleJoin(interaction, db, cfg) {
       audioDir,
     });
 
-    activeSessions.set(interaction.guildId, { meetingId, handle, capturedUtterances, audioDir });
+    // channelName/startedAtMs are carried for the status dashboard — it has
+    // no other way to say WHERE the bot is sitting or for how long, and
+    // re-deriving either from Discord on every poll would be wasteful.
+    activeSessions.set(interaction.guildId, {
+      meetingId,
+      handle,
+      capturedUtterances,
+      audioDir,
+      channelName: voiceChannel.name,
+      startedAtMs: Date.now(),
+    });
     await interaction.editReply(pick(JOIN_STARTED, { channel: voiceChannel.name }));
   } finally {
     // Must run even if startCapture/createMeeting throws, or the guild would

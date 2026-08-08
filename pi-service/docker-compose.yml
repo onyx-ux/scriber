@@ -7,6 +7,10 @@ services:
     image: ghcr.io/onyx-ux/scriber:latest
     restart: unless-stopped
     env_file: .env
+    ports:
+      # The read-only status API the dashboard polls (STATUS_PORT). This is the
+      # only inbound port the bot opens; everything else is outbound-only.
+      - '8090:8090'
     volumes:
       # Bind mounts (not named volumes) on purpose — you want these visible
       # as real folders on the Pi's filesystem so you can point Syncthing /

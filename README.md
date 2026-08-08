@@ -474,3 +474,34 @@ to, and you're DM'd about it as normal.
   to a smaller one automatically rather than failing the job outright.
 - **Audio clip attachments** — clip and attach the actual audio for a
   specific dramatic moment, rather than only text.
+
+## Status dashboard
+
+A single page showing what the bot is doing right now: which servers it's in,
+what it's recording, what it's transcribing (with progress), and what's queued
+waiting on you.
+
+Two pieces, deliberately:
+
+- **the bot** serves a read-only JSON snapshot on `STATUS_PORT` (8090). This is
+  the only inbound port it opens — everything else it does is outbound-only.
+  The payload is operational data with no tokens or keys in it, and a test
+  asserts that.
+- **`dashboard/`** runs on the PC: nginx serving one static HTML file. There is
+  no backend. The browser polls the Pi directly, so the dashboard container is
+  stateless, restartable, and cannot affect a recording in progress.
+
+```bash
+cd dashboard && docker compose up -d      # http://localhost:8095
+```
+
+Point it at a different host without rebuilding:
+`http://localhost:8095/?api=http://other-host:8090`
+
+Reachability (whisper server, summariser) is refreshed on the bot's own
+60-second timer rather than per request — the page polls every 5 seconds, and
+probing the GPU box at that rate would put a permanent trickle of traffic on
+the LAN for no reason.
+
+`STATUS_TOKEN` adds a shared secret if the port is ever reachable from beyond
+the LAN; unset is fine at home. `STATUS_PORT=0` disables the API entirely.

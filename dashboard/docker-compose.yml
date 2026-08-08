@@ -1,0 +1,20 @@
+services:
+  # Runs on the PC. A single static page that polls the bot's read-only
+  # status API on the Pi — there is no backend here on purpose.
+  #
+  # The browser fetches the Pi directly, so this container only ever serves
+  # one HTML file and never talks to the Pi itself. That keeps it stateless,
+  # restartable, and impossible for it to affect a recording in progress.
+  #
+  # Point it at a different bot without rebuilding:
+  #   http://localhost:8095/?api=http://other-host:8090
+  dashboard:
+    image: nginx:alpine
+    container_name: scriber-dashboard
+    restart: unless-stopped
+    ports:
+      # 8095 on the host — 8080 was already taken on this PC (the same reason
+      # the whisper server sits on 8089).
+      - '8095:80'
+    volumes:
+      - ./html:/usr/share/nginx/html:ro

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scriber</title>
+<style>
+  :root {
+    --bg: #10131a; --card: #171b24; --line: #262c3a;
+    --text: #e6e9ef; --dim: #8b93a7;
+    --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --live: #f472b6; --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  .muted { color: var(--dim); font-size: 13px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 12px; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row .k { color: var(--dim); }
+  .val { font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+  .ok { background: var(--ok); } .bad { background: var(--bad); } .warn { background: var(--warn); }
+  .unknown { background: var(--dim); }
+  .live { background: var(--live); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  .empty { color: var(--dim); font-style: italic; padding: 6px 0; }
+  .item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: 0; }
+  .item .title { font-weight: 600; }
+  .item .sub { color: var(--dim); font-size: 13px; margin-top: 3px; }
+  .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  .pill.act { color: var(--warn); border-color: var(--warn); }
+  #err { display: none; background: #2a1418; border: 1px solid var(--bad); color: #fecaca;
+         padding: 12px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; }
+  code { background: #0d1017; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Scriber</h1>
+    <span class="muted" id="who">connecting…</span>
+    <span class="muted" style="margin-left:auto" id="stamp"></span>
+  </header>
+
+  <div id="err"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Now recording</h2>
+      <div id="recording"></div>
+    </div>
+
+    <div class="card">
+      <h2>Working on</h2>
+      <div id="working"></div>
+    </div>
+
+    <div class="card">
+      <h2>Waiting for you</h2>
+      <div id="waiting"></div>
+    </div>
+
+    <div class="card">
+      <h2>Servers</h2>
+      <div id="servers"></div>
+    </div>
+
+    <div class="card">
+      <h2>Schedule</h2>
+      <div id="schedule"></div>
+    </div>
+
+    <div class="card">
+      <h2>Health</h2>
+      <div id="health"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// The status API's host. Overridable with ?api=http://host:port so the same
+// page works from a phone, or against a second bot, without a rebuild.
+const API = new URLSearchParams(location.search).get('api')
+  || window.SCRIBER_API
+  || 'http://pihouse.local:8090';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+function duration(ms) {
+  if (ms == null) return '—';
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+function whenLocal(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function dot(state) {
+  const cls = state === true ? 'ok' : state === false ? 'bad' : 'unknown';
+  return `<span class="dot ${cls}"></span>`;
+}
+
+const rows = (pairs) => pairs.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="val">${v}</span></div>`).join('');
+const empty = (msg) => `<div class="empty">${esc(msg)}</div>`;
+
+function render(s) {
+  $('who').innerHTML = `${dot(s.bot.online)}${esc(s.bot.user || 'offline')} · up ${duration(s.bot.uptimeMs)} · opus ${esc(s.bot.opus.name)}`;
+  $('stamp').textContent = 'updated ' + new Date(s.generatedAt).toLocaleTimeString();
+
+  $('recording').innerHTML = s.recording.length
+    ? s.recording.map((r) => `
+        <div class="item">
+          <div class="title"><span class="dot live"></span>${esc(r.guildName)} — ${esc(r.channel || 'voice')}</div>
+          <div class="sub">session #${r.meetingId} · ${duration(r.recordingForMs)} · ${r.clips} clips · ${r.speakers} speaker(s)</div>
+        </div>`).join('')
+    : empty('Not recording.');
+
+  const work = [
+    ...s.working.transcribing.map((t) => ({
+      title: `Transcribing session #${t.meetingId}`,
+      sub: t.description,
+      pct: t.total ? Math.round((t.done / t.total) * 100) : null,
+    })),
+    ...s.working.summarising.map((q) => ({ title: `Summarising session #${q.meetingId}`, sub: esc(q.channel), pct: null })),
+  ];
+  $('working').innerHTML = work.length
+    ? work.map((w) => `
+        <div class="item">
+          <div class="title">${esc(w.title)}</div>
+          <div class="sub">${esc(w.sub)}</div>
+          ${w.pct == null ? '' : `<div class="bar"><i style="width:${w.pct}%"></i></div>`}
+        </div>`).join('')
+    : empty('Idle.');
+
+  const waiting = [
+    ...s.queue.awaitingTranscribe.map((q) => ({ ...q, what: 'needs your approval to transcribe' })),
+    ...s.queue.queuedTranscribe.map((q) => ({ ...q, what: 'approved — waiting for the PC' })),
+    ...s.queue.awaitingSummary.map((q) => ({ ...q, what: 'needs your approval to summarise' })),
+    ...s.queue.queuedSummary.map((q) => ({ ...q, what: 'queued to summarise' })),
+  ];
+  $('waiting').innerHTML = waiting.length
+    ? waiting.map((q) => `
+        <div class="item">
+          <div class="title">#${q.meetingId} — ${esc(q.channel)}</div>
+          <div class="sub">${esc(q.what)}${q.utterances ? ` · ${q.utterances} lines` : ''}${q.lastError ? `<br>last error: ${esc(q.lastError)}` : ''}</div>
+        </div>`).join('')
+    : empty('Nothing waiting.');
+
+  $('servers').innerHTML = s.servers.length
+    ? s.servers.map((g) => `<div class="row"><span class="k">${dot(true)}${esc(g.name)}</span><span class="val">${g.recording ? '<span class="pill act">recording</span>' : '<span class="pill">idle</span>'}</span></div>`).join('')
+    : empty('No servers.');
+
+  $('schedule').innerHTML = rows([
+    ['Auto window', `${String(s.schedule.windowStartHour).padStart(2, '0')}:00–${String(s.schedule.windowEndHour).padStart(2, '0')}:00${s.schedule.weekdaysOnly ? ' weekdays' : ' daily'}`],
+    ['Timezone', esc(s.schedule.timeZone)],
+    ['Approval required', s.schedule.requireApproval ? 'yes' : 'no'],
+    [s.schedule.inWindowNow ? 'Window' : 'Next window', s.schedule.inWindowNow ? 'open now' : whenLocal(s.schedule.nextAutoWindowAt)],
+  ]);
+
+  $('health').innerHTML = rows([
+    ['PC whisper server', `${dot(s.health.whisperServer)}${s.health.whisperServer === null ? 'unknown' : s.health.whisperServer ? 'reachable' : 'not reachable'}`],
+    [`Summariser (${esc(s.health.summariserName)})`, `${dot(s.health.summariser)}${s.health.summariser === null ? 'unknown' : s.health.summariser ? 'ready' : 'unavailable'}`],
+    ['Transcribing', s.health.transcribePaused ? `${dot(false)}paused` : `${dot(true)}running`],
+    ['Summarising', s.health.summarisePaused ? `${dot(false)}paused` : `${dot(true)}running`],
+  ]);
+}
+
+async function tick() {
+  try {
+    const res = await fetch(`${API}/status`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    render(await res.json());
+    $('err').style.display = 'none';
+  } catch (err) {
+    // The bot being unreachable is itself information — say so plainly rather
+    // than freezing on stale numbers.
+    $('err').style.display = 'block';
+    $('err').innerHTML = `Can't reach the bot at <code>${esc(API)}</code> — ${esc(err.message)}.<br>
+      Is the Pi up, and is <code>STATUS_PORT</code> set? Override with <code>?api=http://host:port</code>.`;
+    $('who').innerHTML = `${dot(false)}unreachable`;
+  }
+}
+
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

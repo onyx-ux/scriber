@@ -53,6 +53,31 @@ export function zonedParts(date, timeZone) {
 
 const WEEKEND = new Set(['Sat', 'Sun']);
 
+// When the automatic window next opens, so "why is nothing happening?" has a
+// concrete answer ("Monday 08:00") rather than a rule the reader has to apply
+// themselves. Walks forward in 15-minute steps rather than doing calendar
+// arithmetic: the window can wrap past midnight, weekends are skipped, and
+// the zone may observe daylight saving — stepping through withinAutoWindow
+// gets all three right for free, and 8 days of steps is trivial work.
+export function nextAutoWindowStart(now, cfg, maxDays = 8) {
+  const STEP_MS = 15 * 60 * 1000;
+  if (withinAutoWindow(now, cfg)) return new Date(now);
+
+  // Steps are aligned to quarter-hours since the epoch rather than offset
+  // from "now", so the answer lands on the window's actual boundary (08:00)
+  // instead of wherever the walk happened to start (08:13). Every IANA zone
+  // in practical use is a whole number of quarter-hours from UTC, so this
+  // aligns in local time too.
+  const first = Math.ceil(now.getTime() / STEP_MS) * STEP_MS;
+  const limit = now.getTime() + maxDays * 86_400_000;
+
+  for (let t = first; t <= limit; t += STEP_MS) {
+    const at = new Date(t);
+    if (withinAutoWindow(at, cfg)) return at;
+  }
+  return null; // no window reachable (e.g. a misconfigured start === end)
+}
+
 export function isWeekend(date, timeZone) {
   return WEEKEND.has(zonedParts(date, timeZone).weekday);
 }

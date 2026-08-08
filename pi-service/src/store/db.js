@@ -407,7 +407,8 @@ function wrap(db) {
       return db
         .prepare(
           `SELECT m.id, m.channel_name, m.started_at, m.status AS meeting_status,
-                  j.id AS job_id, j.status AS job_status, j.attempts, j.next_attempt_at, j.last_error,
+                  j.id AS job_id, j.status AS job_status, j.type AS job_type,
+                  j.attempts, j.next_attempt_at, j.last_error,
                   (SELECT COUNT(*) FROM utterances u WHERE u.meeting_id = m.id) AS utterance_count
              FROM meetings m
              LEFT JOIN jobs j
