@@ -104,11 +104,32 @@ export async function postSessionNotes({ discordClient, meeting, notes, mdPath, 
     await channel.send({ content: part });
   }
 
-  const attachment = new AttachmentBuilder(mdPath, {
-    name: mdPath.split('/').pop(),
-  });
-  await channel.send({
-    content: pick(POST_SESSION_ATTACHMENT_CAPTION),
-    files: [attachment],
-  });
+  // The transcript attachment is a convenience — the same markdown is already
+  // in the Obsidian export and on Drive. Losing it must not fail the job,
+  // because the notes above have ALREADY been posted by this point: a throw
+  // here sends the whole summarise job back to the queue, which re-runs the
+  // summariser (a real API cost) and re-posts these same notes on every
+  // retry, forever, for a permission the retry cannot change.
+  //
+  // Seen in practice with "Missing Permissions": the bot had SendMessages but
+  // not AttachFiles in the notes channel, so every attempt duplicated the
+  // recap and then failed at the last step.
+  try {
+    const attachment = new AttachmentBuilder(mdPath, {
+      name: mdPath.split('/').pop(),
+    });
+    await channel.send({
+      content: pick(POST_SESSION_ATTACHMENT_CAPTION),
+      files: [attachment],
+    });
+  } catch (err) {
+    const hint =
+      err.code === 50013 || /Missing Permissions/i.test(err.message)
+        ? ' — the bot needs the "Attach Files" permission in this channel'
+        : '';
+    console.warn(
+      `[delivery] meeting ${meeting.id}: notes posted, but the transcript file could not be attached (${err.message})${hint}. ` +
+        `The markdown is still in the Obsidian export.`
+    );
+  }
 }
