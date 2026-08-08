@@ -34,7 +34,7 @@ function stripNonSpeech(value) {
 // millisecond `offsets`, the server emits an OpenAI-shaped `verbose_json`
 // with `segments` in SECONDS. Both are normalised to milliseconds here so
 // nothing downstream has to care which one produced a transcript.
-function normalise(text, segments) {
+function normalise(text, segments, extra = {}) {
   const cleaned = segments
     .map((s) => ({ ...s, text: stripNonSpeech(s.text) }))
     .filter((s) => s.text);
@@ -44,7 +44,9 @@ function normalise(text, segments) {
   // rather than trying to unpick them from the joined string.
   const wholeText = cleaned.length ? cleaned.map((s) => s.text).join(' ') : stripNonSpeech(text);
 
-  return { text: wholeText.trim(), segments: cleaned };
+  // langProb/seconds ride along for the hallucination filter (see
+  // stt/hallucination.js). Absent on the CPU path, which reports neither.
+  return { text: wholeText.trim(), segments: cleaned, ...extra };
 }
 
 async function transcribeLocally(wavPath, cfg, wordLevel, prompt) {
@@ -134,7 +136,10 @@ async function transcribeOnServer(wavPath, cfg, wordLevel, prompt) {
 
     // Fall back to joining the segments when the server omits a top-level
     // text field, so a transcript is never silently empty.
-    return normalise(data.text || segments.map((s) => s.text).join(' '), segments);
+    return normalise(data.text || segments.map((s) => s.text).join(' '), segments, {
+      langProb: data.detected_language_probability,
+      seconds: data.duration,
+    });
   } catch (err) {
     if (err.name === 'AbortError') {
       throw new Error(`whisper server timed out after ${Math.round(cfg.whisperServerTimeoutMs / 1000)}s`);

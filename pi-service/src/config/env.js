@@ -51,6 +51,10 @@ export const config = validate({
   // comes back with prompt text echoed into the transcript (a known whisper
   // failure mode on near-silent clips).
   whisperPrompt: optional('WHISPER_PROMPT', 'true') !== 'false',
+  // Drop whisper's stock silence hallucinations ("Thank you.", "Bye.") when
+  // its language confidence says the clip was not really speech. Measured at
+  // 17% of a real session's transcript before this existed.
+  whisperDropFiller: optional('WHISPER_DROP_FILLER', 'true') !== 'false',
 
   // Where transcription actually runs. Unset = on the Pi's CPU, which does
   // neural inference at roughly 10x slower than realtime (a 30-minute session

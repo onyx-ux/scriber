@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 import { transcribeWav } from '../stt/whisper.js';
 import { looksLikePromptEcho, promptTerms } from '../stt/vocabulary.js';
+import { looksLikeHallucination } from '../stt/hallucination.js';
 import { mergeWavs, assignSegmentsToRanges } from './wav-merge.js';
 
 // whisper.cpp encodes a fixed 30-SECOND window no matter how short the input
@@ -77,7 +78,17 @@ async function transcribeIndividually(batch, cfg, prompt) {
   const failures = [];
   for (const u of batch) {
     try {
-      const { text } = await transcribeWav(u.wavPath, cfg, { prompt });
+      const { text, langProb, seconds } = await transcribeWav(u.wavPath, cfg, { prompt });
+      // Only applied per-clip: the filter needs whisper's per-clip language
+      // confidence, which a merged batch reports once for 27s of audio.
+      if (text && cfg.whisperDropFiller !== false && looksLikeHallucination(text, { langProb, seconds })) {
+        console.log(
+          `[whisper] dropped filler "${text}" from ${u.displayName} (lang confidence ${
+            typeof langProb === 'number' ? langProb.toFixed(2) : 'n/a'
+          }, ${seconds ?? '?'}s)`
+        );
+        continue;
+      }
       if (text) results.push(toResult(u, text));
     } catch (err) {
       failures.push({ wavPath: u.wavPath, error: err.message });

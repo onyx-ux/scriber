@@ -269,6 +269,32 @@ kept: "Kaelen!" is an ordinary thing to shout at a table, and losing real
 speech is worse than the occasional fabrication. Set `WHISPER_PROMPT=false` to
 turn the whole thing off without a redeploy.
 
+## Silence hallucinations
+
+Whisper doesn't return nothing for silence — it invents the same handful of
+phrases, "Thank you.", "Thanks for watching!", "Bye.", learned from subtitle
+data. Discord capture hands it a great many very short, very quiet clips, so
+this lands hard.
+
+Measured on a real 3117-clip session with `large-v3-turbo`: **478 utterances
+of "Thank you." — 17% of the entire transcript**, none of it spoken, all of it
+passed to the summariser as dialogue. The same audio on `medium.en` produced
+62, so the multilingual turbo model is considerably worse at this. That's the
+hidden cost of the accuracy it buys elsewhere.
+
+`WHISPER_DROP_FILLER=true` (the default) removes them. The rule is
+deliberately narrow: the text must match one of those phrases *exactly* as the
+whole utterance, **and** whisper's own language confidence for the clip must
+be below 0.95. On the sampled session, hallucinated clips scored at most 0.899
+while three quarters of real speech scored 0.993 or better — so someone
+genuinely saying "thank you" is kept, while noise rendered as "Thank you." is
+not. A line that merely *contains* those words is never touched.
+
+The server's own `suppress_nst` and `no_speech_thold` were measured across 120
+clips and removed none of it; `no_speech_prob` reports ~1e-08 for these clips,
+meaning whisper is confident the noise was speech. Hence filtering here rather
+than at the server.
+
 ## Scheduling transcription
 
 Transcription is the only part of the pipeline that reaches into another
