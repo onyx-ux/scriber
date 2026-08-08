@@ -120,3 +120,42 @@ test('a linked ledger entry still matches an unlinked mention', () => {
     entryKey('Sunless Citadel — a ruin below the ravine')
   );
 });
+
+// --- the ledger writes linked entries too ---
+
+test('new ledger entries are linked, and dedupe still matches them', async (t) => {
+  const { mkdtemp, readFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { updateCampaignLedger } = await import('../src/campaign/ledger.js');
+
+  const dir = await mkdtemp(join(tmpdir(), 'scriber-ledger-'));
+  const cfg = { obsidianExportDir: dir, obsidianWikilinks: true };
+  const meeting = { id: 16, guild_id: 'G1', channel_name: 'Session', started_at: '2026-08-08' };
+
+  await updateCampaignLedger({
+    meeting,
+    notes: {
+      npcsIntroduced: ['Meepo: A distraught kobold guarding a stolen dragon.'],
+      locationsVisited: ['Sunless Citadel: An ancient ruin.'],
+      unresolvedThreads: ['Whether the kobolds can be trusted at all.'],
+    },
+    cfg,
+  });
+
+  const npcs = await readFile(join(dir, 'campaign', 'G1-session', 'NPCs.md'), 'utf8');
+  assert.match(npcs, /- \[\[Meepo\]\]: A distraught kobold/, 'entities are linked');
+
+  // Sentences are not entities — a note per plot point helps nobody.
+  const threads = await readFile(join(dir, 'campaign', 'G1-session', 'Unresolved-Threads.md'), 'utf8');
+  assert.ok(!threads.includes('[['), 'threads stay unlinked');
+
+  // The same NPC arriving unlinked next session must match the linked entry.
+  await updateCampaignLedger({
+    meeting: { ...meeting, id: 17 },
+    notes: { npcsIntroduced: ['Meepo: the kobold, still upset'] },
+    cfg,
+  });
+  const after = await readFile(join(dir, 'campaign', 'G1-session', 'NPCs.md'), 'utf8');
+  assert.equal((after.match(/Meepo/g) || []).length, 1, 'no duplicate on re-mention');
+});

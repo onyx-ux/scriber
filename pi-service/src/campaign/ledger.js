@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { splitEntryName } from './entry-name.js';
+import { splitEntryName, isUsableName } from './entry-name.js';
 import { join } from 'node:path';
 
 function slugify(s) {
@@ -99,7 +99,21 @@ export async function readKnownEntities(cfg, guildId, channelName) {
   return { npcs, locations };
 }
 
-async function appendUnique(filePath, title, newItems, sessionLabel) {
+// The ledger is the campaign's index, so its entries are linked the same way
+// the session notes link them — otherwise NPCs.md is a dead list and the two
+// files disagree about what an entry looks like. Only the leading name is
+// wrapped; entryKey strips the brackets again so dedupe is unaffected.
+//
+// Not applied to Party-Decisions.md or Unresolved-Threads.md: those hold
+// sentences, and linking "How the strange creatures were created." would make
+// a note per plot point.
+function ledgerEntry(item, wikilinks) {
+  if (!wikilinks) return item;
+  const { name, rest } = splitEntryName(item);
+  return isUsableName(name) ? `[[${name}]]${rest}` : item;
+}
+
+async function appendUnique(filePath, title, newItems, sessionLabel, { wikilinks = false } = {}) {
   if (!newItems || newItems.length === 0) return;
 
   let existing = '';
@@ -128,7 +142,7 @@ async function appendUnique(filePath, title, newItems, sessionLabel) {
   const toAdd = newItems.filter((item) => !existingKeys.has(entryKey(item)));
   if (toAdd.length === 0) return;
 
-  const additions = toAdd.map((item) => `- ${item} _(${sessionLabel})_`).join('\n');
+  const additions = toAdd.map((item) => `- ${ledgerEntry(item, wikilinks)} _(${sessionLabel})_`).join('\n');
   const updated = existing.endsWith('\n') ? `${existing}${additions}\n` : `${existing}\n${additions}\n`;
   await writeFile(filePath, updated, 'utf8');
 }
@@ -151,9 +165,13 @@ export async function updateCampaignLedger({ meeting, notes, cfg }) {
 
   const sessionLabel = `session #${meeting.id}, ${(meeting.started_at || '').slice(0, 10)}`;
 
+  // NPCs and locations are entities and get linked; decisions and threads are
+  // sentences and do not.
+  const linked = { wikilinks: cfg.obsidianWikilinks !== false };
+
   await Promise.all([
-    appendUnique(join(dir, 'NPCs.md'), 'NPCs', notes.npcsIntroduced, sessionLabel),
-    appendUnique(join(dir, 'Locations.md'), 'Locations', notes.locationsVisited, sessionLabel),
+    appendUnique(join(dir, 'NPCs.md'), 'NPCs', notes.npcsIntroduced, sessionLabel, linked),
+    appendUnique(join(dir, 'Locations.md'), 'Locations', notes.locationsVisited, sessionLabel, linked),
     appendUnique(join(dir, 'Party-Decisions.md'), 'Party Decisions', notes.partyDecisions, sessionLabel),
     appendUnique(join(dir, 'Unresolved-Threads.md'), 'Unresolved Threads', notes.unresolvedThreads, sessionLabel),
   ]);
