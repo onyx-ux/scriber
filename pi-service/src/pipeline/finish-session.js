@@ -6,6 +6,7 @@ import { applyCorrections } from '../campaign/corrections.js';
 import { syncSessionAudio, backupAndSyncDatabase } from '../sync/drive-sync.js';
 import { archiveSessionAudio } from './session-recording.js';
 import { startTranscription, updateTranscription, endTranscription } from './progress.js';
+import { campaignPrompt } from '../stt/vocabulary.js';
 
 // Moves a finished recording into the outbox the PC collects from, so long
 // campaigns don't accumulate on the Pi's card. The PC pulls and deletes
@@ -53,10 +54,17 @@ export async function finishSession(
 ) {
   db.setMeetingStatus(meetingId, 'transcribing');
 
+  // Bias whisper toward this campaign's proper nouns before transcribing
+  // anything — see stt/vocabulary.js. Guild-scoped, so campaigns sharing a
+  // bot don't leak names into each other.
+  const prompt = await campaignPrompt(db, cfg, db.getMeeting(meetingId));
+  if (prompt) console.log(`[whisper] meeting ${meetingId}: vocabulary prompt (${prompt.length} chars)`);
+
   startTranscription(meetingId, capturedUtterances.length);
   let result;
   try {
     result = await transcribeAll(capturedUtterances, cfg, {
+      prompt,
       serverReachable,
       onProgress: (done, total) => {
         updateTranscription(meetingId, done, total);

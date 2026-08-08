@@ -47,7 +47,7 @@ function normalise(text, segments) {
   return { text: wholeText.trim(), segments: cleaned };
 }
 
-async function transcribeLocally(wavPath, cfg, wordLevel) {
+async function transcribeLocally(wavPath, cfg, wordLevel, prompt) {
   // whisper.cpp's -of takes a prefix and appends ".json" itself — so the
   // real output path has the ".wav" stripped, not appended to the full name.
   const outPrefix = wavPath.replace(/\.wav$/, '');
@@ -64,6 +64,9 @@ async function transcribeLocally(wavPath, cfg, wordLevel) {
       '-nt',                          // no timestamps in stdout text (we use the JSON segments instead)
       '-l', cfg.whisperLanguage || 'en',
       ...(wordLevel ? ['-ml', '1', '-sow'] : []),
+      // Campaign vocabulary, so proper nouns are spelled the campaign's way.
+      // See stt/vocabulary.js.
+      ...(prompt ? ['--prompt', prompt] : []),
     ],
     { timeout: 10 * 60 * 1000 } // 10 min hard cap per file — a single utterance shouldn't take anywhere near this
   );
@@ -84,7 +87,7 @@ async function transcribeLocally(wavPath, cfg, wordLevel) {
   );
 }
 
-async function transcribeOnServer(wavPath, cfg, wordLevel) {
+async function transcribeOnServer(wavPath, cfg, wordLevel, prompt) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.whisperServerTimeoutMs);
 
@@ -101,6 +104,9 @@ async function transcribeOnServer(wavPath, cfg, wordLevel) {
     // hundreds of short clips, so it only has to misfire occasionally to put
     // nonsense in the transcript. The English-only models ignore this.
     form.append('language', cfg.whisperLanguage || 'en');
+    // Campaign vocabulary — see stt/vocabulary.js. whisper.cpp's server names
+    // this field 'prompt'; OpenAI's API calls the same thing initial_prompt.
+    if (prompt) form.append('prompt', prompt);
     if (wordLevel) {
       form.append('max_len', '1');
       form.append('split_on_word', 'true');
@@ -148,11 +154,11 @@ async function transcribeOnServer(wavPath, cfg, wordLevel) {
 // several of the clips that were merged, so everything collapses onto
 // whichever clip the segment's midpoint lands in and the transcript loses its
 // timestamps. Not worth it for a single clip, where there's nothing to split.
-export async function transcribeWav(wavPath, cfg, { wordLevel = false } = {}) {
-  if (!cfg.whisperServerUrl) return transcribeLocally(wavPath, cfg, wordLevel);
+export async function transcribeWav(wavPath, cfg, { wordLevel = false, prompt = '' } = {}) {
+  if (!cfg.whisperServerUrl) return transcribeLocally(wavPath, cfg, wordLevel, prompt);
 
   try {
-    return await transcribeOnServer(wavPath, cfg, wordLevel);
+    return await transcribeOnServer(wavPath, cfg, wordLevel, prompt);
   } catch (err) {
     if (!cfg.whisperLocalFallback) throw err;
     // The GPU machine being off shouldn't lose a session — the Pi can still
@@ -161,7 +167,7 @@ export async function transcribeWav(wavPath, cfg, { wordLevel = false } = {}) {
     console.warn(
       `[whisper] server unavailable (${err.message}) — falling back to local CPU transcription, which is far slower`
     );
-    return transcribeLocally(wavPath, cfg, wordLevel);
+    return transcribeLocally(wavPath, cfg, wordLevel, prompt);
   }
 }
 

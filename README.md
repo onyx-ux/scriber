@@ -230,6 +230,45 @@ whole stack on one machine for debugging.)*
 - `/npcs` / `/locations` — list everyone met / everywhere visited so far, straight from the campaign ledger, without opening Obsidian
 - `/archive` — get the browsable campaign archive (the same self-contained HTML page that syncs to Drive after every session) as a one-off attachment
 
+## Campaign vocabulary (whisper prompting)
+
+Whisper's weak point on a D&D session isn't hearing — it's proper nouns.
+"Kaelen", "Kaylen" and "Caelan" are all plausible English, and nothing in the
+audio tells it which one this table means. So it guesses, differently each
+time.
+
+`WHISPER_PROMPT=true` (the default) fixes that at inference time: before
+transcribing, the bot builds a short prompt from the campaign's own
+vocabulary and hands it to whisper as decoding context. Sources, in priority
+order:
+
+1. **`/correct` targets** — words this campaign has already *proved* whisper
+   mishears. Highest value, so they survive truncation first.
+2. **Player character names** from `/setcharacter` — said every session.
+3. **Ledger NPCs, then locations**, most recent first, since last week's
+   villain is likelier to come up than session one's.
+
+The prompt is guild-scoped, so two campaigns on one bot can't leak names into
+each other, and it's capped at whisper's 224-token window — truncation happens
+at whole-name boundaries, never mid-name.
+
+This attacks the same problem `/correct` exists to clean up afterwards, so the
+two compound: every correction you add makes future sessions less likely to
+need it.
+
+**The trade-off, and it's a real one.** On near-silent audio whisper will
+sometimes transcribe the *prompt* instead of the sound. Reproduced against
+this exact setup: five seconds of low noise returned `"."` unprompted, and
+`"Kaelen Zyrthax, Thoras, Thoras, Thoras."` once the vocabulary was supplied.
+Left alone that puts invented dialogue in the transcript and feeds it to the
+summariser.
+
+So a clip that comes back as *nothing but* campaign names — matched loosely,
+since echoes mangle them — is dropped and logged. A single name on its own is
+kept: "Kaelen!" is an ordinary thing to shout at a table, and losing real
+speech is worse than the occasional fabrication. Set `WHISPER_PROMPT=false` to
+turn the whole thing off without a redeploy.
+
 ## Scheduling transcription
 
 Transcription is the only part of the pipeline that reaches into another

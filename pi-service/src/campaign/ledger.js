@@ -20,13 +20,25 @@ export function campaignDirInfo(cfg, guildId, channelName) {
 // lines therefore treats the same NPC as new every time. Key on the leading
 // name only — everything before the first dash, comma or bracket — so
 // re-mentions actually match.
-export function entryKey(line) {
+function leadingName(line) {
   return String(line)
     .replace(/^-\s*/, '')
     .replace(/\s*_\([^)]*\)_\s*$/, '')
     .split(/\s+[—–-]\s+|,|\(/)[0]
-    .trim()
-    .toLowerCase();
+    .trim();
+}
+
+export function entryKey(line) {
+  return leadingName(line).toLowerCase();
+}
+
+// The name as written. Kept separate from entryKey because the whisper
+// vocabulary prompt needs the original capitalisation — "Kaelen" biases the
+// decoder toward a proper noun in a way "kaelen" does not — and needs the
+// wikilink brackets off, which entryKey deliberately leaves alone so that
+// existing ledger dedupe behaviour is unchanged.
+export function entryName(line) {
+  return leadingName(line).replace(/\[\[|\]\]/g, '').trim();
 }
 
 // The set of entries already recorded in one ledger file.
@@ -43,6 +55,32 @@ async function readEntryKeys(filePath) {
   } catch {
     return new Set(); // no ledger file yet
   }
+}
+
+// The same entries as readKnownEntities, but as names in the order and
+// capitalisation they were written, newest last. Used to build the whisper
+// vocabulary prompt, which is about spelling proper nouns correctly rather
+// than about set membership.
+async function readEntryNames(filePath) {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    return raw
+      .split('\n')
+      .filter((l) => l.trim().startsWith('-'))
+      .map(entryName)
+      .filter(Boolean);
+  } catch {
+    return []; // no ledger file yet
+  }
+}
+
+export async function readKnownEntityNames(cfg, guildId, channelName) {
+  const dir = campaignDir(cfg, guildId, channelName);
+  const [npcs, locations] = await Promise.all([
+    readEntryNames(join(dir, 'NPCs.md')),
+    readEntryNames(join(dir, 'Locations.md')),
+  ]);
+  return { npcs, locations };
 }
 
 // What this campaign already knows about, so a session recap can omit

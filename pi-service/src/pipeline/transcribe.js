@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { transcribeWav } from '../stt/whisper.js';
+import { looksLikePromptEcho, promptTerms } from '../stt/vocabulary.js';
 import { mergeWavs, assignSegmentsToRanges } from './wav-merge.js';
 
 // whisper.cpp encodes a fixed 30-SECOND window no matter how short the input
@@ -71,12 +72,12 @@ async function clipDurationMs(wavPath) {
   }
 }
 
-async function transcribeIndividually(batch, cfg) {
+async function transcribeIndividually(batch, cfg, prompt) {
   const results = [];
   const failures = [];
   for (const u of batch) {
     try {
-      const { text } = await transcribeWav(u.wavPath, cfg);
+      const { text } = await transcribeWav(u.wavPath, cfg, { prompt });
       if (text) results.push(toResult(u, text));
     } catch (err) {
       failures.push({ wavPath: u.wavPath, error: err.message });
@@ -86,7 +87,7 @@ async function transcribeIndividually(batch, cfg) {
   return { results, failures };
 }
 
-async function transcribeMerged(batch, cfg) {
+async function transcribeMerged(batch, cfg, prompt) {
   const { buffer, ranges } = await mergeWavs(
     batch.map((u) => u.wavPath),
     GAP_MS
@@ -97,7 +98,7 @@ async function transcribeMerged(batch, cfg) {
     // Word-level segmentation, so each merged clip can get its own text back.
     // whisper's default segments span several clips at once, which collapsed
     // a 20-clip batch into 3 lines with timestamps minutes out of place.
-    const { segments } = await transcribeWav(mergedPath, cfg, { wordLevel: true });
+    const { segments } = await transcribeWav(mergedPath, cfg, { wordLevel: true, prompt });
     // assignSegmentsToRanges falls back to the nearest range rather than
     // dropping a segment that lands in one of the inserted gaps, so no speech
     // is lost even when whisper's timing disagrees with the layout.
@@ -138,19 +139,19 @@ async function batchesForSpeaker(utterances) {
   return batches;
 }
 
-async function transcribeBatch(batch, cfg) {
+async function transcribeBatch(batch, cfg, prompt) {
   // Nothing to gain from the merge machinery for a lone clip.
-  if (batch.length === 1) return transcribeIndividually(batch, cfg);
+  if (batch.length === 1) return transcribeIndividually(batch, cfg, prompt);
 
   try {
-    return { results: await transcribeMerged(batch, cfg), failures: [] };
+    return { results: await transcribeMerged(batch, cfg, prompt), failures: [] };
   } catch (err) {
     // A malformed WAV (or any other merge-time failure) would otherwise cost
     // every clip in the batch its transcript. Falling back to one-at-a-time
     // for just this batch trades speed for correctness only where something
     // is actually wrong.
     console.error(`[transcribe] merged batch failed (${err.message}) — retrying its files individually`);
-    return transcribeIndividually(batch, cfg);
+    return transcribeIndividually(batch, cfg, prompt);
   }
 }
 
@@ -197,7 +198,7 @@ export function shouldBatch(cfg, { serverReachable = null } = {}) {
 // instead. That is ~5x slower on CPU (a 235-clip session measured at ~4.5
 // hours vs ~50 min) but gives cleaner line breaks and exact per-clip
 // timestamps — see the trade-off note at the top of this file.
-export async function transcribeAll(capturedUtterances, cfg, { onProgress, serverReachable = null } = {}) {
+export async function transcribeAll(capturedUtterances, cfg, { onProgress, serverReachable = null, prompt = '' } = {}) {
   const results = [];
   const failures = [];
 
@@ -205,10 +206,20 @@ export async function transcribeAll(capturedUtterances, cfg, { onProgress, serve
     ? await planBatches(capturedUtterances)
     : capturedUtterances.map((u) => [u]);
 
+  // A prompted clip that came back as nothing but campaign names is whisper
+  // reading the prompt off a near-silent recording, not someone talking.
+  // See looksLikePromptEcho — this was reproduced against the live server.
+  const terms = promptTerms(prompt);
+  const keep = (r) => {
+    if (!looksLikePromptEcho(r.text, terms)) return true;
+    console.warn(`[whisper] dropped a prompt echo from ${r.displayName}: "${r.text}"`);
+    return false;
+  };
+
   let done = 0;
   for (const batch of batches) {
-    const { results: batchResults, failures: batchFailures } = await transcribeBatch(batch, cfg);
-    results.push(...batchResults);
+    const { results: batchResults, failures: batchFailures } = await transcribeBatch(batch, cfg, prompt);
+    results.push(...batchResults.filter(keep));
     failures.push(...batchFailures);
     done += batch.length;
     onProgress?.(done, capturedUtterances.length);

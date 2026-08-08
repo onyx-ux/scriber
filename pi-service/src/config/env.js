@@ -46,6 +46,11 @@ export const config = validate({
   // only has to be wrong occasionally to corrupt the transcript. English-only
   // models (*.en) ignore this setting entirely.
   whisperLanguage: optional('WHISPER_LANGUAGE', 'en'),
+  // Feed the campaign's proper nouns to whisper as a decoding prompt. On by
+  // default; set false to turn it off without a redeploy if a session ever
+  // comes back with prompt text echoed into the transcript (a known whisper
+  // failure mode on near-silent clips).
+  whisperPrompt: optional('WHISPER_PROMPT', 'true') !== 'false',
 
   // Where transcription actually runs. Unset = on the Pi's CPU, which does
   // neural inference at roughly 10x slower than realtime (a 30-minute session
