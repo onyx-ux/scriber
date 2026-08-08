@@ -109,3 +109,14 @@ test('ledger names keep their capitalisation for the whisper prompt', () => {
   assert.equal(entryName('- Sunless Citadel: An ancient ruin _(session #10)_'), 'Sunless Citadel');
   assert.equal(entryName('- [[Vex the Bold]] — a smuggler'), 'Vex the Bold');
 });
+
+// The exporter links NPC names, so stored ledger lines contain brackets. If
+// the key kept them, every linked NPC would be re-appended every session.
+test('a linked ledger entry still matches an unlinked mention', () => {
+  assert.equal(entryKey("- [[Bob]]: A merchant's assistant. _(session #10, 2026-08-01)_"), 'bob');
+  assert.equal(entryKey('Bob: a merchant assistant'), 'bob');
+  assert.equal(
+    entryKey('- [[Sunless Citadel]]: An ancient ruin _(session #10)_'),
+    entryKey('Sunless Citadel — a ruin below the ravine')
+  );
+});

@@ -5,7 +5,14 @@ import { exportMarkdown } from '../export/markdown.js';
 import { exportCampaignSite } from '../export/site.js';
 import { postSessionNotes } from '../delivery/discord-post.js';
 import { syncSessionMarkdown, backupAndSyncDatabase, pullLedgerFromDrive, pushLedgerToDrive } from '../sync/drive-sync.js';
-import { updateCampaignLedger, campaignDirInfo, readKnownEntities, entryKey } from '../campaign/ledger.js';
+import {
+  updateCampaignLedger,
+  campaignDirInfo,
+  readKnownEntities,
+  readKnownEntityNames,
+  entryKey,
+} from '../campaign/ledger.js';
+import { splitEntryName } from '../campaign/entry-name.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
 
 // Drop NPCs and locations the campaign already knows about from THIS
@@ -127,7 +134,21 @@ export async function tick(db, discordClient, cfg) {
     const known = await readKnownEntities(cfg, meeting.guild_id, meeting.channel_name);
     const displayNotes = withoutAlreadyKnown(notes, known);
 
-    const mdPath = await exportMarkdown({ meeting, utterances, notes: displayNotes, cfg });
+    // What the prose is allowed to link to: everyone this campaign already
+    // knows about, plus whoever turned up this session. Taken from the FULL
+    // notes rather than displayNotes — an NPC omitted from the list because
+    // an earlier session already introduced them is exactly the sort of
+    // recurring character whose mentions most deserve a link.
+    const knownNames = await readKnownEntityNames(cfg, meeting.guild_id, meeting.channel_name);
+    const entities = [
+      ...knownNames.npcs,
+      ...knownNames.locations,
+      ...[...(notes.npcsIntroduced || []), ...(notes.locationsVisited || [])].map(
+        (e) => splitEntryName(e).name
+      ),
+    ];
+
+    const mdPath = await exportMarkdown({ meeting, utterances, notes: displayNotes, cfg, entities });
 
     // The notes themselves are about to appear, so the status line has done
     // its job — remove it rather than leaving "summarising…" above the result.

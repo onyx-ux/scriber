@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { splitEntryName, isUsableName } from '../campaign/entry-name.js';
+import { linkifyEntities } from './linkify.js';
 
 function slugify(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -78,7 +79,7 @@ export function fmtSpeakerStats(utterances) {
   return `${header}\n${body}`;
 }
 
-export function renderMarkdown({ meeting, utterances, notes, cfg = {} }) {
+export function renderMarkdown({ meeting, utterances, notes, cfg = {}, entities = [] }) {
   const date = (meeting.started_at || '').slice(0, 10);
   const attendees = [...new Set(utterances.map((u) => u.display_name))];
   const wikilinks = cfg.obsidianWikilinks !== false;
@@ -115,9 +116,17 @@ export function renderMarkdown({ meeting, utterances, notes, cfg = {} }) {
   // from the audio, not from the AI, so they're present even when the
   // summariser found nothing. Counting them as content would mask an empty
   // summary behind a table nobody asked about.
-  const recap = sections.length
+  const recapText = sections.length
     ? sections.join('\n\n')
     : '_Nothing substantial to report from this session._';
+
+  // Link known NPCs/locations where they're MENTIONED, not just where they're
+  // listed — that's what actually connects a session to the rest of the
+  // campaign in Obsidian's graph. Applied to the recap only: the transcript
+  // below is thousands of lines and linking through it would bury the prose
+  // and make the note enormous for no benefit.
+  const recap = wikilinks ? linkifyEntities(recapText, entities) : recapText;
+
   const stats = fmtSpeakerStats(utterances);
   const afterRecap = stats ? `${recap}\n\n## Who Talked\n${stats}` : recap;
 
@@ -135,11 +144,11 @@ ${utterances.map((u) => `**[${u.start_ms}] ${u.display_name}:** ${u.text}`).join
   return frontmatter + body;
 }
 
-export async function exportMarkdown({ meeting, utterances, notes, cfg }) {
+export async function exportMarkdown({ meeting, utterances, notes, cfg, entities = [] }) {
   await mkdir(cfg.obsidianExportDir, { recursive: true });
   const date = (meeting.started_at || '').slice(0, 10);
   const filename = `${date}-${slugify(meeting.channel_name)}-session-${meeting.id}.md`;
   const path = join(cfg.obsidianExportDir, filename);
-  await writeFile(path, renderMarkdown({ meeting, utterances, notes, cfg }), 'utf8');
+  await writeFile(path, renderMarkdown({ meeting, utterances, notes, cfg, entities }), 'utf8');
   return path;
 }

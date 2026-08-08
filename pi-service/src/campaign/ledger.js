@@ -30,17 +30,19 @@ function leadingName(line) {
   return splitEntryName(bare).name;
 }
 
-export function entryKey(line) {
-  return leadingName(line).toLowerCase();
-}
-
-// The name as written. Kept separate from entryKey because the whisper
-// vocabulary prompt needs the original capitalisation — "Kaelen" biases the
-// decoder toward a proper noun in a way "kaelen" does not — and needs the
-// wikilink brackets off, which entryKey deliberately leaves alone so that
-// existing ledger dedupe behaviour is unchanged.
+// The name as written, with any wikilink brackets removed. Stored entries
+// legitimately contain them — the exporter links NPC and location names, and
+// a repaired ledger has "- [[Bob]]: a merchant" on disk.
 export function entryName(line) {
   return leadingName(line).replace(/\[\[|\]\]/g, '').trim();
+}
+
+// Brackets MUST be stripped here too, not just in entryName: a stored
+// "[[Bob]]" would otherwise key as "[[bob]]" and never match an incoming
+// "Bob", so every linked NPC would be re-appended to the ledger every single
+// session — the exact duplication this key exists to prevent.
+export function entryKey(line) {
+  return entryName(line).toLowerCase();
 }
 
 // The set of entries already recorded in one ledger file.
