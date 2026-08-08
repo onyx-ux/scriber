@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { basename, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -70,10 +71,22 @@ export async function pushLedgerToDrive(localDir, remoteSubpath, cfg) {
   }
 }
 
+// Mirrors the campaign folder onto Drive. Session notes are named per
+// campaign now ("Cipher/Session 01.md"), so copying them into one flat
+// notes/ directory would put every campaign's "Session 01.md" at the same
+// remote path — the second upload silently overwriting the first.
+export function noteRemoteDir(mdPath, cfg) {
+  const folder = basename(dirname(mdPath));
+  const exportRoot = basename(cfg.obsidianExportDir || '');
+  // A note written straight into the export root (nothing to mirror) keeps
+  // the old flat destination.
+  return !folder || folder === exportRoot ? remotePath(cfg, 'notes') : remotePath(cfg, 'notes', folder);
+}
+
 export async function syncSessionMarkdown(mdPath, cfg) {
   if (!cfg.driveSyncEnabled) return;
   try {
-    await rcloneCopy(mdPath, remotePath(cfg, 'notes'));
+    await rcloneCopy(mdPath, noteRemoteDir(mdPath, cfg));
     console.log(`[drive-sync] uploaded ${mdPath}`);
   } catch (err) {
     // Sync failures should never block the bot's core function — log and

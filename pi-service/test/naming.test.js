@@ -252,3 +252,27 @@ test('campaigns are listable for the DM picker', async (t) => {
   assert.equal(g1.sessions, 2);
   assert.equal(rows.find((r) => r.guild_id === 'G2').campaign_name, null);
 });
+
+// --- Drive destination mirrors the campaign folder ---
+
+test('each campaign gets its own notes folder on Drive', async () => {
+  const { noteRemoteDir } = await import('../src/sync/drive-sync.js');
+  const cfg = { driveRemoteName: 'gdrive', driveRemotePath: 'DnDSessions', obsidianExportDir: '/data/obsidian' };
+
+  assert.equal(
+    noteRemoteDir('/data/obsidian/Cipher/Session 01.md', cfg),
+    'gdrive:DnDSessions/notes/Cipher'
+  );
+  // Without this, both campaigns' "Session 01.md" land on the same remote
+  // path and the second upload overwrites the first.
+  assert.notEqual(
+    noteRemoteDir('/data/obsidian/Cipher/Session 01.md', cfg),
+    noteRemoteDir('/data/obsidian/Crack Animal Zoo/Session 01.md', cfg)
+  );
+});
+
+test('a note in the export root keeps the old flat destination', async () => {
+  const { noteRemoteDir } = await import('../src/sync/drive-sync.js');
+  const cfg = { driveRemoteName: 'gdrive', driveRemotePath: 'DnDSessions', obsidianExportDir: '/data/obsidian' };
+  assert.equal(noteRemoteDir('/data/obsidian/legacy.md', cfg), 'gdrive:DnDSessions/notes');
+});
