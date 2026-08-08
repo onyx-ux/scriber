@@ -14,6 +14,7 @@ import {
 } from '../campaign/ledger.js';
 import { splitEntryName } from '../campaign/entry-name.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
+import { resolveProgressTarget } from '../delivery/progress-target.js';
 
 // Drop NPCs and locations the campaign already knows about from THIS
 // session's recap. The party visiting the same tavern every week shouldn't
@@ -53,9 +54,11 @@ export function renderSummaryProgress(state, label) {
 
 // Best-effort throughout: this is a status line, and no failure to post or
 // edit it may interfere with the summary it describes.
+// To the owner's DM, not the table's channel — which model is summarising and
+// how many slices are done is operational detail. The finished notes still go
+// to the channel; see delivery/progress-target.js.
 async function startSummaryProgress({ discordClient, meeting, cfg, jobCfg }) {
-  const channelId = cfg.notesChannelId || meeting.channel_id;
-  const channel = await discordClient?.channels?.fetch(channelId).catch(() => null);
+  const channel = await resolveProgressTarget(discordClient, cfg, meeting);
   if (!channel) return null;
 
   const label = summariserLabel(jobCfg);

@@ -104,27 +104,34 @@ export const LEAVE_NOT_RECORDING = [
   '⛩️ The shrine is empty — not currently recording.',
 ];
 
+// /leave no longer transcribes — it stops recording and queues the session
+// for later (see pipeline/transcribe-schedule.js). These used to say the
+// scribe "begins the long work of transcription", which read fine when it was
+// true and became a lie the moment transcription moved behind the schedule:
+// the table would be told the work was underway while nothing was happening,
+// possibly until Monday. So they now describe the tome being CLOSED and set
+// aside, which is exactly what happened.
 export const LEAVE_START = [
-  '⏳ The scribe closes the tome and begins the long work of transcription...',
-  '🖋️ Setting down the quill... now deciphering the chaos of tonight\'s session.',
-  '📜 Rolling up the scroll. Give the scribe a moment to make sense of it all.',
-  "🧙 'One moment...' the wizard mutters, flipping back through pages of notes.",
-  '🕯️ The candle gutters as the archivist begins sorting tonight\'s events into order.',
-  '🔍 Poring over every word spoken tonight — this may take a while...',
-  "🪄 A minor divination is cast to untangle who said what, and when.",
-  '📖 Closing the Tome of Record... transcription is underway.',
-  "🧾 The guild scribe grumbles about everyone talking over each other and starts transcribing.",
-  '🕰️ Turning back the hourglass to relive every moment of the session...',
-  '🐦 The familiar flies off to the archive with tonight\'s notes in tow.',
-  "🧠 Recalling every word with unnerving precision — please stand by.",
-  "⚗️ Distilling tonight's chaos into something readable. Patience, adventurer.",
-  '📚 Filing tonight\'s chapter into the grand campaign archive...',
-  "🕸️ Untangling the threads of conversation into a coherent record.",
-  '🪶 The raven returns to its perch to begin the tedious work of transcription.',
-  '🗝️ Locking away tonight\'s secrets... transcription in progress.',
-  '🌒 As the session ends, the ink begins to dry into legible history.',
-  "🔮 The crystal ball replays tonight's events, frame by frame, word by word.",
-  '⏳ Stopping and transcribing — this can take a while for a long session...',
+  '⏳ The scribe closes the tome and sets it aside for later.',
+  '🖋️ Setting down the quill. Tonight\'s pages are safe until the archivist returns.',
+  '📜 Rolling up the scroll and tying it off. It keeps.',
+  "🧙 'Enough for tonight,' the wizard mutters, stacking the notes with care.",
+  '🕯️ The candle is snuffed. Tonight\'s events wait in the dark, unread.',
+  '🔍 Every word tonight is on paper. Making sense of it is a job for later.',
+  '🪄 The recording sigil dims. What was spoken is captured and sealed.',
+  '📖 Closing the Tome of Record. Nothing is lost; nothing is read yet.',
+  '🧾 The guild scribe grumbles about everyone talking at once, and files it anyway.',
+  '🕰️ The hourglass is turned on its side. Tonight keeps until it is called for.',
+  '🐦 The familiar carries tonight\'s pages to the archive and roosts.',
+  '🧠 Every word remembered, filed, and left for a quieter hour.',
+  '⚗️ Tonight\'s chaos is bottled and shelved, waiting to be distilled.',
+  '📚 Tonight\'s chapter is filed unopened in the grand campaign archive.',
+  '🕸️ The threads of conversation are gathered up, tangles and all, for later.',
+  '🪶 The raven returns to its perch. The reading can wait.',
+  '🗝️ Tonight\'s secrets are locked away, safe until someone turns the key.',
+  '🌒 The session ends and the ink dries. History can be read another day.',
+  '🔮 The crystal ball goes dark, holding tonight\'s events until summoned.',
+  '⏳ Recording stopped. Tonight is safely on the shelf.',
 ];
 
 // {failCount}

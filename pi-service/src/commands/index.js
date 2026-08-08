@@ -384,12 +384,18 @@ async function handleLeave(interaction, db, cfg) {
   const serverReachable = await isWhisperServerReachable(cfg);
   const meeting = db.getMeeting(session.meetingId);
 
+  // Ephemeral on purpose. Clip counts, queue state and GPU scheduling are
+  // operational detail for whoever runs the bot — the table just played a
+  // session and does not need the plumbing narrated at them in their own
+  // channel. The owner gets all of this, with buttons, in the DM below.
+  // Only the thematic /join and /leave lines are public.
   await interaction.followUp({
     content:
       `📼 Recorded **${clipCount}** clips for session #${session.meetingId}.\n` +
       (cfg.transcribeRequireApproval
         ? `Transcription is queued — I've DMed you to ask when it can use the PC. Nothing touches the GPU until then.`
         : `Transcription is queued and will start when the PC is available.`),
+    flags: MessageFlags.Ephemeral,
   });
 
   if (cfg.transcribeRequireApproval) {

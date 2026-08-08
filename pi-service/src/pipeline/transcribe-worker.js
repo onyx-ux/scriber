@@ -6,6 +6,7 @@ import { applyTranscribeTarget, TARGET_PI, TARGET_PC } from './transcribe-target
 import { notifyTranscribeReminder } from '../delivery/transcribe-notify.js';
 import { notifyApprovalNeeded } from '../delivery/approval-notify.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
+import { resolveProgressTarget } from '../delivery/progress-target.js';
 import { getTranscription, describeTranscription } from './progress.js';
 
 // Decides WHEN a recorded session is allowed to use the PC's GPU, and runs it.
@@ -126,11 +127,12 @@ async function runTranscribeJob(db, discordClient, cfg, job, meeting) {
   }
 }
 
-// A session transcribed hours after it was recorded still deserves to say so
-// in the channel it happened in — otherwise notes appear from nowhere.
+// Progress goes to the owner's DM, not the table's channel — it reports on
+// the owner's GPU and queue, and a session transcribed hours later would
+// otherwise interrupt an unrelated conversation with percentages. See
+// delivery/progress-target.js.
 async function startChannelProgress({ discordClient, cfg, meeting, clipCount }) {
-  const channelId = cfg.notesChannelId || meeting.channel_id;
-  const channel = await discordClient?.channels?.fetch(channelId).catch(() => null);
+  const channel = await resolveProgressTarget(discordClient, cfg, meeting);
   if (!channel) return null;
 
   return startLiveProgress({
