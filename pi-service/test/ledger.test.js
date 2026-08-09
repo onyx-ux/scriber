@@ -87,3 +87,23 @@ test('readKnownEntities is empty (not an error) for a brand new campaign', async
   assert.equal(known.npcs.size, 0);
   assert.equal(known.locations.size, 0);
 });
+
+// The vault linker can rewrite a ledger entry's leading name into an aliased
+// link — "[[Kerowyn Hucrele|Kerowyn]]" for an entry the summariser will keep
+// emitting as plain "Kerowyn". Keying on the link TARGET rather than the
+// displayed text would stop those matching, and the entry would be appended
+// again every single session.
+test('entryKey sees through an aliased wikilink to the displayed name', () => {
+  assert.equal(entryKey('- [[Kerowyn Hucrele|Kerowyn]]: the matriarch _(session #3, 2026-01-01)_'), 'kerowyn');
+  assert.equal(
+    entryKey('- [[Kerowyn Hucrele|Kerowyn]]: the matriarch'),
+    entryKey('Kerowyn — a wealthy merchant'),
+    'the linked and unlinked forms of one entry must key the same'
+  );
+  assert.equal(entryKey('- [[Meepo]]: a kobold'), 'meepo', 'a plain link still works');
+  assert.equal(
+    entryKey('- [[Talgan Hucrele|Talgan]] and [[Sharwin Hucrele|Sharwin]]: the missing children'),
+    'talgan and sharwin',
+    'splitting one entry into two links keeps the entry keyed as it was'
+  );
+});

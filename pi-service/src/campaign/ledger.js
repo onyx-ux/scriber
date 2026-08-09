@@ -48,11 +48,20 @@ function leadingName(line) {
   return splitEntryName(bare).name;
 }
 
-// The name as written, with any wikilink brackets removed. Stored entries
-// legitimately contain them — the exporter links NPC and location names, and
-// a repaired ledger has "- [[Bob]]: a merchant" on disk.
+// The name as written, with any wikilink markup removed. Stored entries
+// legitimately contain it — the exporter links NPC and location names, and a
+// repaired ledger has "- [[Bob]]: a merchant" on disk.
+//
+// Piped links have to collapse to the DISPLAYED half, not the target:
+// "[[Kerowyn Hucrele|Kerowyn]]" is the ledger entry for Kerowyn, and keying
+// it on the target would make it stop matching the "Kerowyn" the summariser
+// emits next session — so the entry would be appended again, every session,
+// which is the exact duplication this key exists to prevent.
 export function entryName(line) {
-  return leadingName(line).replace(/\[\[|\]\]/g, '').trim();
+  return leadingName(line)
+    .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, '$1')
+    .replace(/\[\[|\]\]/g, '')
+    .trim();
 }
 
 // Brackets MUST be stripped here too, not just in entryName: a stored
