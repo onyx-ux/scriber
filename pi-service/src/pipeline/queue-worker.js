@@ -13,7 +13,12 @@ import {
   entryKey,
 } from '../campaign/ledger.js';
 import { splitEntryName } from '../campaign/entry-name.js';
-import { readVaultEntities, buildNameIndex, addPlainNames } from '../campaign/vault-index.js';
+import {
+  readVaultEntities,
+  buildNameIndex,
+  addPlainNames,
+  canonicaliseEntries,
+} from '../campaign/vault-index.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
 import { resolveProgressTarget } from '../delivery/progress-target.js';
 import { sessionLabel, campaignFolder } from '../export/naming.js';
@@ -116,50 +121,59 @@ export async function tick(db, discordClient, cfg) {
     // and silence for that long is indistinguishable from a crash.
     progress = await startSummaryProgress({ discordClient, meeting, cfg, jobCfg });
 
-    const notes = await summarizeTranscript(transcript, meta, jobCfg, {
+    const rawNotes = await summarizeTranscript(transcript, meta, jobCfg, {
       onProgress: (event) => progress?.report(event),
     });
 
-    // Store the FULL summary — /recap, /funny and the ledger all read this,
-    // and it should stay the complete record of the session.
-    db.setSummary(meeting.id, notes);
-
-    // Pull the ledger down first — you may have edited NPCs.md/Locations.md
-    // etc. directly in Obsidian since the last session, and we don't want
-    // to append onto a stale local copy and lose those edits. Doing it before
-    // rendering also means "what does this campaign already know" reflects
-    // your manual edits, not just what the bot has seen.
     // One folder name drives everything this campaign writes — the session
     // note, the ledger, and both Drive destinations — so they cannot drift
     // apart if /campaign renames the campaign mid-pipeline.
     const campaignName = db.getCampaignName(meeting.guild_id);
     const folder = campaignFolder(meeting, campaignName);
 
+    // Pull the ledger down first — you may have edited NPCs.md/Locations.md
+    // etc. directly in Obsidian since the last session, and we don't want
+    // to append onto a stale local copy and lose those edits. Doing it before
+    // rendering also means "what does this campaign already know" reflects
+    // your manual edits, not just what the bot has seen.
     const { localDir: ledgerDir, remoteSubpath: ledgerRemote } = campaignDirInfo(cfg, folder);
     await pullLedgerFromDrive(ledgerDir, ledgerRemote, cfg);
 
-    const known = await readKnownEntities(cfg, folder);
-    const displayNotes = withoutAlreadyKnown(notes, known);
-
     // What the prose is allowed to link to: everyone this campaign already
     // knows about, plus whoever turned up this session. Taken from the FULL
-    // notes rather than displayNotes — an NPC omitted from the list because
-    // an earlier session already introduced them is exactly the sort of
+    // notes rather than the filtered ones — an NPC omitted from the list
+    // because an earlier session introduced them is exactly the sort of
     // recurring character whose mentions most deserve a link.
-    const knownNames = await readKnownEntityNames(cfg, folder);
-
-    // The per-entity notes under NPCs/ and Locations/ carry the alias lists —
-    // the spellings whisper actually produced ("Yusdrayl", "Kaltrix"). Those
+    //
+    // The per-entity notes under NPCs/ and Locations/ carry the alias lists:
+    // the spellings whisper actually produced ("Yusdrayl", "Kaltrix"), which
     // are precisely the mentions a reader would otherwise fail to connect to
-    // anything, so the recap links them to the right note.
+    // anything.
+    const knownNames = await readKnownEntityNames(cfg, folder);
     const index = addPlainNames(buildNameIndex(await readVaultEntities(cfg, folder)), [
       ...knownNames.npcs,
       ...knownNames.locations,
-      ...[...(notes.npcsIntroduced || []), ...(notes.locationsVisited || [])].map(
+      ...[...(rawNotes.npcsIntroduced || []), ...(rawNotes.locationsVisited || [])].map(
         (e) => splitEntryName(e).name
       ),
     ]);
     const entities = [...index.targets.keys()];
+
+    // Name recurring entities the way the vault already names them, BEFORE
+    // anything is stored or appended — otherwise a change of summariser
+    // model quietly re-introduces the whole cast under new spellings.
+    const notes = {
+      ...rawNotes,
+      npcsIntroduced: canonicaliseEntries(rawNotes.npcsIntroduced, index.targets, splitEntryName),
+      locationsVisited: canonicaliseEntries(rawNotes.locationsVisited, index.targets, splitEntryName),
+    };
+
+    // Store the FULL summary — /recap, /funny and the ledger all read this,
+    // and it should stay the complete record of the session.
+    db.setSummary(meeting.id, notes);
+
+    const known = await readKnownEntities(cfg, folder);
+    const displayNotes = withoutAlreadyKnown(notes, known);
 
     const mdPath = await exportMarkdown({
       meeting,

@@ -4,7 +4,15 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { parseFrontmatter, buildNameIndex, expandAliases, readVaultEntities } from '../src/campaign/vault-index.js';
+import {
+  parseFrontmatter,
+  buildNameIndex,
+  expandAliases,
+  readVaultEntities,
+  addPlainNames,
+  canonicaliseEntries,
+} from '../src/campaign/vault-index.js';
+import { splitEntryName } from '../src/campaign/entry-name.js';
 import { linkifyBody, linkifyNote } from '../src/campaign/vault-linker.js';
 import { linkifyEntities } from '../src/export/linkify.js';
 
@@ -227,4 +235,32 @@ test('every line that is not a link change survives byte for byte', () => {
 test('a note with nothing to link comes back identical', () => {
   const note = '# Empty\n\nNothing to see.\n';
   assert.equal(linkifyNote(note, opts(['Meepo'])), note);
+});
+
+// --- keeping one entity to one ledger entry ---
+
+// Changing summariser model changes the wording wholesale: 3.1-flash-lite
+// wrote "Kobold Queen", 3.6-flash writes "Queen Yusdrayl". The ledger keys on
+// the leading name, so without this the whole cast gets re-introduced under
+// new spellings the first session after a model change.
+test('a summariser renaming a known NPC is mapped back to the vault name', () => {
+  const { targets } = buildNameIndex([{ name: 'Kobold Queen', aliases: expandAliases('Kobold Queen', ['Yusdrayl']) }]);
+
+  assert.deepEqual(
+    canonicaliseEntries(['Queen Yusdrayl - The ruler of the kobold tribe.'], targets, splitEntryName),
+    ['Kobold Queen - The ruler of the kobold tribe.'],
+    "the name is rewritten, the summariser's description is not"
+  );
+});
+
+test('an entity the vault has never heard of is left exactly as written', () => {
+  const { targets } = buildNameIndex([{ name: 'Meepo', aliases: [] }]);
+  const entries = ['Grimlock the Unseen - A brand new villain.'];
+  assert.deepEqual(canonicaliseEntries(entries, targets, splitEntryName), entries);
+});
+
+test('addPlainNames maps a ledger-only name to itself', () => {
+  const index = addPlainNames(buildNameIndex([]), ['Shatterspike', null, '']);
+  assert.equal(index.targets.get('Shatterspike'), 'Shatterspike');
+  assert.equal(index.targets.size, 1, 'blanks are ignored');
 });

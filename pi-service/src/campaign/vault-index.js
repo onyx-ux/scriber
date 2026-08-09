@@ -115,6 +115,26 @@ export function addPlainNames(index, names) {
   return index;
 }
 
+// Rewrites a summariser's entity list so recurring characters are named the
+// way the vault names them.
+//
+// The summariser picks its own wording each session, and changing models
+// changes it wholesale: one calls her "Kobold Queen", the next "Queen
+// Yusdrayl". The ledger keys on the leading name, so the second spelling
+// reads as a brand new NPC and gets appended alongside the first — the
+// campaign's index slowly fills with the same people under different names.
+// Mapping through the alias index first keeps one entity to one entry.
+//
+// Only the NAME is rewritten; the description after it is the summariser's
+// and stays as written.
+export function canonicaliseEntries(items, targets, splitName) {
+  return (items || []).map((item) => {
+    const { name, rest } = splitName(item);
+    const canonical = targets.get(name);
+    return canonical && canonical !== name ? `${canonical}${rest}` : item;
+  });
+}
+
 // Reads NPCs/ and Locations/ under a campaign folder. Returns the entities in
 // no particular order; the linker sorts by length so the longest name wins.
 export async function readVaultEntities(cfg, folder) {
