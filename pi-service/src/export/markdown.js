@@ -80,7 +80,7 @@ export function fmtSpeakerStats(utterances) {
   return `${header}\n${body}`;
 }
 
-export function renderMarkdown({ meeting, utterances, notes, cfg = {}, entities = [], campaignName = null }) {
+export function renderMarkdown({ meeting, utterances, notes, cfg = {}, entities = [], entityTargets = null, campaignName = null }) {
   const date = (meeting.started_at || '').slice(0, 10);
   const attendees = [...new Set(utterances.map((u) => u.display_name))];
   const wikilinks = cfg.obsidianWikilinks !== false;
@@ -134,7 +134,7 @@ export function renderMarkdown({ meeting, utterances, notes, cfg = {}, entities 
   // campaign in Obsidian's graph. Applied to the recap only: the transcript
   // below is thousands of lines and linking through it would bury the prose
   // and make the note enormous for no benefit.
-  const recap = wikilinks ? linkifyEntities(recapText, entities) : recapText;
+  const recap = wikilinks ? linkifyEntities(recapText, entities, { targets: entityTargets }) : recapText;
 
   const stats = fmtSpeakerStats(utterances);
   const afterRecap = stats ? `${recap}\n\n## Who Talked\n${stats}` : recap;
@@ -156,12 +156,12 @@ ${utterances.map((u) => `**[${u.start_ms}] ${u.display_name}:** ${u.text}`).join
 // campaignName comes from /campaign; without one the channel name is used.
 // See export/naming.js for why the old flat "<date>-<channel>-session-<id>.md"
 // was replaced by "<Campaign>/Session 02.md".
-export async function exportMarkdown({ meeting, utterances, notes, cfg, entities = [], campaignName = null }) {
+export async function exportMarkdown({ meeting, utterances, notes, cfg, entities = [], entityTargets = null, campaignName = null }) {
   const { folder, filename } = sessionNotePath(meeting, campaignName);
   const dir = join(cfg.obsidianExportDir, folder);
   await mkdir(dir, { recursive: true });
 
   const path = join(dir, filename);
-  await writeFile(path, renderMarkdown({ meeting, utterances, notes, cfg, entities, campaignName }), 'utf8');
+  await writeFile(path, renderMarkdown({ meeting, utterances, notes, cfg, entities, entityTargets, campaignName }), 'utf8');
   return path;
 }

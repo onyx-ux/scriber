@@ -109,14 +109,21 @@ export const config = validate({
   anthropicApiKey: optional('ANTHROPIC_API_KEY', null),
   anthropicModel: optional('ANTHROPIC_MODEL', 'claude-opus-5'),
 
-  // Gemini: pinned to the cheapest current model by default rather than a
-  // frontier one — the whole point of choosing Gemini here was cost, since
-  // Anthropic's API is a paid-tier-only product. gemini-2.5-flash-lite was
-  // the budget pick until Google cut new API keys off from it (returns HTTP
-  // 404 "no longer available to new users"); gemini-3.1-flash-lite is its
-  // live replacement, verified against a real key on 2026-07-31.
+  // Gemini's cheap tier moves under you: gemini-2.5-flash-lite was the budget
+  // pick until Google cut new API keys off from it (HTTP 404, "no longer
+  // available to new users"), then gemini-3.1-flash-lite replaced it.
+  //
+  // gemini-3.6-flash is the current default — a full flash model rather than
+  // a lite one, because at 3.6 there IS no lite: gemini-3.6-flash-lite and
+  // gemini-3.6-pro both 404 on a free key, and 3.6-flash is what the NPC and
+  // location note builders already use to read whole transcripts. Verified
+  // against a real key on 2026-08-09.
+  //
+  // Note that 3.6-flash is missing from ListModels even though it serves
+  // requests, so "not in the list" is not evidence a model is unavailable —
+  // probe it with a real generateContent call before believing otherwise.
   geminiApiKey: optional('GEMINI_API_KEY', null),
-  geminiModel: optional('GEMINI_MODEL', 'gemini-3.1-flash-lite'),
+  geminiModel: optional('GEMINI_MODEL', 'gemini-3.6-flash'),
 
   // --- read-only status API for the dashboard ---
   // The bot otherwise makes only outbound connections, so this is the one

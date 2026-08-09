@@ -366,9 +366,11 @@ a laptop, or a USB stick. Full transcripts stay in the `.md` files beside it.
   to `claude-opus-5`. Anthropic's API is paid-tier only (no free tier).
 - `gemini` — sends the finished **transcript text** to Gemini. Set
   `GEMINI_API_KEY` (free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey));
-  `GEMINI_MODEL` defaults to `gemini-3.1-flash-lite`, Gemini's budget tier —
-  pick this provider if the goal is a cloud recap at minimal cost rather than
-  Claude's higher quality.
+  `GEMINI_MODEL` defaults to `gemini-3.6-flash` — pick this provider if the
+  goal is a cloud recap at low cost rather than Claude's higher quality. Note
+  that `gemini-3.6-flash` does not appear in Gemini's ListModels response even
+  though it serves requests, so probe a model with a real call before
+  concluding it is unavailable.
 
 **Audio and transcription are always local.** Recordings never leave the
 network under any setting — a cloud option only ever sees text that has

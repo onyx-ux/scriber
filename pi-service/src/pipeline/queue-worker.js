@@ -13,6 +13,7 @@ import {
   entryKey,
 } from '../campaign/ledger.js';
 import { splitEntryName } from '../campaign/entry-name.js';
+import { readVaultEntities, buildNameIndex, addPlainNames } from '../campaign/vault-index.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
 import { resolveProgressTarget } from '../delivery/progress-target.js';
 import { sessionLabel, campaignFolder } from '../export/naming.js';
@@ -146,15 +147,29 @@ export async function tick(db, discordClient, cfg) {
     // an earlier session already introduced them is exactly the sort of
     // recurring character whose mentions most deserve a link.
     const knownNames = await readKnownEntityNames(cfg, folder);
-    const entities = [
+
+    // The per-entity notes under NPCs/ and Locations/ carry the alias lists —
+    // the spellings whisper actually produced ("Yusdrayl", "Kaltrix"). Those
+    // are precisely the mentions a reader would otherwise fail to connect to
+    // anything, so the recap links them to the right note.
+    const index = addPlainNames(buildNameIndex(await readVaultEntities(cfg, folder)), [
       ...knownNames.npcs,
       ...knownNames.locations,
       ...[...(notes.npcsIntroduced || []), ...(notes.locationsVisited || [])].map(
         (e) => splitEntryName(e).name
       ),
-    ];
+    ]);
+    const entities = [...index.targets.keys()];
 
-    const mdPath = await exportMarkdown({ meeting, utterances, notes: displayNotes, cfg, entities, campaignName });
+    const mdPath = await exportMarkdown({
+      meeting,
+      utterances,
+      notes: displayNotes,
+      cfg,
+      entities,
+      entityTargets: index.targets,
+      campaignName,
+    });
 
     // The notes themselves are about to appear, so the status line has done
     // its job — remove it rather than leaving "summarising…" above the result.
