@@ -61,7 +61,7 @@ console.log(`model    : ${model}`);
 // out to the vault — so it may be absent here. An empty list silently skips
 // alias reconciliation, which is how [[Kerowyn]] nearly got orphaned, so say
 // so rather than carrying on quietly.
-const ledger = await readKnownEntityNames(config, guildId, meetings[0].channel_name);
+const ledger = await readKnownEntityNames(config, folder);
 const npcNotes = await readdir(join(config.obsidianExportDir, folder, 'NPCs'))
   .then((files) => files.filter((f) => f.endsWith('.md')).map((f) => f.replace(/\.md$/, '')))
   .catch(() => []);

@@ -401,7 +401,7 @@ honoured when a queued session is retried later.
 ## Campaign ledger (Obsidian)
 
 Alongside each session's own markdown file, the bot maintains **persistent,
-cross-session files** per campaign (one folder per Discord channel):
+cross-session files** per campaign, in a `Ledger/` folder inside the campaign:
 `NPCs.md`, `Locations.md`, `Party-Decisions.md`, `Unresolved-Threads.md`.
 Each session appends only genuinely new entries (deduped case-insensitively
 against what's already there) tagged with which session introduced them —
@@ -516,9 +516,29 @@ the LAN; unset is fine at home. `STATUS_PORT=0` disables the API entirely.
     Session 02.md
     NPCs/          one note per character
     Locations/     one note per place
-  campaign/
-    <guild>-<channel>/   NPCs.md, Locations.md, ...  (the running ledger)
+    Ledger/        NPCs.md, Locations.md, Party-Decisions.md,
+                   Unresolved-Threads.md  (the running ledger)
 ```
+
+Everything a campaign produces hangs off **one folder**, named by `/campaign`.
+The ledger used to live in a separate `campaign/<guildId>-<channel-slug>/` at
+the vault root — correct, but unreadable, and it meant one campaign appeared
+twice in the vault under two unrelated names. Old ledgers are moved into place
+automatically the first time the bot starts after this change; a file that
+would overwrite something already at the destination is left where it is and
+logged rather than merged blindly.
+
+`Ledger/` is a subfolder rather than four files beside the session notes for
+two reasons: `NPCs.md` would sit next to the `NPCs/` folder of per-character
+notes, and the ledger is the one thing pulled *down* from Drive before each
+append — aiming that rclone copy at the campaign folder itself would sweep the
+session notes up with it.
+
+Renaming a campaign with `/campaign` moves the existing folder to the new
+name, session notes and ledger included. Leaving it behind would not just look
+untidy: the ledger is what tells the next session which NPCs the campaign
+already knows, so an orphaned folder means every NPC met so far gets
+re-introduced in the next recap as though they were new.
 
 Sessions are numbered **per campaign**, not by meeting id. The meeting id is a
 counter shared across every server the bot serves, so one table's second night

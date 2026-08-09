@@ -5,6 +5,7 @@ import { commandDefs, registerCommandHandlers, activeSessions } from './commands
 import { startQueueWorker } from './pipeline/queue-worker.js';
 import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
 import { recoverInterruptedMeetings } from './pipeline/recovery.js';
+import { migrateLedgerFolders } from './campaign/vault-migrate.js';
 import { describeOpusBackend } from './voice/opus-backend.js';
 import { startStatusServer } from './web/server.js';
 import { startRetentionTimer } from './maintenance/retention.js';
@@ -24,6 +25,17 @@ const startedAtMs = Date.now();
 
 async function main() {
   const db = openDb(join(config.dataDir, 'db.sqlite'));
+
+  // Before anything reads a ledger. A half-migrated ledger silently loses
+  // its dedupe and re-introduces every NPC the campaign has ever met.
+  for (const step of await migrateLedgerFolders({ db, cfg: config }).catch((err) => {
+    console.error('[startup] vault migration failed:', err);
+    return [];
+  })) {
+    if (!step.to) console.warn(`[vault] left ${step.from} alone — ${step.reason}`);
+    else console.log(`[vault] moved ${step.moved.length} ledger file(s) into ${step.to}`);
+    if (step.skipped?.length) console.warn(`[vault] not overwritten in ${step.to}: ${step.skipped.join(', ')}`);
+  }
 
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],

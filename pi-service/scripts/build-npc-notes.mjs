@@ -69,7 +69,7 @@ console.log(`sessions : ${meetings.map((m) => m.session_number ?? m.id).join(', 
 // The spellings the vault's existing [[links]] use. Handed to the model so it
 // carries them into aliases rather than orphaning links the ledger and the
 // session recaps already contain.
-const ledgerNames = await readKnownEntityNames(config, guildId, meetings[0].channel_name);
+const ledgerNames = await readKnownEntityNames(config, folder);
 const existingNames = [...ledgerNames.npcs, ...ledgerNames.locations];
 if (existingNames.length) console.log(`existing : ${existingNames.join(', ')}\n`);
 

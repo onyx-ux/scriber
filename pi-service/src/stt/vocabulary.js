@@ -1,4 +1,5 @@
 import { readKnownEntityNames } from '../campaign/ledger.js';
+import { campaignFolder } from '../export/naming.js';
 
 // Whisper accepts a text prompt that conditions the decoder as though it were
 // the transcript immediately preceding the audio. Feeding it the campaign's
@@ -145,7 +146,8 @@ export async function campaignPrompt(db, cfg, meeting) {
   if (!cfg.whisperPrompt) return '';
 
   try {
-    const { npcs, locations } = await readKnownEntityNames(cfg, meeting.guild_id, meeting.channel_name);
+    const folder = campaignFolder(meeting, db.getCampaignName(meeting.guild_id));
+    const { npcs, locations } = await readKnownEntityNames(cfg, folder);
     return buildWhisperPrompt({
       corrections: db.listCorrections(meeting.guild_id),
       characters: db.listCharacters(meeting.guild_id),

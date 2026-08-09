@@ -29,6 +29,7 @@ import { resolveSpeakerName } from '../campaign/character-names.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
 import { readLedgerFile } from '../campaign/ledger.js';
+import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import { exportCampaignSite } from '../export/site.js';
 import {
   notifyApprovalNeeded,
@@ -309,16 +310,37 @@ async function handleCampaign(interaction, db, cfg) {
     });
   }
 
-  const folder = campaignFolder({ channel_name: fallback }, name);
-  db.setCampaignName(guildId, name.trim());
+  const trimmed = name.trim();
+  const previousFolder = campaignFolder({ channel_name: fallback }, current);
+  const folder = campaignFolder({ channel_name: fallback }, trimmed);
+  db.setCampaignName(guildId, trimmed);
+
+  // Take the existing notes with us. Leaving them behind doesn't just look
+  // untidy — the ledger is what tells the next session which NPCs the
+  // campaign already knows, so an orphaned folder means every NPC met so far
+  // gets re-introduced in the next recap as though they were new.
+  let carried = '';
+  if (previousFolder !== folder) {
+    try {
+      const result = await moveCampaignFolder({ cfg, from: previousFolder, to: folder });
+      if (result.moved) {
+        carried = `\n\n_Moved the existing \`${previousFolder}/\` folder across, notes and ledger included._`;
+      }
+      if (result.skipped?.length) {
+        carried += `\n⚠️ Left behind in \`${previousFolder}/\` (something with the same name was already in \`${folder}/\`): ${result.skipped.join(', ')}`;
+      }
+    } catch (err) {
+      console.error('[campaign] folder move failed:', err);
+      carried = `\n\n⚠️ Couldn't move \`${previousFolder}/\` — the old notes are still there, new ones will go to \`${folder}/\`.`;
+    }
+  }
 
   return interaction.reply({
     content:
-      `📖 Campaign set to **${name.trim()}**.\n` +
-      `New session notes will be filed in \`${folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and so on.` +
-      (current && current !== name.trim()
-        ? `\n\n_Previously **${current}** — notes already exported stay where they are._`
-        : ''),
+      `📖 Campaign set to **${trimmed}**.\n` +
+      `Session notes are filed in \`${folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and so on.` +
+      (current && current !== trimmed ? `\n\n_Previously **${current}**._` : '') +
+      carried,
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -859,7 +881,8 @@ async function handleStats(interaction, db) {
 async function ledgerEntries(db, cfg, guildId, filename) {
   const meeting = db.getLastCompletedMeeting(guildId);
   if (!meeting) return null;
-  const raw = await readLedgerFile(cfg, guildId, meeting.channel_name, filename);
+  const folder = campaignFolder(meeting, db.getCampaignName(guildId));
+  const raw = await readLedgerFile(cfg, folder, filename);
   return (raw || '').split('\n').filter((l) => l.trim().startsWith('-'));
 }
 

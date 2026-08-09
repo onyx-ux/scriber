@@ -1,18 +1,36 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { splitEntryName, isUsableName } from './entry-name.js';
+import { LEDGER_SUBFOLDER } from '../export/naming.js';
 import { join } from 'node:path';
 
 function slugify(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-function campaignDir(cfg, guildId, channelName) {
+// Where the ledger used to live: "campaign/<guildId>-<slugified-channel>".
+// Correct but unreadable — the vault showed a folder called
+// "1341529060836380703-session" next to one called "Cipher", both belonging
+// to the same campaign. Kept only so campaign/vault-migrate.js can find the
+// old directories and move them; nothing writes here any more.
+export function legacyCampaignDir(cfg, guildId, channelName) {
   return join(cfg.obsidianExportDir, 'campaign', `${guildId}-${slugify(channelName)}`);
 }
 
-export function campaignDirInfo(cfg, guildId, channelName) {
-  const slug = `${guildId}-${slugify(channelName)}`;
-  return { localDir: campaignDir(cfg, guildId, channelName), remoteSubpath: `campaign/${slug}` };
+// `folder` is the campaign's folder name — what export/naming.js
+// campaignFolder() returns, i.e. the /campaign name or the channel it was
+// recorded in. Taking it as a plain string rather than deriving it from a
+// guild id keeps one rule for where a campaign's files go: session notes,
+// per-NPC notes and the ledger all hang off the same folder.
+function campaignDir(cfg, folder) {
+  return join(cfg.obsidianExportDir, folder, LEDGER_SUBFOLDER);
+}
+
+// The remote mirrors the vault, so a campaign is one folder on Drive too.
+export function campaignDirInfo(cfg, folder) {
+  return {
+    localDir: campaignDir(cfg, folder),
+    remoteSubpath: `notes/${folder}/${LEDGER_SUBFOLDER}`,
+  };
 }
 
 // Ledger entries are written as "Name — one-line description", but the model
@@ -78,8 +96,8 @@ async function readEntryNames(filePath) {
   }
 }
 
-export async function readKnownEntityNames(cfg, guildId, channelName) {
-  const dir = campaignDir(cfg, guildId, channelName);
+export async function readKnownEntityNames(cfg, folder) {
+  const dir = campaignDir(cfg, folder);
   const [npcs, locations] = await Promise.all([
     readEntryNames(join(dir, 'NPCs.md')),
     readEntryNames(join(dir, 'Locations.md')),
@@ -90,8 +108,8 @@ export async function readKnownEntityNames(cfg, guildId, channelName) {
 // What this campaign already knows about, so a session recap can omit
 // NPCs/locations that were introduced in an earlier session rather than
 // repeating the same entries every single week.
-export async function readKnownEntities(cfg, guildId, channelName) {
-  const dir = campaignDir(cfg, guildId, channelName);
+export async function readKnownEntities(cfg, folder) {
+  const dir = campaignDir(cfg, folder);
   const [npcs, locations] = await Promise.all([
     readEntryKeys(join(dir, 'NPCs.md')),
     readEntryKeys(join(dir, 'Locations.md')),
@@ -151,16 +169,16 @@ async function appendUnique(filePath, title, newItems, sessionLabel, { wikilinks
 // show the campaign's running list directly in Discord rather than making
 // someone open Obsidian mid-session. Returns null rather than throwing when
 // nothing's been recorded yet.
-export async function readLedgerFile(cfg, guildId, channelName, filename) {
+export async function readLedgerFile(cfg, folder, filename) {
   try {
-    return await readFile(join(campaignDir(cfg, guildId, channelName), filename), 'utf8');
+    return await readFile(join(campaignDir(cfg, folder), filename), 'utf8');
   } catch {
     return null;
   }
 }
 
-export async function updateCampaignLedger({ meeting, notes, cfg }) {
-  const dir = campaignDir(cfg, meeting.guild_id, meeting.channel_name);
+export async function updateCampaignLedger({ meeting, notes, cfg, folder }) {
+  const dir = campaignDir(cfg, folder);
   await mkdir(dir, { recursive: true });
 
   const sessionLabel = `session #${meeting.id}, ${(meeting.started_at || '').slice(0, 10)}`;

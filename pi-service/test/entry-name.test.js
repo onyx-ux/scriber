@@ -141,13 +141,14 @@ test('new ledger entries are linked, and dedupe still matches them', async (t) =
       unresolvedThreads: ['Whether the kobolds can be trusted at all.'],
     },
     cfg,
+    folder: 'Cipher',
   });
 
-  const npcs = await readFile(join(dir, 'campaign', 'G1-session', 'NPCs.md'), 'utf8');
+  const npcs = await readFile(join(dir, 'Cipher', 'Ledger', 'NPCs.md'), 'utf8');
   assert.match(npcs, /- \[\[Meepo\]\]: A distraught kobold/, 'entities are linked');
 
   // Sentences are not entities — a note per plot point helps nobody.
-  const threads = await readFile(join(dir, 'campaign', 'G1-session', 'Unresolved-Threads.md'), 'utf8');
+  const threads = await readFile(join(dir, 'Cipher', 'Ledger', 'Unresolved-Threads.md'), 'utf8');
   assert.ok(!threads.includes('[['), 'threads stay unlinked');
 
   // The same NPC arriving unlinked next session must match the linked entry.
@@ -155,7 +156,8 @@ test('new ledger entries are linked, and dedupe still matches them', async (t) =
     meeting: { ...meeting, id: 17 },
     notes: { npcsIntroduced: ['Meepo: the kobold, still upset'] },
     cfg,
+    folder: 'Cipher',
   });
-  const after = await readFile(join(dir, 'campaign', 'G1-session', 'NPCs.md'), 'utf8');
+  const after = await readFile(join(dir, 'Cipher', 'Ledger', 'NPCs.md'), 'utf8');
   assert.equal((after.match(/Meepo/g) || []).length, 1, 'no duplicate on re-mention');
 });

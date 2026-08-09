@@ -41,6 +41,7 @@ test('updateCampaignLedger appends only genuinely new entries', async (t) => {
     meeting,
     notes: { npcsIntroduced: ['Vex the Bold — a smuggler'], locationsVisited: ['The Rusty Anchor (tavern)'] },
     cfg,
+    folder: 'Cipher',
   });
 
   // Same NPC, different wording, next session — must NOT be added again.
@@ -51,9 +52,10 @@ test('updateCampaignLedger appends only genuinely new entries', async (t) => {
       locationsVisited: ['The Rusty Anchor, still the same pub'],
     },
     cfg,
+    folder: 'Cipher',
   });
 
-  const { localDir } = campaignDirInfo(cfg, 'G', 'Cipher');
+  const { localDir } = campaignDirInfo(cfg, 'Cipher');
   const npcs = await readFile(join(localDir, 'NPCs.md'), 'utf8');
   const locations = await readFile(join(localDir, 'Locations.md'), 'utf8');
 
@@ -66,12 +68,12 @@ test('readKnownEntities reports what the campaign has already recorded', async (
   const { cfg, dir } = await tmpCfg();
   t.after(() => rm(dir, { recursive: true, force: true }));
 
-  const { localDir } = campaignDirInfo(cfg, 'G', 'Cipher');
+  const { localDir } = campaignDirInfo(cfg, 'Cipher');
   await mkdir(localDir, { recursive: true });
   await writeFile(join(localDir, 'NPCs.md'), '# NPCs\n\n- Vex the Bold — a smuggler _(session #1, 2026-01-01)_\n');
   await writeFile(join(localDir, 'Locations.md'), '# Locations\n\n- The Rusty Anchor (tavern) _(session #1, 2026-01-01)_\n');
 
-  const known = await readKnownEntities(cfg, 'G', 'Cipher');
+  const known = await readKnownEntities(cfg, 'Cipher');
   assert.ok(known.npcs.has('vex the bold'));
   assert.ok(known.locations.has('the rusty anchor'));
   assert.ok(!known.npcs.has('mira the cook'));

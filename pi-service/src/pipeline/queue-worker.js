@@ -15,7 +15,7 @@ import {
 import { splitEntryName } from '../campaign/entry-name.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
 import { resolveProgressTarget } from '../delivery/progress-target.js';
-import { sessionLabel } from '../export/naming.js';
+import { sessionLabel, campaignFolder } from '../export/naming.js';
 
 // Drop NPCs and locations the campaign already knows about from THIS
 // session's recap. The party visiting the same tavern every week shouldn't
@@ -128,14 +128,16 @@ export async function tick(db, discordClient, cfg) {
     // to append onto a stale local copy and lose those edits. Doing it before
     // rendering also means "what does this campaign already know" reflects
     // your manual edits, not just what the bot has seen.
-    const { localDir: ledgerDir, remoteSubpath: ledgerRemote } = campaignDirInfo(
-      cfg,
-      meeting.guild_id,
-      meeting.channel_name
-    );
+    // One folder name drives everything this campaign writes — the session
+    // note, the ledger, and both Drive destinations — so they cannot drift
+    // apart if /campaign renames the campaign mid-pipeline.
+    const campaignName = db.getCampaignName(meeting.guild_id);
+    const folder = campaignFolder(meeting, campaignName);
+
+    const { localDir: ledgerDir, remoteSubpath: ledgerRemote } = campaignDirInfo(cfg, folder);
     await pullLedgerFromDrive(ledgerDir, ledgerRemote, cfg);
 
-    const known = await readKnownEntities(cfg, meeting.guild_id, meeting.channel_name);
+    const known = await readKnownEntities(cfg, folder);
     const displayNotes = withoutAlreadyKnown(notes, known);
 
     // What the prose is allowed to link to: everyone this campaign already
@@ -143,7 +145,7 @@ export async function tick(db, discordClient, cfg) {
     // notes rather than displayNotes — an NPC omitted from the list because
     // an earlier session already introduced them is exactly the sort of
     // recurring character whose mentions most deserve a link.
-    const knownNames = await readKnownEntityNames(cfg, meeting.guild_id, meeting.channel_name);
+    const knownNames = await readKnownEntityNames(cfg, folder);
     const entities = [
       ...knownNames.npcs,
       ...knownNames.locations,
@@ -152,7 +154,6 @@ export async function tick(db, discordClient, cfg) {
       ),
     ];
 
-    const campaignName = db.getCampaignName(meeting.guild_id);
     const mdPath = await exportMarkdown({ meeting, utterances, notes: displayNotes, cfg, entities, campaignName });
 
     // The notes themselves are about to appear, so the status line has done
@@ -163,7 +164,7 @@ export async function tick(db, discordClient, cfg) {
     await postSessionNotes({ discordClient, meeting, notes: displayNotes, mdPath, cfg });
 
     // Ledger update uses the unfiltered notes so it stays authoritative.
-    await updateCampaignLedger({ meeting, notes, cfg });
+    await updateCampaignLedger({ meeting, notes, cfg, folder });
     await pushLedgerToDrive(ledgerDir, ledgerRemote, cfg);
 
     // Regenerate the browsable archive page. Best-effort — a failure here
