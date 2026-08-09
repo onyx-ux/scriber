@@ -32,7 +32,9 @@ test('renders a self-contained page with no external requests', () => {
 
 test('session detail and derived stats appear', () => {
   const html = renderCampaignSite([session()]);
-  assert.match(html, /Session #3 — Cipher/);
+  // "Session 02 (#3)": the per-campaign number the note is named after, with
+  // the meeting id the commands still take.
+  assert.match(html, /Session 02 \(#3\) — Cipher/);
   assert.match(html, /The party entered the crypt\./);
   assert.match(html, /3h 30m/, 'duration is derived from start/end');
   assert.match(html, /412 lines/);
@@ -43,10 +45,10 @@ test('session detail and derived stats appear', () => {
 
 test('sessions are listed newest first', () => {
   const html = renderCampaignSite([
-    session({ id: 1, started_at: '2026-01-01T10:00:00Z' }),
-    session({ id: 2, started_at: '2026-06-01T10:00:00Z' }),
+    session({ id: 1, session_number: 1, started_at: '2026-01-01T10:00:00Z' }),
+    session({ id: 2, session_number: 2, started_at: '2026-06-01T10:00:00Z' }),
   ]);
-  assert.ok(html.indexOf('Session #2') < html.indexOf('Session #1'));
+  assert.ok(html.indexOf('Session 02') < html.indexOf('Session 01'));
 });
 
 test('an entity is credited to the session that introduced it, not repeated', () => {

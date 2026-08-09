@@ -7,6 +7,7 @@ import { notifyTranscribeReminder } from '../delivery/transcribe-notify.js';
 import { notifyApprovalNeeded } from '../delivery/approval-notify.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
 import { resolveProgressTarget } from '../delivery/progress-target.js';
+import { sessionLabel } from '../export/naming.js';
 import { getTranscription, describeTranscription } from './progress.js';
 
 // Decides WHEN a recorded session is allowed to use the PC's GPU, and runs it.
@@ -117,7 +118,7 @@ async function runTranscribeJob(db, discordClient, cfg, job, meeting) {
       });
     }
   } catch (err) {
-    await live?.finish(`⚠️ Session #${meeting.id}: transcription failed — \`${String(err.message).slice(0, 150)}\`. The audio is safe and it will be retried.`);
+    await live?.finish(`⚠️ ${sessionLabel(meeting)}: transcription failed — \`${String(err.message).slice(0, 150)}\`. The audio is safe and it will be retried.`);
     db.rescheduleJob(
       job.id,
       new Date(Date.now() + cfg.transcribeSnoozeHours * 3600_000).toISOString(),
@@ -140,7 +141,7 @@ async function startChannelProgress({ discordClient, cfg, meeting, clipCount }) 
     initial: `🎧 Transcribing session #${meeting.id} — ${clipCount} clips…`,
     render: () => {
       const entry = getTranscription(meeting.id);
-      return entry ? `🎧 Session #${meeting.id}: ${describeTranscription(entry)}` : null;
+      return entry ? `🎧 ${sessionLabel(meeting)}: ${describeTranscription(entry)}` : null;
     },
   });
 }

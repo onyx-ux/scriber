@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { sessionNotePath } from './naming.js';
+import { sessionNotePath, sessionLabel } from './naming.js';
 
 // A single self-contained HTML dashboard for the whole campaign, written
 // alongside the markdown exports so it syncs to Drive/Obsidian like anything
@@ -81,7 +81,7 @@ function sessionCard(session, campaignName) {
 
   return `<article class="session" data-search="${esc(haystack)}">
   <header>
-    <h3>Session #${esc(session.id)} — ${esc(session.channel_name)}</h3>
+    <h3>${esc(sessionLabel(session))} — ${esc(campaignName || session.channel_name)}</h3>
     <p class="meta">${meta}</p>
   </header>
   <p class="tldr">${esc(notes.tldr || 'No recap recorded.')}</p>

@@ -44,6 +44,7 @@ export function notifyTranscribeReady({
     cfg,
     {
       content: transcribeRequestMessage({
+        meeting,
         meetingId: meeting.id,
         utteranceCount,
         now,
@@ -62,6 +63,7 @@ export function notifyTranscribeReminder({ discordClient, cfg, meeting, jobId, n
     cfg,
     {
       content: reminderMessage({
+        meeting,
         meetingId: meeting.id,
         waitingSinceIso: meeting.ended_at || meeting.started_at,
         cfg,

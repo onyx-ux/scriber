@@ -225,6 +225,7 @@ whole stack on one machine for debugging.)*
 - `/approve [meeting_id] [provider:<gemini|anthropic>]` — release a session parked awaiting approval (omit the ID to approve everything waiting; `provider:` works the same as on `/summarise`)
 - `/pause` / `/resume` — stop and restart summarising without losing queued work
 - `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
+- `/campaign [name] [campaign]` — name the campaign. That name becomes the Obsidian folder its session notes are filed in. **Works in a DM**, since naming a campaign is housekeeping the table doesn't need to watch; a DM has no server to infer the campaign from, so the `campaign:` option picks one (autocompleted by name, with session counts). Omit `name:` to see the current one
 - `/whoami` — show what name you currently appear as in transcripts and notes
 - `/stats` — campaign-wide totals: sessions, hours recorded, lines transcribed, and who talks the most
 - `/npcs` / `/locations` — list everyone met / everywhere visited so far, straight from the campaign ledger, without opening Obsidian
@@ -505,3 +506,63 @@ the LAN for no reason.
 
 `STATUS_TOKEN` adds a shared secret if the port is ever reachable from beyond
 the LAN; unset is fine at home. `STATUS_PORT=0` disables the API entirely.
+
+## How notes are filed
+
+```
+<Obsidian export>/
+  Cipher/
+    Session 01.md
+    Session 02.md
+    NPCs/          one note per character
+    Locations/     one note per place
+  campaign/
+    <guild>-<channel>/   NPCs.md, Locations.md, ...  (the running ledger)
+```
+
+Sessions are numbered **per campaign**, not by meeting id. The meeting id is a
+counter shared across every server the bot serves, so one table's second night
+was previously filed as "session 16". The number is stored on the meeting when
+it is created and never changes: a number derived by counting rows would shift
+under its own notes the first time a session was deleted, renaming files that
+are already synced to Drive and linked from the ledger.
+
+`/campaign name:...` sets the folder. Without one it falls back to the channel
+name with emoji and path-breaking characters stripped. Renaming a campaign only
+affects notes exported *after* the rename — earlier ones stay where they are.
+
+Discord messages say `Session 02 (#16)`: the number matching the vault, and the
+meeting id that `/summarise`, `/transcribe` and `/export` actually take.
+
+## Character and location notes
+
+The per-session recap lists NPCs one line at a time, and only in the session
+that introduced them. A character recurring over six months ends up as six
+scattered one-liners with no page of their own.
+
+```bash
+node scripts/build-npc-notes.mjs <guildId> --write
+node scripts/build-location-notes.mjs <guildId> --write
+```
+
+Both read the **full transcripts** rather than the summaries, which recovers
+what a recap discards: how someone speaks, what they wanted, verbatim quotes,
+and the threads left hanging. Frontmatter is what a DM would filter on — race,
+status, party standing, affiliation, danger, first seen, sessions — and every
+entry links back to the session it came from.
+
+Aliases matter more than they look. Speech-to-text mangles names, so a note
+carries `aliases: ["Meepo", "Mepo", "Nebo"]`, and Obsidian resolves links
+against those. That is also what keeps older links working when the extraction
+recovers a fuller name — the vault links `[[Kerowyn]]`, the transcript says
+"Kerowyn Hucrele". The prompt asks for existing spellings to be preserved, and
+the code enforces it afterwards, because a model doing it *most* of the time
+fails silently.
+
+Useful flags: `--cache <file>` saves the extraction so notes can be re-rendered
+without paying for the transcripts again, `--model <name>` overrides the model,
+and both refuse quietly if the ledger isn't present locally — pull it from
+Drive first, or aliases won't be reconciled.
+
+**These regenerate notes wholesale.** Anything hand-edited in `NPCs/` or
+`Locations/` is overwritten.

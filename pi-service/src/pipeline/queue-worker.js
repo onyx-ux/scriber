@@ -15,6 +15,7 @@ import {
 import { splitEntryName } from '../campaign/entry-name.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
 import { resolveProgressTarget } from '../delivery/progress-target.js';
+import { sessionLabel } from '../export/naming.js';
 
 // Drop NPCs and locations the campaign already knows about from THIS
 // session's recap. The party visiting the same tavern every week shouldn't
@@ -66,7 +67,7 @@ async function startSummaryProgress({ discordClient, meeting, cfg, jobCfg }) {
 
   const live = startLiveProgress({
     channel,
-    initial: `📝 Summarising session #${meeting.id} with **${label}**…`,
+    initial: `📝 Summarising ${sessionLabel(meeting)} with **${label}**…`,
     render: () => renderSummaryProgress(state, label),
   });
 
@@ -188,7 +189,7 @@ export async function tick(db, discordClient, cfg) {
       db.setMeetingStatus(meeting.id, 'summary_failed');
       console.error(`[queue] meeting ${meeting.id} failed permanently after ${attempts} attempts: ${err.message}`);
       await progress?.finish(
-        `❌ Session #${meeting.id}: summarising failed after ${attempts} attempts — \`${err.message.slice(0, 200)}\`\n` +
+        `❌ ${sessionLabel(meeting)}: summarising failed after ${attempts} attempts — \`${err.message.slice(0, 200)}\`\n` +
           `The transcript is safe. Use \`/summarise meeting_id:${meeting.id}\` to try again.`
       );
       return;
@@ -203,7 +204,7 @@ export async function tick(db, discordClient, cfg) {
     // Say so rather than leaving a stale "summarising…" line up: a retry can
     // be half an hour away, and the transcript being safe is the useful part.
     await progress?.finish(
-      `⚠️ Session #${meeting.id}: summarising failed (\`${err.message.slice(0, 150)}\`) — retrying in ${Math.round(delay / 1000)}s. The transcript is safe.`
+      `⚠️ ${sessionLabel(meeting)}: summarising failed (\`${err.message.slice(0, 150)}\`) — retrying in ${Math.round(delay / 1000)}s. The transcript is safe.`
     );
   }
 }

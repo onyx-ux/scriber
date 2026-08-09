@@ -238,3 +238,55 @@ test('reconciliation is safe with nothing to reconcile', () => {
   assert.deepEqual(reconcileAliases(extracted(), []).unresolved, []);
   assert.deepEqual(reconcileAliases([], ['Anyone']).unresolved, ['Anyone']);
 });
+
+// --- adversarial: could two NPCs overwrite each other's file? ---
+
+// npcFileName strips path characters; npcKey strips those AND punctuation.
+// If two names could survive to the same FILENAME while merging as different
+// NPCs, one note would silently overwrite the other.
+test('names that produce the same filename always merge into one NPC', () => {
+  const pairs = [
+    ['Bob', 'Bob.'],
+    ['Bob', 'Bob?'],
+    ['Sir Braford', 'Sir Braford,'],
+    ['Vex the Bold', 'Vex [the Bold]'],
+    ['Meepo', '#Meepo'],
+    ['Yusdrayl', 'Yusdrayl*'],
+  ];
+
+  for (const [a, b] of pairs) {
+    const sameFile = npcFileName(a) === npcFileName(b);
+    const sameNpc = npcKey(a) === npcKey(b);
+    assert.ok(
+      !sameFile || sameNpc,
+      `"${a}" and "${b}" share the filename ${npcFileName(a)} but are treated as different NPCs`
+    );
+  }
+});
+
+test('merging really does collapse them, so only one file is written', () => {
+  const merged = mergeNpcs([
+    { sessionNumber: 1, npcs: [{ name: 'Bob' }, { name: 'Bob.' }, { name: 'Bob?' }] },
+  ]);
+  assert.equal(merged.length, 1);
+  assert.equal(new Set(merged.map((n) => npcFileName(n.name))).size, 1);
+});
+
+// The script may reconcile more than once while iterating on rendering.
+test('reconciling twice does not duplicate an alias', () => {
+  const npcs = mergeNpcs([{ sessionNumber: 1, npcs: [{ name: 'Kerowyn Hucrele' }] }]);
+  reconcileAliases(npcs, ['Kerowyn']);
+  reconcileAliases(npcs, ['Kerowyn']);
+  assert.deepEqual(npcs[0].aliases.filter((a) => a === 'Kerowyn'), ['Kerowyn']);
+});
+
+// The model omits fields it has no evidence for, so a sparse record is normal.
+test('a record with almost nothing in it still renders', () => {
+  const bare = mergeNpcs([{ sessionNumber: 3, npcs: [{ name: 'Someone' }] }])[0];
+  const md = renderNpcNote(bare, { campaign: 'Cipher' });
+
+  assert.match(md, /^name: "Someone"$/m);
+  assert.match(md, /^first_seen: 3$/m);
+  assert.ok(!md.includes('undefined'), 'no undefined leaks into the note');
+  assert.ok(!md.includes('null'), 'nor null');
+});

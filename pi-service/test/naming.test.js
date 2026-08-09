@@ -276,3 +276,20 @@ test('a note in the export root keeps the old flat destination', async () => {
   const cfg = { driveRemoteName: 'gdrive', driveRemotePath: 'DnDSessions', obsidianExportDir: '/data/obsidian' };
   assert.equal(noteRemoteDir('/data/obsidian/legacy.md', cfg), 'gdrive:DnDSessions/notes');
 });
+
+// --- how a session is referred to in Discord ---
+
+test('the label leads with the vault’s number and keeps the id for commands', async () => {
+  const { sessionLabel } = await import('../src/export/naming.js');
+  // The note is "Session 02.md" but /summarise still takes meeting_id 16.
+  // Showing only one of them made the DM say "Session #16" about a file
+  // called "Session 02.md".
+  assert.equal(sessionLabel({ id: 16, session_number: 2 }), 'Session 02 (#16)');
+  assert.equal(sessionLabel({ id: 3, session_number: 11 }), 'Session 11 (#3)');
+});
+
+test('a session with no number falls back to the meeting id', async () => {
+  const { sessionLabel } = await import('../src/export/naming.js');
+  assert.equal(sessionLabel({ id: 7 }), 'Session #7');
+  assert.equal(sessionLabel({ meeting_id: 7 }), 'Session #7', 'job rows name it differently');
+});

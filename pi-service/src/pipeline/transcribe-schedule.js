@@ -1,5 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
+import { sessionLabel } from '../export/naming.js';
+
 // WHEN a finished recording is allowed to use the PC's GPU.
 //
 // Transcription is the only step that reaches into another machine's
@@ -172,9 +174,10 @@ function windowDescription(cfg) {
 
 // The message the owner actually receives. It has to answer "why is nothing
 // happening yet?" without them having to remember how any of this works.
-export function transcribeRequestMessage({ meetingId, utteranceCount, now, cfg, serverReachable }) {
+export function transcribeRequestMessage({ meeting, meetingId, utteranceCount, now, cfg, serverReachable }) {
+  const label = sessionLabel(meeting ?? { id: meetingId });
   const lines = [
-    `🎙️ **Session #${meetingId}** is recorded and ready to transcribe — ${utteranceCount} clips.`,
+    `🎙️ **${label}** is recorded and ready to transcribe — ${utteranceCount} clips.`,
     '',
     `It needs your PC's GPU, so it hasn't started. It will run by itself during **${windowDescription(cfg)}** (${cfg.scheduleTimeZone}) whenever the PC is on.`,
   ];
@@ -190,11 +193,12 @@ export function transcribeRequestMessage({ meetingId, utteranceCount, now, cfg, 
   return lines.join('\n');
 }
 
-export function reminderMessage({ meetingId, waitingSinceIso, cfg, now }) {
+export function reminderMessage({ meeting, meetingId, waitingSinceIso, cfg, now }) {
+  const label = sessionLabel(meeting ?? { id: meetingId });
   const days = Math.max(1, Math.round((now.getTime() - new Date(waitingSinceIso).getTime()) / 86_400_000));
   const weekend = cfg.transcribeWeekdaysOnly && isWeekend(now, cfg.scheduleTimeZone);
   return (
-    `⏰ **Session #${meetingId}** is still waiting to be transcribed (${days} day${days === 1 ? '' : 's'}).` +
+    `⏰ **${label}** is still waiting to be transcribed (${days} day${days === 1 ? '' : 's'}).` +
     (weekend
       ? " It's the weekend, so the automatic window is off — approve below to run it now."
       : ` It'll go automatically during ${windowDescription(cfg)} if the PC is on.`)
