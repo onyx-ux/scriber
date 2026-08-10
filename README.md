@@ -570,7 +570,14 @@ node scripts/build-location-notes.mjs <guildId> --write
 # The party. The roster has to be given: the transcript is labelled with the
 # DISCORD SPEAKER, so "Brett" is a person and "BenTen" is who they play, and
 # nothing in the transcript reliably says which speaker is the DM.
-node scripts/build-character-notes.mjs <guildId>   --dm "Old Dad" --pc "Brett=BenTen" --pc Aurion --pc Tad --write
+node scripts/build-character-notes.mjs <guildId>   --dm "Old Dad" --pc "Brett=BenTen" --pc "Tad=Tad" --pc Aurion --write
+
+# "Speaker=Character" pins the character's name. A bare "--pc Speaker" leaves
+# it to the model, which reads it off the transcript and can hear it
+# differently in different sessions ("Saf" as "Seth"). Pin it once you know
+# it, or fix it afterwards with rename-note.mjs, which keeps the old name as
+# an alias so nothing written earlier stops resolving.
+node scripts/rename-note.mjs <guildId> "Seth" "Saf" --write
 
 # Link every name the vault knows, everywhere it is mentioned. Re-run after
 # any of the above; it is idempotent, and dry-run by default.
