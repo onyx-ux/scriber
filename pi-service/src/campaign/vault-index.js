@@ -9,7 +9,10 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const ENTITY_FOLDERS = ['NPCs', 'Locations'];
+// Characters/ holds the party, NPCs/ everyone else, Locations/ the places.
+// All three are name-bearing, so all three feed the link index — a session
+// recap should link the party the same way it links the people they met.
+const ENTITY_FOLDERS = ['Characters', 'NPCs', 'Locations'];
 
 // Only the leading --- block, and only the two keys we need. A real YAML
 // parser would be a dependency for four lines of very predictable output
@@ -50,12 +53,20 @@ export function parseFrontmatter(text) {
 //
 //     [[Kerowyn Hucrele|Kerawin]] Hucrele
 //
-// So each single-word alias is also paired with every word of the canonical
-// name, in both orders. That yields "Kerawin Hucrele" and "Queen Yusdrayl"
-// without having to work out which word the alias is standing in for. The
-// linker tries the longest name first, so whichever variant the text actually
-// uses wins, with the bare alias left as the fallback. Variants that match
-// nothing ("Yusdrayl Kobold") cost nothing — they are simply never found.
+// So each single-word alias is substituted into the canonical name at every
+// position, which yields "Kerawin Hucrele" for Kerowyn Hucrele and "Cypher
+// von Hellsing" for Cipher von Hellsing without having to work out which word
+// the alias stands in for.
+//
+// Substitution alone misses the TITLE form — "Queen Yusdrayl" is not any
+// substitution into "Kobold Queen" — so two-word names additionally get the
+// alias paired with each word. That pairing is deliberately NOT done for
+// longer names: "Cipher von Hellsing" would generate "Cypher von", which
+// matches the first two words of the real phrase and leaves "Hellsing"
+// stranded outside the link.
+//
+// Variants that match nothing ("Yusdrayl Kobold") cost nothing — they are
+// simply never found.
 export function expandAliases(name, aliases) {
   const words = String(name).split(/\s+/).filter(Boolean);
   if (words.length < 2) return [...aliases];
@@ -63,10 +74,18 @@ export function expandAliases(name, aliases) {
   const out = new Set(aliases);
   for (const alias of aliases) {
     if (!alias || alias.includes(' ')) continue;
-    for (const word of words) {
-      if (word.toLowerCase() === alias.toLowerCase()) continue;
-      out.add(`${word} ${alias}`);
-      out.add(`${alias} ${word}`);
+    const lower = alias.toLowerCase();
+
+    for (const [i, word] of words.entries()) {
+      if (word.toLowerCase() === lower) continue;
+      const substituted = [...words];
+      substituted[i] = alias;
+      out.add(substituted.join(' '));
+
+      if (words.length === 2) {
+        out.add(`${word} ${alias}`);
+        out.add(`${alias} ${word}`);
+      }
     }
   }
   return [...out];

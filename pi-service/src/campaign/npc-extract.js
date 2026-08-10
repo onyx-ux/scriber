@@ -97,7 +97,11 @@ export function buildNpcUserMessage({
 
 // Models wrap JSON in prose or a code fence often enough that trusting a bare
 // JSON.parse means losing a whole session's extraction to a stray backtick.
-export function parseNpcResponse(text) {
+//
+// `key` is the property the list lives under ("npcs", "characters"). A bare
+// array is accepted too, since that is the other shape models return when
+// asked for a list.
+export function parseEntityList(text, key) {
   const raw = String(text ?? '').trim();
   if (!raw) return [];
 
@@ -115,10 +119,14 @@ export function parseNpcResponse(text) {
     return [];
   }
 
-  const npcs = Array.isArray(parsed) ? parsed : parsed.npcs;
-  if (!Array.isArray(npcs)) return [];
+  const list = Array.isArray(parsed) ? parsed : parsed[key];
+  if (!Array.isArray(list)) return [];
 
-  return npcs.filter((n) => n && typeof n.name === 'string' && n.name.trim());
+  return list.filter((n) => n && typeof n.name === 'string' && n.name.trim());
+}
+
+export function parseNpcResponse(text) {
+  return parseEntityList(text, 'npcs');
 }
 
 // "meepo", "Meepo," and "MEEPO" are the same character.

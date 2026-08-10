@@ -264,3 +264,74 @@ test('addPlainNames maps a ledger-only name to itself', () => {
   assert.equal(index.targets.get('Shatterspike'), 'Shatterspike');
   assert.equal(index.targets.size, 1, 'blanks are ignored');
 });
+
+// --- player characters ---
+
+test('Characters/ feeds the link index alongside NPCs/ and Locations/', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'scriber-index-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(join(dir, 'Cipher', 'Characters'), { recursive: true });
+  await mkdir(join(dir, 'Cipher', 'NPCs'), { recursive: true });
+  // The transcript labels this speaker "Brett"; the table calls the character
+  // BenTen. Both have to link, or half the mentions go nowhere.
+  await writeFile(join(dir, 'Cipher', 'Characters', 'BenTen.md'), '---\nname: "BenTen"\naliases: ["Brett", "Ben 10"]\n---\n', 'utf8');
+  await writeFile(join(dir, 'Cipher', 'NPCs', 'Meepo.md'), '---\nname: "Meepo"\n---\n', 'utf8');
+
+  const entities = await readVaultEntities({ obsidianExportDir: dir }, 'Cipher');
+  assert.deepEqual(entities.map((e) => e.name).sort(), ['BenTen', 'Meepo']);
+  assert.equal(entities.find((e) => e.name === 'BenTen').kind, 'Characters');
+
+  const { targets } = buildNameIndex(entities);
+  assert.equal(targets.get('Brett'), 'BenTen', 'the player name links to the character note');
+  assert.equal(targets.get('Ben 10'), 'BenTen');
+});
+
+// --- matcher defects found linking the real vault ---
+
+// "Cipher von Hellsing" with a two-word alias generated from it produced
+// [[Cipher von Hellsing|Cypher von]] Hellsing — the front of the phrase
+// linked, the surname stranded outside.
+test('expandAliases does not build a fragment of a three-word name', () => {
+  const variants = expandAliases('Cipher von Hellsing', ['Cypher']);
+  assert.ok(variants.includes('Cypher von Hellsing'), 'the substituted full name is there');
+  assert.ok(!variants.includes('Cypher von'), JSON.stringify(variants));
+  assert.ok(!variants.includes('von Cypher'));
+});
+
+// Speaker labels come from Discord and one of them really does have two
+// spaces in it. Without this the full name misses and a shorter alias claims
+// the front of the phrase.
+test('a run of whitespace inside a name still matches', () => {
+  const targets = new Map([['Cipher von Hellsing', 'Cipher von Hellsing']]);
+  assert.equal(
+    linkifyEntities('| Cipher  von Hellsing | 226 |', ['Cipher von Hellsing'], { targets }),
+    '| [[Cipher von Hellsing|Cipher  von Hellsing]] | 226 |'
+  );
+});
+
+// First-occurrence-only is per name, so "Ben 10" linking once did not stop
+// "Ben" claiming the front of the NEXT "Ben 10".
+test('a short name does not claim the front of a longer one', () => {
+  const targets = new Map([
+    ['Ben 10', 'BenTen'],
+    ['Ben', 'BenTen'],
+  ]);
+  const out = linkifyEntities('Ben 10 fell. Cipher told Ben 10 it was a good deal.', ['Ben 10', 'Ben'], { targets });
+
+  // "Ben 10" links once, and the second copy stays plain — first occurrence
+  // only. What must NOT happen is "Ben" linking the front of it and leaving
+  // a stray "10" outside the link.
+  assert.equal(out, '[[BenTen|Ben 10]] fell. Cipher told Ben 10 it was a good deal.');
+  assert.ok(!out.includes('[[BenTen|Ben]] 10'), out);
+});
+
+test('the short name still links where the longer one is not present', () => {
+  const targets = new Map([
+    ['Ben 10', 'BenTen'],
+    ['Ben', 'BenTen'],
+  ]);
+  assert.equal(
+    linkifyEntities('Ben drew his halberd.', ['Ben 10', 'Ben'], { targets }),
+    '[[BenTen|Ben]] drew his halberd.'
+  );
+});

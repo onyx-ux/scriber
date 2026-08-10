@@ -290,3 +290,55 @@ test('a record with almost nothing in it still renders', () => {
   assert.ok(!md.includes('undefined'), 'no undefined leaks into the note');
   assert.ok(!md.includes('null'), 'nor null');
 });
+
+// --- player characters ---
+
+test('the roster overrides what the model read off the speaker labels', async () => {
+  const { mergeCharacters, applyRoster, parseCharacterResponse } = await import('../src/campaign/character-extract.js');
+
+  // The transcript is labelled "Brett", so the model calls the character
+  // Brett. The table calls him BenTen; the speaker label still has to survive
+  // as an alias, because the transcript and the recaps are full of it.
+  const characters = parseCharacterResponse('```json\n{"characters":[{"name":"Brett","player":"Brett","aliases":["Bret"]}]}\n```');
+  const merged = applyRoster(mergeCharacters([{ sessionNumber: 1, characters }]), [
+    { player: 'Brett', character: 'BenTen' },
+  ]);
+
+  assert.equal(merged[0].name, 'BenTen');
+  assert.equal(merged[0].player, 'Brett');
+  assert.ok(merged[0].aliases.includes('Brett'), JSON.stringify(merged[0].aliases));
+  assert.ok(merged[0].aliases.includes('Bret'), 'the mis-hearings survive too');
+});
+
+test('a character carried across sessions accumulates rather than resets', async () => {
+  const { mergeCharacters } = await import('../src/campaign/character-extract.js');
+
+  const merged = mergeCharacters([
+    { sessionNumber: 1, characters: [{ name: 'Aurion', class: 'Paladin', level: 1, notableMoments: ['Preached.'], status: 'alive' }] },
+    { sessionNumber: 2, characters: [{ name: 'Aurion', level: 2, notableMoments: ['Opened the door.'] }] },
+  ]);
+
+  assert.deepEqual(merged[0].sessions, [1, 2]);
+  assert.equal(merged[0].level, 2, 'the later session wins on what changes');
+  assert.equal(merged[0].class, 'Paladin', 'and does not erase what it did not mention');
+  assert.equal(merged[0].notableMoments.length, 2, 'moments accumulate');
+});
+
+test('a character note records who plays them', async () => {
+  const { renderCharacterNote } = await import('../src/campaign/character-extract.js');
+
+  const note = renderCharacterNote(
+    {
+      name: 'BenTen', player: 'Brett', aliases: ['Brett'], race: 'Human', class: 'Fighter',
+      level: null, deity: null, status: 'alive', description: 'A fighter.', goal: 'Glory.',
+      relationships: [{ who: 'Meepo', how: 'Carried him.' }], sessions: [1, 2],
+      notableMoments: [{ session: 2, text: 'Pried open the keg.' }], quotes: [], hooks: [],
+    },
+    { campaign: 'Cipher', knownEntities: ['Meepo'] }
+  );
+
+  assert.match(note, /^---\nname: "BenTen"\naliases: \["Brett"\]\ntype: pc\nplayer: "Brett"/);
+  assert.match(note, /\*Human Fighter — played by Brett\*/);
+  assert.match(note, /- \*\*\[\[Meepo\]\]\*\* — Carried him\./, 'known entities are linked');
+  assert.match(note, /- Pried open the keg\. _\(\[\[Session 02\]\]\)_/);
+});

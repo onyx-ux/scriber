@@ -516,7 +516,8 @@ the LAN; unset is fine at home. `STATUS_PORT=0` disables the API entirely.
   Cipher/
     Session 01.md
     Session 02.md
-    NPCs/          one note per character
+    Characters/    one note per player character
+    NPCs/          one note per NPC
     Locations/     one note per place
     Ledger/        NPCs.md, Locations.md, Party-Decisions.md,
                    Unresolved-Threads.md  (the running ledger)
@@ -565,6 +566,15 @@ scattered one-liners with no page of their own.
 ```bash
 node scripts/build-npc-notes.mjs <guildId> --write
 node scripts/build-location-notes.mjs <guildId> --write
+
+# The party. The roster has to be given: the transcript is labelled with the
+# DISCORD SPEAKER, so "Brett" is a person and "BenTen" is who they play, and
+# nothing in the transcript reliably says which speaker is the DM.
+node scripts/build-character-notes.mjs <guildId>   --dm "Old Dad" --pc "Brett=BenTen" --pc Aurion --pc Tad --write
+
+# Link every name the vault knows, everywhere it is mentioned. Re-run after
+# any of the above; it is idempotent, and dry-run by default.
+node scripts/link-vault.mjs <guildId> --write
 ```
 
 Both read the **full transcripts** rather than the summaries, which recovers

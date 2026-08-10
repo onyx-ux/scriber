@@ -161,3 +161,21 @@ test('new ledger entries are linked, and dedupe still matches them', async (t) =
   const after = await readFile(join(dir, 'Cipher', 'Ledger', 'NPCs.md'), 'utf8');
   assert.equal((after.match(/Meepo/g) || []).length, 1, 'no duplicate on re-mention');
 });
+
+// A slash inside [[...]] is a PATH separator, not part of the name:
+// [[Kobold Lair / Throne Room]] looks for "Throne Room" inside a folder
+// called "Kobold Lair " and finds nothing. The raw markdown looks fine,
+// which is what makes it worth a guard rather than a review.
+test('a name containing wikilink syntax is not linked at all', async () => {
+  const { isUsableName } = await import('../src/campaign/entry-name.js');
+
+  assert.equal(isUsableName('Kobold Lair / Throne Room'), false, 'slash is a path separator');
+  assert.equal(isUsableName('Sunless Citadel#Lower'), false, 'hash is a heading link');
+  assert.equal(isUsableName('Meepo|Kaltrix'), false, 'pipe is an alias separator');
+  assert.equal(isUsableName('The [Outcast]'), false);
+
+  // Punctuation with no meaning inside a link is still fine.
+  assert.equal(isUsableName('Goblin Guard Post & Target Practice Room'), true);
+  assert.equal(isUsableName("Meepo's Room"), true);
+  assert.equal(isUsableName('Kobold Queen'), true);
+});

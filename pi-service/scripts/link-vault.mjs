@@ -66,7 +66,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   for (const f of await readdir(root, { withFileTypes: true })) {
     if (f.isFile() && f.name.endsWith('.md')) files.push({ path: join(root, f.name), mode: 'section' });
   }
-  for (const sub of ['NPCs', 'Locations', 'Ledger']) {
+  for (const sub of ['Characters', 'NPCs', 'Locations', 'Ledger']) {
     const dir = join(root, sub);
     const listing = await readdir(dir).catch(() => []);
     for (const name of listing.filter((n) => n.endsWith('.md'))) {
