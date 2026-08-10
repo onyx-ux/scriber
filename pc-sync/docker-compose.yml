@@ -25,23 +25,43 @@ services:
     entrypoint:
       - sh
       - -c
-      # `move`, not `copy` — the point is that the Pi ends up with neither the
-      # notes nor the audio. That only works if the SFTP user can DELETE what
-      # it has taken, which needs write permission on the containing directory
-      # on the Pi, not just on the file. The bot sets umask 002 and the export
-      # roots are setgid so new directories stay group-writable; without that
-      # every delete fails with "permission denied" and this quietly behaves
-      # as a copy, filling the Pi forever.
+      # SESSION NOTES move, the CAMPAIGN INDEX is copied.
+      #
+      # A session note is write-once and carries the whole transcript, so it
+      # is both the bulk of the data and of no further use to the Pi — move
+      # it. Characters/, NPCs/, Locations/ and Ledger/ are different: they are
+      # what the bot READS to know which names the campaign already has, and
+      # they total well under a megabyte. Moving them away empties the alias
+      # index, and the next recap silently stops linking anyone and starts
+      # re-introducing the whole cast under whatever spellings the summariser
+      # picked that week. The ledger survived only because the queue worker
+      # happens to pull it back from Drive first; the entity notes had no such
+      # safety net.
+      #
+      # `move` only works if the SFTP user can DELETE what it has taken, which
+      # needs write permission on the containing DIRECTORY on the Pi, not just
+      # on the file. The bot sets umask 002 (see src/config/env.js) and the
+      # export roots are setgid so new directories stay group-writable;
+      # without that every delete fails with "permission denied" and this
+      # quietly behaves as a copy, filling the Pi forever.
       #
       # Six hours rather than five minutes: nothing here is time-critical, and
       # a sync that runs 288 times a day is 288 chances to be doing network
       # I/O at the exact moment someone is gaming.
       - |
-        echo "[pc-sync] notes: pihouse:scriber/pi-service/obsidian-export -> /cipher"
-        echo "[pc-sync] audio: pihouse:scriber/pi-service/data/audio-outbox -> /audio"
+        echo "[pc-sync] session notes (move):  pihouse:scriber/pi-service/obsidian-export -> /cipher"
+        echo "[pc-sync] campaign index (copy): Characters/ NPCs/ Locations/ Ledger/"
+        echo "[pc-sync] audio (move):          pihouse:scriber/pi-service/data/audio-outbox -> /audio"
         echo "[pc-sync] interval: 6h"
         while true; do
-          rclone move pihouse:scriber/pi-service/obsidian-export /cipher --include '*.md' -v || true
+          rclone move pihouse:scriber/pi-service/obsidian-export /cipher \
+            --filter '- /*/Characters/**' \
+            --filter '- /*/NPCs/**' \
+            --filter '- /*/Locations/**' \
+            --filter '- /*/Ledger/**' \
+            --filter '+ *.md' \
+            --filter '- *' -v || true
+          rclone copy pihouse:scriber/pi-service/obsidian-export /cipher --include '*.md' -v || true
           rclone move pihouse:scriber/pi-service/data/audio-outbox /audio --include '*.mp3' -v || true
           sleep 21600
         done

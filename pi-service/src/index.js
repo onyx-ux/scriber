@@ -11,15 +11,8 @@ import { startStatusServer } from './web/server.js';
 import { startRetentionTimer } from './maintenance/retention.js';
 import { join } from 'node:path';
 
-// The bot runs as root inside the container, but the files it writes are
-// collected over SFTP by an ordinary user on the host. Deleting a file needs
-// write permission on its DIRECTORY, so with the default 022 umask every
-// directory came out as root:root 755 and the collector could copy files but
-// never remove them — `rclone move` silently degraded to `rclone copy` and
-// nothing was ever freed from the Pi. 002 makes new files and directories
-// group-writable, which (with the setgid bit on the export roots) lets the
-// collector clean up after itself.
-process.umask(0o002);
+// The umask that makes those files collectable over SFTP is set in
+// config/env.js, so the vault scripts get it too — see the note there.
 
 const startedAtMs = Date.now();
 

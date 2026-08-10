@@ -1,5 +1,22 @@
 import 'dotenv/config';
 
+// The bot runs as root inside the container, but the files it writes are
+// collected over SFTP by an ordinary user on the host. Deleting a file needs
+// write permission on its DIRECTORY, so with the default 022 umask every
+// directory came out root:root 755 and the collector could copy files but
+// never remove them — `rclone move` silently degraded to `rclone copy` and
+// nothing was ever freed from the Pi. 002 makes new files and directories
+// group-writable, which (with the setgid bit on the export roots) lets the
+// collector clean up after itself.
+//
+// This lives HERE, in the module every entry point already imports for its
+// configuration, rather than in src/index.js where it started. The bot had it
+// and the vault scripts did not, so scripts/build-npc-notes.mjs and friends
+// created NPCs/ and Characters/ at 755 and the sync failed on every file
+// inside them — a split that is invisible until something 4,000 lines away
+// reports "permission denied". A new script cannot forget this.
+process.umask(0o002);
+
 function required(name) {
   const v = process.env[name];
   if (!v || !v.trim()) {
