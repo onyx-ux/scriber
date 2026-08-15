@@ -55,6 +55,10 @@ Rules:
 - Use in-world/narrative language (NPC names, locations, item names) rather
   than generic phrasing — but only for names and events the transcript
   actually establishes, never invented ones.
+- The PLAYER CHARACTERS listed in the message are the party. Never put one of
+  them in "npcsIntroduced", under any spelling. A player is often labelled in
+  the transcript with a name that differs from their character's — both are
+  listed, and both are the same person.
 - Assign each follow-up to the speaker responsible using their display name
   exactly as it appears in the transcript; use null only if it's DM-only or
   genuinely unassigned.
@@ -68,11 +72,32 @@ Rules:
   Do not force it or stretch a merely-notable moment into a "funny" one;
   an empty array is a completely normal result for this field.`;
 
-export function buildSummaryUserMessage(transcript, meta) {
+// The people at the table, and the one line that stops them being written up
+// as NPCs.
+//
+// "Attendees" alone was not enough: it lists the Discord names the transcript
+// is labelled with, so a player whose character is called something else gets
+// summarised as a stranger the party met. Naming both halves and saying
+// plainly that they are never NPCs is what fixes that — see
+// campaign/character-names.js for where the list comes from.
+function sessionHeader(meta) {
   const attendees = (meta.attendees || []).join(', ');
-  return `Session: ${meta.channelName || 'unknown'}
-Date: ${meta.date || 'unknown'}
-Attendees: ${attendees || 'unknown'}
+  const players = (meta.playerCharacters || []).join(', ');
+
+  return [
+    `Session: ${meta.channelName || 'unknown'}`,
+    `Date: ${meta.date || 'unknown'}`,
+    `Attendees: ${attendees || 'unknown'}`,
+    players
+      ? `PLAYER CHARACTERS (these are the party — never list any of them as an NPC): ${players}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function buildSummaryUserMessage(transcript, meta) {
+  return `${sessionHeader(meta)}
 
 Transcript:
 ${transcript}`;
@@ -139,6 +164,11 @@ Return ONLY a JSON object (no prose, no markdown fences) with this shape:
   "funnyMoments": ["string - a punchy one-to-two sentence retelling of a genuinely funny, chaotic, or absurd beat, self-contained enough to still land months later with no memory of the session"]
 }
 
+The PLAYER CHARACTERS listed in the message are the party. Never put one of
+them in "npcsIntroduced", under any spelling. A player is often labelled in
+the transcript with a name that differs from their character's — both are
+listed, and both are the same person.
+
 Never omit a key — use an empty array (or empty string for "narrative") when
 there is nothing to report.`;
 
@@ -183,15 +213,17 @@ shape:
   "funnyMoments": ["string - the genuinely funny/chaotic beats worth remembering, kept selective; an empty array is completely normal"]
 }
 
+The PLAYER CHARACTERS listed in the message are the party. Never put one of
+them in "npcsIntroduced", under any spelling. A player is often labelled in
+the transcript with a name that differs from their character's — both are
+listed, and both are the same person.
+
 Cover the WHOLE session chronologically — the slice notes at the start
 matter as much as the ones at the end. Be thorough rather than terse; this
 summary stands in for reading the full transcript. Never omit a key.`;
 
 export function buildChunkUserMessage(chunk, meta, index, total) {
-  const attendees = (meta.attendees || []).join(', ');
-  return `Session: ${meta.channelName || 'unknown'}
-Date: ${meta.date || 'unknown'}
-Attendees: ${attendees || 'unknown'}
+  return `${sessionHeader(meta)}
 Slice ${index} of ${total}.
 
 Transcript slice:
@@ -199,10 +231,7 @@ ${chunk}`;
 }
 
 export function buildReduceUserMessage(partials, meta) {
-  const attendees = (meta.attendees || []).join(', ');
-  return `Session: ${meta.channelName || 'unknown'}
-Date: ${meta.date || 'unknown'}
-Attendees: ${attendees || 'unknown'}
+  return `${sessionHeader(meta)}
 
 Ordered slice notes (JSON array, chronological):
 ${JSON.stringify(partials, null, 1)}`;

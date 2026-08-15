@@ -13,6 +13,7 @@ import {
   entryKey,
 } from '../campaign/ledger.js';
 import { splitEntryName } from '../campaign/entry-name.js';
+import { rosterNames } from '../campaign/character-names.js';
 import {
   readVaultEntities,
   buildNameIndex,
@@ -110,6 +111,10 @@ export async function tick(db, discordClient, cfg) {
       channelName: meeting.channel_name,
       date: meeting.started_at,
       attendees: [...new Set(utterances.map((u) => u.display_name))],
+      // Who is NOT an NPC. A player whose character is named something other
+      // than their Discord name was being written up as a stranger the party
+      // met — see campaign/character-names.js.
+      playerCharacters: rosterNames(db, meeting.guild_id),
     };
 
     if (job.provider) {

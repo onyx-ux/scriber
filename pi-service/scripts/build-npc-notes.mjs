@@ -17,6 +17,7 @@ import { buildTranscriptText } from '../src/pipeline/transcribe.js';
 import { callModel } from '../src/pipeline/model-client.js';
 import { campaignFolder } from '../src/export/naming.js';
 import { readKnownEntityNames } from '../src/campaign/ledger.js';
+import { rosterNames } from '../src/campaign/character-names.js';
 import {
   NPC_SYSTEM_PROMPT,
   buildNpcUserMessage,
@@ -96,7 +97,10 @@ for (const meeting of cached ? [] : meetings) {
   }
 
   const transcript = buildTranscriptText(utterances);
-  const players = [...new Set(utterances.map((u) => u.display_name))];
+  // Both halves of every player's identity, not just the speaker labels in
+  // this transcript: a character whose name differs from the Discord name was
+  // being extracted as an NPC. See campaign/character-names.js.
+  const players = rosterNames(db, guildId);
   const sessionNumber = meeting.session_number ?? meeting.id;
 
   process.stdout.write(

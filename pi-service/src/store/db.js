@@ -641,6 +641,63 @@ function wrap(db) {
       return db.prepare(`SELECT * FROM characters WHERE guild_id = ?`).all(guildId);
     },
 
+    // Every label this campaign's transcripts have ever carried, including
+    // ones nobody uses any more. listRoster deliberately collapses to the
+    // CURRENT name — that is what a DM should be picking from — but a summary
+    // of an old session is reading a transcript labelled with the old one, so
+    // "who is a player" has to span the whole history.
+    listSpeakerNames(guildId) {
+      return db
+        .prepare(
+          `SELECT DISTINCT u.display_name AS displayName
+             FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.guild_id = ?`
+        )
+        .all(guildId)
+        .map((r) => r.displayName)
+        .filter(Boolean);
+    },
+
+    forgetCharacterName(guildId, userId) {
+      return db.prepare(`DELETE FROM characters WHERE guild_id = ? AND user_id = ?`).run(guildId, userId).changes;
+    },
+
+    // Everyone the bot has actually heard in this campaign, with whatever
+    // character name is on file for them.
+    //
+    // The characters table alone is not enough to offer a roster: it only has
+    // rows for players who have already been named, and the whole point of
+    // the roster command is to name the ones who have not. The utterances are
+    // the only record of who is at this table, so they are the source of the
+    // list and the characters table is a left join onto it.
+    //
+    // Latest display name wins: someone who changes their Discord nickname
+    // mid-campaign should appear under the name they use now, not the one
+    // they had in session 1.
+    listRoster(guildId) {
+      return db
+        .prepare(
+          `SELECT u.user_id AS userId,
+                  (SELECT u2.display_name
+                     FROM utterances u2
+                     JOIN meetings m2 ON m2.id = u2.meeting_id
+                    WHERE m2.guild_id = @guildId AND u2.user_id = u.user_id
+                    ORDER BY u2.id DESC
+                    LIMIT 1)             AS displayName,
+                  c.character_name       AS characterName,
+                  COUNT(*)               AS lines
+             FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+             LEFT JOIN characters c
+                    ON c.guild_id = m.guild_id AND c.user_id = u.user_id
+            WHERE m.guild_id = @guildId
+            GROUP BY u.user_id
+            ORDER BY lines DESC`
+        )
+        .all({ guildId });
+    },
+
     // --- most recent completed meeting, for /recap ---
 
     getLastCompletedMeeting(guildId) {

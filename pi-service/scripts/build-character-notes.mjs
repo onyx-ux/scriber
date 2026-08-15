@@ -48,19 +48,34 @@ const WRITE = args.includes('--write');
 const model = flag('--model', 'gemini-3.6-flash');
 const dm = flag('--dm');
 
-const roster = flagAll('--pc').map((entry) => {
-  const [player, character] = entry.split('=');
-  return { player: player.trim(), character: (character || '').trim() || null };
-});
-
-if (!guildId || roster.length === 0) {
+if (!guildId) {
   console.error(
-    'usage: node scripts/build-character-notes.mjs <guildId> --pc <speaker>[=<character>] ... [--dm <speaker>] [--write]'
+    'usage: node scripts/build-character-notes.mjs <guildId> [--pc <speaker>[=<character>] ...] [--dm <speaker>] [--write]'
   );
   process.exit(1);
 }
 
 const db = openDb(join(config.dataDir, 'db.sqlite'));
+
+// The roster comes from /dm character unless it is given on the command line.
+// That command is where the DM already records who plays what, and having two
+// places to keep it in step is how they drift.
+const roster = flagAll('--pc').length
+  ? flagAll('--pc').map((entry) => {
+      const [player, character] = entry.split('=');
+      return { player: player.trim(), character: (character || '').trim() || null };
+    })
+  : db
+      .listRoster(guildId)
+      .filter((r) => r.characterName)
+      .map((r) => ({ player: r.displayName, character: r.characterName }));
+
+if (roster.length === 0) {
+  console.error(
+    'no roster: set one with /dm character in Discord, or pass --pc <speaker>[=<character>] for each player'
+  );
+  process.exit(1);
+}
 const cfg = { ...config, summaryProvider: 'gemini', geminiModel: model };
 
 const meetings = db

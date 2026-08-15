@@ -227,6 +227,64 @@ export const commandDefs = [
         .setRequired(false)
         .setAutocomplete(true)
     ),
+  // The DM's roster. /setcharacter only ever names the person running it, in
+  // the server, which leaves the DM unable to fix a player who never set one
+  // — and an unnamed player is not a cosmetic problem: the summariser is
+  // handed Discord names, so a character called anything else reads as an NPC
+  // the party met, and gets written up as one.
+  //
+  // DM-usable and autocompleted from the speakers actually recorded, so the
+  // DM can set the table up without knowing a user id or making everyone run
+  // a command.
+  new SlashCommandBuilder()
+    .setName('dm')
+    .setDescription("The DM's tools — set who plays which character")
+    .setDMPermission(true)
+    .addSubcommand((s) =>
+      s
+        .setName('character')
+        .setDescription("Set a player's character name")
+        .addStringOption((o) =>
+          o.setName('player').setDescription('Who (by Discord name)').setRequired(true).setAutocomplete(true)
+        )
+        .addStringOption((o) =>
+          o.setName('name').setDescription('Their character, e.g. "BenTen"').setRequired(true)
+        )
+        .addStringOption((o) =>
+          o
+            .setName('campaign')
+            .setDescription('Which campaign (required in a DM, where there is no server to assume)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('roster')
+        .setDescription('Show who plays what, and who still has no character set')
+        .addStringOption((o) =>
+          o
+            .setName('campaign')
+            .setDescription('Which campaign (required in a DM)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('forget')
+        .setDescription("Clear a player's character name, so they appear as their Discord name again")
+        .addStringOption((o) =>
+          o.setName('player').setDescription('Who (by Discord name)').setRequired(true).setAutocomplete(true)
+        )
+        .addStringOption((o) =>
+          o
+            .setName('campaign')
+            .setDescription('Which campaign (required in a DM)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    ),
   new SlashCommandBuilder()
     .setName('whoami')
     .setDescription('Show what name you currently appear as in transcripts and notes'),
@@ -247,7 +305,26 @@ export const commandDefs = [
 // Shows the campaigns the bot has actually recorded, labelled by their set
 // name (or the channel they were recorded in), so a DM can pick one without
 // anyone having to know a guild id.
+// Which campaign a DM-side command is about: the option if given, else the
+// server it was run in. Shared by /campaign and /dm, which have the same
+// problem — a DM has no guild to infer from.
+function targetGuildId(interaction) {
+  return interaction.options.getString('campaign') || interaction.guildId;
+}
+
+// Renaming someone else's character is the DM's job, not the table's. Where
+// no owner is configured there is nobody to check against, so the command
+// stays open rather than locking everyone out.
+function refuseIfNotOwner(interaction, cfg) {
+  if (!cfg.ownerUserId || interaction.user.id === cfg.ownerUserId) return null;
+  return {
+    content: 'Only the DM (the bot owner) can set another player’s character.',
+    flags: MessageFlags.Ephemeral,
+  };
+}
+
 async function handleCampaignAutocomplete(interaction, db) {
+  if (interaction.commandName === 'dm') return handleDmAutocomplete(interaction, db);
   if (interaction.commandName !== 'campaign') return interaction.respond([]);
 
   const typed = String(interaction.options.getFocused() || '').toLowerCase();
@@ -264,6 +341,136 @@ async function handleCampaignAutocomplete(interaction, db) {
     .map(({ name, value }) => ({ name: name.slice(0, 100), value }));
 
   return interaction.respond(choices);
+}
+
+// Two autocompleted options on /dm: the campaign (same list as /campaign) and
+// the player.
+//
+// The players are read from the UTTERANCES, not the characters table — the
+// characters table only has rows for people already named, and naming the
+// ones who aren't is the entire point. The value is the user id, so a Discord
+// nickname change later doesn't strand the mapping.
+async function handleDmAutocomplete(interaction, db) {
+  const focused = interaction.options.getFocused(true);
+  const typed = String(focused.value || '').toLowerCase();
+
+  if (focused.name === 'campaign') {
+    const choices = db
+      .listCampaigns()
+      .map((c) => ({
+        name: `${c.campaign_name || c.channel_name} — ${c.sessions} session${c.sessions === 1 ? '' : 's'}`,
+        value: c.guild_id,
+        searchable: `${c.campaign_name || ''} ${c.channel_name}`.toLowerCase(),
+      }))
+      .filter((c) => !typed || c.searchable.includes(typed))
+      .slice(0, 25)
+      .map(({ name, value }) => ({ name: name.slice(0, 100), value }));
+    return interaction.respond(choices);
+  }
+
+  const guildId = targetGuildId(interaction);
+  if (!guildId) return interaction.respond([]);
+
+  const choices = db
+    .listRoster(guildId)
+    .map((r) => ({
+      // Showing the current mapping makes the roster readable from the picker
+      // itself, which is where the DM is already looking.
+      name: r.characterName ? `${r.displayName} → ${r.characterName}` : `${r.displayName} — no character set`,
+      value: r.userId,
+      searchable: `${r.displayName} ${r.characterName || ''}`.toLowerCase(),
+    }))
+    .filter((c) => !typed || c.searchable.includes(typed))
+    .slice(0, 25)
+    .map(({ name, value }) => ({ name: name.slice(0, 100), value }));
+
+  return interaction.respond(choices);
+}
+
+async function handleDm(interaction, db, cfg) {
+  const refusal = refuseIfNotOwner(interaction, cfg);
+  if (refusal) return interaction.reply(refusal);
+
+  const sub = interaction.options.getSubcommand();
+  const guildId = targetGuildId(interaction);
+
+  if (!guildId) {
+    const campaigns = db.listCampaigns();
+    const list = campaigns.map((c) => `• **${c.campaign_name || c.channel_name}**`).join('\n');
+    return interaction.reply({
+      content: campaigns.length
+        ? `You're in a DM, so I don't know which campaign you mean. Re-run with the \`campaign\` option:\n\n${list}`
+        : "I haven't recorded any sessions yet, so there's no table to set up.",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const roster = db.listRoster(guildId);
+
+  if (sub === 'roster') {
+    if (roster.length === 0) {
+      return interaction.reply({
+        content: "Nobody's been recorded in this campaign yet — run a session first and they'll show up here.",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    const lines = roster.map(
+      (r) =>
+        `• **${r.displayName}** — ${r.characterName ? `plays **${r.characterName}**` : '_no character set_'}  ·  ${r.lines} line${r.lines === 1 ? '' : 's'}`
+    );
+    const unset = roster.filter((r) => !r.characterName).length;
+    return interaction.reply({
+      content:
+        `**Who's at the table**\n${lines.join('\n')}` +
+        (unset
+          ? `\n\n_${unset} player${unset === 1 ? '' : 's'} with no character set — they'll appear under their Discord name, and a character called anything else risks being written up as an NPC. Set one with \`/dm character\`._`
+          : ''),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  // `player` is a user id, from the autocomplete. Someone who typed a raw
+  // string instead gets matched against the display names rather than a
+  // confusing "not found".
+  const chosen = interaction.options.getString('player');
+  const entry =
+    roster.find((r) => r.userId === chosen) ||
+    roster.find((r) => r.displayName?.toLowerCase() === String(chosen).toLowerCase());
+
+  if (!entry) {
+    return interaction.reply({
+      content:
+        `I have no recorded speaker matching \`${chosen}\` in this campaign. ` +
+        'Pick one from the autocomplete — the list is everyone the bot has actually heard.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  if (sub === 'forget') {
+    const removed = db.forgetCharacterName(guildId, entry.userId);
+    return interaction.reply({
+      content: removed
+        ? `🧹 Cleared — **${entry.displayName}** will appear under their Discord name again.`
+        : `**${entry.displayName}** had no character name set.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const name = interaction.options.getString('name').trim();
+  const previous = entry.characterName;
+  db.setCharacterName(guildId, entry.userId, name);
+
+  // Said plainly rather than in flavour text: this is the one command whose
+  // effect is easy to misread as retroactive.
+  return interaction.reply({
+    content:
+      `🎭 **${entry.displayName}** now plays **${name}**.` +
+      (previous && previous !== name ? `\n_Previously **${previous}**._` : '') +
+      `\n\nFrom the next recording, they'll be labelled **${name}** in transcripts. ` +
+      'Sessions already recorded keep the labels they were captured with — but the summariser is told both names either way, ' +
+      'so neither will be mistaken for an NPC.',
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleCampaign(interaction, db, cfg) {
@@ -397,6 +604,7 @@ export function registerCommandHandlers(client, db, cfg) {
       if (interaction.commandName === 'corrections') return await handleCorrections(interaction, db);
       if (interaction.commandName === 'uncorrect') return await handleUncorrect(interaction, db);
       if (interaction.commandName === 'campaign') return await handleCampaign(interaction, db, cfg);
+      if (interaction.commandName === 'dm') return await handleDm(interaction, db, cfg);
       if (interaction.commandName === 'whoami') return await handleWhoAmI(interaction, db);
       if (interaction.commandName === 'stats') return await handleStats(interaction, db);
       if (interaction.commandName === 'npcs') return await handleNpcs(interaction, db, cfg);

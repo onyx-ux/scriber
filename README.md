@@ -213,6 +213,19 @@ whole stack on one machine for debugging.)*
 - `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
 - `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
+- `/dm character player:<who> name:<character>` — the same thing, but the DM
+  setting it for someone else. Usable from a DM, and the player list is
+  autocompleted from everyone the bot has actually recorded, so nobody needs
+  to know a user id. `/dm roster` shows who plays what and who is still
+  unnamed; `/dm forget` clears one.
+
+  This is worth doing for the whole table, not just tidiness. The summariser
+  is told the attendee list, which is Discord names — so a player whose
+  character is called something else looks like a stranger the party met, and
+  gets written up as an NPC. With a roster set, both names are sent and marked
+  as the party. Sessions already recorded keep the speaker labels they were
+  captured with, but the roster covers every label the campaign has ever used,
+  so re-summarising an old session gets it right too.
 - `/funny` — pull a random funny/memorable moment from any completed session in this campaign's history (the AI summariser flags these, if any, as part of the normal per-session summary)
 - `/search query:<text>` — search every transcript in the campaign for a word or phrase (an NPC name, an item, a place) and get back the matching lines with the session number, timestamp and speaker. Answers "when did we first meet that guy?" without re-reading old notes
 - `/import [file:<attachment>] [url:<link>] [speaker:<label>]` — import a recording made outside Discord (an in-person game, a phone recording). Runs through the same transcribe → summarise → post pipeline. Use `url:` for anything over Discord's ~25MB attachment cap. **Every line is attributed to one label** (default "Table") — a single microphone has no per-speaker channels, so voices can't be told apart the way they can in a voice call
@@ -245,7 +258,7 @@ order:
 
 1. **`/correct` targets** — words this campaign has already *proved* whisper
    mishears. Highest value, so they survive truncation first.
-2. **Player character names** from `/setcharacter` — said every session.
+2. **Player character names** from `/setcharacter` and `/dm character` — said every session.
 3. **Ledger NPCs, then locations**, most recent first, since last week's
    villain is likelier to come up than session one's.
 
@@ -570,13 +583,15 @@ node scripts/build-location-notes.mjs <guildId> --write
 # The party. The roster has to be given: the transcript is labelled with the
 # DISCORD SPEAKER, so "Brett" is a person and "BenTen" is who they play, and
 # nothing in the transcript reliably says which speaker is the DM.
-node scripts/build-character-notes.mjs <guildId>   --dm "Old Dad" --pc "Brett=BenTen" --pc "Tad=Tad" --pc Aurion --write
+# The roster comes from /dm character (see below) unless you override it:
+node scripts/build-character-notes.mjs <guildId> --dm "Old Dad" --write
 
 # "Speaker=Character" pins the character's name. A bare "--pc Speaker" leaves
 # it to the model, which reads it off the transcript and can hear it
 # differently in different sessions ("Saf" as "Seth"). Pin it once you know
 # it, or fix it afterwards with rename-note.mjs, which keeps the old name as
 # an alias so nothing written earlier stops resolving.
+node scripts/build-character-notes.mjs <guildId> --pc "Brett=BenTen" --write
 node scripts/rename-note.mjs <guildId> "Seth" "Saf" --write
 
 # Link every name the vault knows, everywhere it is mentioned. Re-run after
