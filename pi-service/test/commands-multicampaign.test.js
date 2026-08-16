@@ -320,14 +320,16 @@ test("a DM cannot invite to the other table's campaign", async (t) => {
   assert.equal(db.getConsent(strahd.id, 'ringer'), null);
 });
 
-test('/dm roster shows this campaign only, and flags who has no character', async (t) => {
-  const { dispatch, db, cipher } = await twoTables(t);
-  await invite({ dispatch, db }, DM_A, cipher.id, 'unnamed-player');
+// /dm roster, /dm character and /dm forget are gone from Discord — the roster
+// is managed on the dashboard, where it can show consent state per person
+// alongside the names. What they did is tested against the action layer in
+// web-actions.test.js and the read in campaign-view.test.js.
+test('a campaign knows who is at its table and nobody else', async (t) => {
+  const { db, cipher, strahd } = await twoTables(t);
 
-  const said = await run(dispatch, command('dm', { user: DM_A, sub: 'roster', options: { campaign: cipher.id } }));
-  assert.match(said, /BenTen/);
-  assert.doesNotMatch(said, /Ireena/, "the other table's character is not listed");
-  assert.match(said, /no character set/);
+  const mine = db.listRoster(cipher.id).map((r) => r.characterName).filter(Boolean);
+  assert.deepEqual(mine, ['BenTen']);
+  assert.deepEqual(db.listRoster(strahd.id).map((r) => r.characterName).filter(Boolean), ['Ireena']);
 });
 
 test('/campaign remove takes someone off the campaign entirely', async (t) => {
@@ -348,13 +350,14 @@ test('a DM cannot remove themselves and strand the campaign', async (t) => {
   assert.equal(db.isCampaignMember(cipher.id, DM_A), true);
 });
 
-test('/dm forget clears the character but keeps them at the table', async (t) => {
-  const { dispatch, db, cipher } = await twoTables(t);
-  const said = await run(dispatch, command('dm', { user: DM_A, sub: 'forget', options: { player: PLAYER_A, campaign: cipher.id } }));
+test('taking someone off a campaign is not the same as clearing their name', async (t) => {
+  const { db, cipher } = await twoTables(t);
 
-  assert.match(said, /still on the roster/);
+  // The distinction the old /dm forget existed for, now enforced at the level
+  // both the dashboard and the roster read from.
+  db.forgetCharacterName(cipher.id, PLAYER_A);
   assert.equal(db.getCharacterName(cipher.id, PLAYER_A), null);
-  assert.equal(db.isCampaignMember(cipher.id, PLAYER_A), true);
+  assert.equal(db.isCampaignMember(cipher.id, PLAYER_A), true, 'forgetting a name leaves them at the table');
 });
 
 // --- the reads land on the right table ---
@@ -364,8 +367,8 @@ test('/recap answers with the campaign the caller plays in', async (t) => {
   played(db, cipher.id, { speaker: PLAYER_A, text: 'the marrowgate opens', tldr: 'CIPHER RECAP' });
   played(db, strahd.id, { speaker: PLAYER_B, text: 'the mists close in', tldr: 'STRAHD RECAP' });
 
-  assert.match(await run(dispatch, command('recap', { user: PLAYER_A })), /CIPHER RECAP/);
-  assert.match(await run(dispatch, command('recap', { user: PLAYER_B })), /STRAHD RECAP/);
+  assert.match(await run(dispatch, command('campaign', { sub: 'recap', user: PLAYER_A })), /CIPHER RECAP/);
+  assert.match(await run(dispatch, command('campaign', { sub: 'recap', user: PLAYER_B })), /STRAHD RECAP/);
 });
 
 test('/search cannot reach the other table in the same server', async (t) => {
@@ -373,8 +376,8 @@ test('/search cannot reach the other table in the same server', async (t) => {
   played(db, cipher.id, { speaker: PLAYER_A, text: 'the marrowgate opens' });
   played(db, strahd.id, { speaker: PLAYER_B, text: 'the mists close in' });
 
-  assert.match(await run(dispatch, command('search', { user: PLAYER_A, options: { query: 'marrowgate' } })), /marrowgate/);
-  const crossed = await run(dispatch, command('search', { user: PLAYER_A, options: { query: 'mists' } }));
+  assert.match(await run(dispatch, command('campaign', { sub: 'search', user: PLAYER_A, options: { query: 'marrowgate' } })), /marrowgate/);
+  const crossed = await run(dispatch, command('campaign', { sub: 'search', user: PLAYER_A, options: { query: 'mists' } }));
   assert.doesNotMatch(crossed, /mists close in/, "one table's player cannot search the other's transcripts");
 });
 
@@ -384,11 +387,11 @@ test('/stats and /history are per campaign and quote its own session refs', asyn
   played(db, cipher.id, { speaker: PLAYER_A, text: 'two' });
   played(db, strahd.id, { speaker: PLAYER_B, text: 'elsewhere' });
 
-  const stats = await run(dispatch, command('stats', { user: PLAYER_A }));
+  const stats = await run(dispatch, command('campaign', { sub: 'stats', user: PLAYER_A }));
   assert.match(stats, /2 session|sessions.*2|2\b/, stats);
   assert.match(stats, /Cipher/);
 
-  const history = await run(dispatch, command('history', { user: PLAYER_A }));
+  const history = await run(dispatch, command('campaign', { sub: 'history', user: PLAYER_A }));
   assert.match(history, /Cipher_01/);
   assert.match(history, /Cipher_02/);
   assert.doesNotMatch(history, /Strahd/);
@@ -400,32 +403,33 @@ test('/funny draws only from the campaign it resolved to', async (t) => {
   played(db, strahd.id, { speaker: PLAYER_B, text: 'y', tldr: 'STRAHDJOKE' });
 
   for (let i = 0; i < 8; i++) {
-    assert.match(await run(dispatch, command('funny', { user: PLAYER_A })), /CIPHERJOKE/);
+    assert.match(await run(dispatch, command('campaign', { sub: 'funny', user: PLAYER_A })), /CIPHERJOKE/);
   }
 });
 
 // --- corrections stay put ---
 
-test('/correct rewrites only its own campaign', async (t) => {
-  const { dispatch, db, cipher, strahd } = await twoTables(t);
-  const mine = played(db, cipher.id, { speaker: PLAYER_A, text: 'Vecks opens the door' });
-  const theirs = played(db, strahd.id, { speaker: PLAYER_B, text: 'Vecks opens the door' });
+// /correct and /corrections moved to the dashboard; the scoping that matters
+// — a correction is a fact about ONE game's invented names — is tested
+// against the action layer in web-actions.test.js.
+test('a correction is stored against one campaign, never both', async (t) => {
+  const { db, cipher, strahd } = await twoTables(t);
+  db.addCorrection(cipher.id, 'Vecks', 'Vex');
 
-  await run(dispatch, command('correct', { user: DM_A, options: { wrong: 'Vecks', right: 'Vex', campaign: cipher.id } }));
-
-  assert.equal(db.listUtterances(mine)[0].text, 'Vex opens the door');
-  assert.equal(db.listUtterances(theirs)[0].text, 'Vecks opens the door', 'the other table is untouched');
-  assert.deepEqual(db.listCorrections(strahd.id), []);
+  assert.deepEqual(db.listCorrections(cipher.id), [{ wrong_text: 'Vecks', correct_text: 'Vex' }]);
+  assert.deepEqual(db.listCorrections(strahd.id), [], 'rewriting the other table would be silent corruption');
 });
 
-test('/corrections lists only this campaign', async (t) => {
-  const { dispatch, db, cipher, strahd } = await twoTables(t);
-  played(db, cipher.id, { speaker: PLAYER_A, text: 'x' });
-  played(db, strahd.id, { speaker: PLAYER_B, text: 'y' });
+test('the reads land on the right table', async (t) => {
+  const { dispatch, db, cipher } = await twoTables(t);
+  played(db, cipher.id, { speaker: PLAYER_A, text: 'x', tldr: 'CIPHERONLY' });
 
-  await run(dispatch, command('correct', { user: DM_A, options: { wrong: 'Vecks', right: 'Vex', campaign: cipher.id } }));
-  const said = await run(dispatch, command('corrections', { user: DM_B, options: { campaign: strahd.id } }));
-  assert.match(said, /No corrections saved/);
+  assert.match(await run(dispatch, command('campaign', { sub: 'recap', user: PLAYER_A })), /CIPHERONLY/);
+  assert.doesNotMatch(
+    await run(dispatch, command('campaign', { sub: 'recap', user: PLAYER_B })),
+    /CIPHERONLY/,
+    "the other table's player gets their own"
+  );
 });
 
 // --- stopping a recording belongs to the table being recorded ---
@@ -548,9 +552,12 @@ test('not being at the table is answered before which table you named', async (t
 
 // --- the gate ---
 
-test('a player cannot run a manager command', async (t) => {
+test('a player cannot run a manager subcommand', async (t) => {
   const { dispatch, cipher } = await twoTables(t);
-  const said = await run(dispatch, command('correct', { user: PLAYER_A, options: { wrong: 'a', right: 'b', campaign: cipher.id } }));
+  const said = await run(
+    dispatch,
+    command('campaign', { user: PLAYER_A, sub: 'rename', options: { name: 'Mine Now', campaign: cipher.id } })
+  );
   // Names the DM rather than saying "this campaign": you are in their server
   // and can see the game happening, so pretending it does not exist is worse
   // than telling you who to ask.
@@ -558,10 +565,20 @@ test('a player cannot run a manager command', async (t) => {
   assert.match(said, /only they can change its records/);
 });
 
-test('a player cannot run an owner command', async (t) => {
-  const { dispatch } = await twoTables(t);
-  assert.match(await run(dispatch, command('pause', { user: PLAYER_A })), /bot owner/);
-  assert.match(await run(dispatch, command('import', { user: DM_A, options: { url: 'http://x' } })), /bot owner/);
+// There is no owner tier left in Discord to be refused from. approve, pause,
+// resume, pending, import, transcribe and summarise spend the owner's GPU,
+// API budget and disk — they are on the dashboard, behind STATUS_TOKEN, and a
+// player opening the picker never sees them at all.
+test('the pipeline is not in the command surface to be refused from', async () => {
+  process.env.DISCORD_TOKEN ||= 'x';
+  process.env.DISCORD_CLIENT_ID ||= 'x';
+  process.env.GEMINI_API_KEY ||= 'x';
+  const { commandDefs } = await import('../src/commands/index.js');
+
+  const everything = commandDefs.flatMap((c) => [c.name, ...(c.options ?? []).filter((o) => o.type === 1).map((o) => o.name)]);
+  for (const gone of ['approve', 'pause', 'resume', 'pending', 'import', 'transcribe', 'summarise', 'correct', 'uncorrect', 'corrections', 'dm', 'status']) {
+    assert.ok(!everything.includes(gone), `/${gone} should have moved to the dashboard`);
+  }
 });
 
 test('the owner reaches a campaign they do not run', async (t) => {
@@ -579,7 +596,7 @@ test('someone at both tables is asked which, by name', async (t) => {
   played(db, cipher.id, { speaker: 'plays-both', text: 'a' });
   played(db, strahd.id, { speaker: 'plays-both', text: 'b' });
 
-  const said = await run(dispatch, command('recap', { user: 'plays-both' }));
+  const said = await run(dispatch, command('campaign', { sub: 'recap', user: 'plays-both' }));
   assert.match(said, /more than one campaign/);
   assert.match(said, /Cipher/);
   assert.match(said, /Strahd/);
@@ -592,14 +609,14 @@ test('and naming one resolves it', async (t) => {
   played(db, cipher.id, { speaker: 'plays-both', text: 'a', tldr: 'CIPHER RECAP' });
   played(db, strahd.id, { speaker: 'plays-both', text: 'b', tldr: 'STRAHD RECAP' });
 
-  assert.match(await run(dispatch, command('recap', { user: 'plays-both', options: { campaign: strahd.id } })), /STRAHD RECAP/);
+  assert.match(await run(dispatch, command('campaign', { sub: 'recap', user: 'plays-both', options: { campaign: strahd.id } })), /STRAHD RECAP/);
 });
 
 test('a stranger who plays in neither is refused', async (t) => {
   const h = await harness(t);
   await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: 'Cipher' } }));
 
-  const said = await run(h.dispatch, command('recap', { user: 'stranger', guildId: 'SOME-OTHER-SERVER' }));
+  const said = await run(h.dispatch, command('campaign', { sub: 'recap', user: 'stranger', guildId: 'SOME-OTHER-SERVER' }));
   assert.match(said, /don't have you recorded in any campaign/);
 });
 
@@ -607,7 +624,7 @@ test('a stranger who plays in neither is refused', async (t) => {
 
 test('the campaign picker offers a manager only what they run', async (t) => {
   const { dispatch, cipher } = await twoTables(t);
-  const choices = await run(dispatch, autocomplete('dm', { user: DM_A, sub: 'add' }));
+  const choices = await run(dispatch, autocomplete('campaign', { user: DM_A, sub: 'rename' }));
 
   assert.equal(choices.length, 1);
   assert.equal(choices[0].value, String(cipher.id));
@@ -618,16 +635,20 @@ test('the campaign picker offers a player the tables they are at', async (t) => 
   const { dispatch, db, cipher } = await twoTables(t);
   played(db, cipher.id, { speaker: PLAYER_A, text: 'a' });
 
-  const choices = await run(dispatch, autocomplete('recap', { user: PLAYER_A }));
+  const choices = await run(dispatch, autocomplete('campaign', { sub: 'recap', user: PLAYER_A }));
   assert.ok(choices.some((c) => c.value === String(cipher.id)));
 });
 
-test('the player picker reads the roster of the resolved campaign', async (t) => {
+// The player picker went with /dm — the roster is managed on the dashboard,
+// which lists everyone with their consent state rather than autocompleting
+// from the speakers the bot happened to have recorded.
+test('the picker offers nothing for an option the surface no longer has', async (t) => {
   const { dispatch, cipher } = await twoTables(t);
-  const choices = await run(dispatch, autocomplete('dm', { user: DM_A, sub: 'character', focused: 'player', options: { campaign: cipher.id } }));
-
-  assert.ok(choices.some((c) => /BenTen/.test(c.name)), JSON.stringify(choices));
-  assert.ok(!choices.some((c) => /Ireena/.test(c.name)), "and not the other table's");
+  const choices = await run(
+    dispatch,
+    autocomplete('campaign', { user: DM_A, sub: 'rename', focused: 'player', options: { campaign: cipher.id } })
+  );
+  assert.deepEqual(choices, []);
 });
 
 // --- renaming carries the vault folder ---
@@ -677,28 +698,25 @@ test('/campaign output is per campaign', async (t) => {
 // do exactly that. Six commands shipped able to say "re-run with the
 // `campaign` option" while having no such option, which made them unusable in
 // any server holding two tables.
-test('every command that resolves a campaign lets you name one', async () => {
+test('every subcommand that resolves a campaign lets you name one', async () => {
   process.env.DISCORD_TOKEN ||= 'x';
   process.env.DISCORD_CLIENT_ID ||= 'x';
   process.env.GEMINI_API_KEY ||= 'x';
-  const { commandDefs, MANAGER_ONLY } = await import('../src/commands/index.js');
+  const { commandDefs, MANAGER_SUBCOMMANDS } = await import('../src/commands/index.js');
 
   // The tiers that resolve a campaign, and so can refuse with "which one?".
-  // /import is an owner command but resolves one anyway — it creates a session,
-  // so it has to say which campaign's records that session is joining.
-  const resolves = new Set([...MANAGER_ONLY, 'join', 'setcharacter', 'whoami', 'import']);
-  const SUBCOMMAND = 1;
+  // `create` and `list` are absent because they resolve nothing; `export`
+  // takes a session reference, which carries its own campaign.
+  const resolves = new Set([
+    ...MANAGER_SUBCOMMANDS,
+    'setchar', 'whoami', 'recap', 'funny', 'search', 'ask', 'history', 'stats', 'npcs', 'locations', 'archive',
+  ]);
 
-  const missing = commandDefs
-    .filter((c) => resolves.has(c.name))
-    .filter((c) => {
-      const subs = (c.options ?? []).filter((o) => o.type === SUBCOMMAND);
-      // A command with subcommands carries the option on each of them.
-      return subs.length
-        ? !subs.every((s) => (s.options ?? []).some((o) => o.name === 'campaign'))
-        : !(c.options ?? []).some((o) => o.name === 'campaign');
-    })
-    .map((c) => c.name);
+  const campaign = commandDefs.find((c) => c.name === 'campaign');
+  const missing = campaign.options
+    .filter((o) => o.type === 1 && resolves.has(o.name))
+    .filter((o) => !(o.options ?? []).some((opt) => opt.name === 'campaign'))
+    .map((o) => o.name);
 
   assert.deepEqual(missing, [], `these can ask you to name a campaign but offer no way to: ${missing.join(', ')}`);
 });
@@ -713,12 +731,12 @@ test('being asked which campaign is always answerable', async (t) => {
   // /setcharacter is the one a player reaches for first, and the one that was
   // broken: a member of two tables here got told to use an option that did
   // not exist.
-  const asked = await run(dispatch, command('setcharacter', { user: 'plays-both', options: { name: 'Fuji' } }));
+  const asked = await run(dispatch, command('campaign', { sub: 'setchar', user: 'plays-both', options: { name: 'Fuji' } }));
   assert.match(asked, /more than one table/);
 
   const done = await run(
     dispatch,
-    command('setcharacter', { user: 'plays-both', options: { name: 'Fuji', campaign: cipher.id } })
+    command('campaign', { sub: 'setchar', user: 'plays-both', options: { name: 'Fuji', campaign: cipher.id } })
   );
   assert.doesNotMatch(done, /more than one table/, 'and naming one actually works');
   assert.equal(db.getCharacterName(cipher.id, 'plays-both'), 'Fuji');
@@ -731,9 +749,9 @@ test('/whoami answers per campaign', async (t) => {
   db.addCampaignMember(strahd.id, 'plays-both', DM_B);
   db.setCharacterName(cipher.id, 'plays-both', 'Fuji');
 
-  assert.match(await run(dispatch, command('whoami', { user: 'plays-both', options: { campaign: cipher.id } })), /Fuji/);
+  assert.match(await run(dispatch, command('campaign', { sub: 'whoami', user: 'plays-both', options: { campaign: cipher.id } })), /Fuji/);
   assert.doesNotMatch(
-    await run(dispatch, command('whoami', { user: 'plays-both', options: { campaign: strahd.id } })),
+    await run(dispatch, command('campaign', { sub: 'whoami', user: 'plays-both', options: { campaign: strahd.id } })),
     /Fuji/,
     'the other table does not know that character'
   );

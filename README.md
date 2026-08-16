@@ -84,7 +84,7 @@ custom code needed there. See "Network setup" above.
 
 ## Google Drive sync (optional, off by default)
 
-Design: the **Pi stays the source of truth** — `/history` and `/export`
+Design: the **Pi stays the source of truth** — `/campaign history` and `/campaign export`
 never depend on the internet or on Drive being reachable. Drive sync is a
 one-way, best-effort push of finished markdown (and optionally audio) so
 your PC picks it up automatically via the normal Google Drive desktop app —
@@ -206,12 +206,47 @@ whole stack on one machine for debugging.)*
 
 ## Commands
 
-- `/join` — start recording the voice channel you're in
-- `/leave [campaign:<name>]` — stop recording and queue the session for transcription (see [Scheduling transcription](#scheduling-transcription) — it does not seize the GPU on the spot)
-- `/history [count]` — list recent sessions
-- `/transcribe meeting_id:<id> [when:<now|later|pi>]` — control when a queued session transcribes: `now` runs it on the PC as soon as the whisper server answers, `later` pushes it back a day, `pi` transcribes it locally on the Pi instead (slower, no GPU needed). Same three actions as the DM buttons
-- `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
-- `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
+**Three, in Discord.** There used to be twenty-seven, and anyone opening the
+picker saw the lot — including `approve`, `pause`, `import` and the rest of the
+pipeline, which spends the owner's GPU and API budget and has nothing to do
+with playing D&D. That tier lives on [the dashboard](#the-dashboard) now.
+
+- **`/join [campaign:]`** — start recording the voice channel you're in
+- **`/leave [campaign:]`** — stop recording and queue the session (see
+  [Scheduling transcription](#scheduling-transcription) — it does not seize the
+  GPU on the spot)
+- **`/campaign <subcommand>`** — everything else
+
+`/join` and `/leave` stay top-level because they are the only two that must be
+run from inside the voice channel being recorded.
+
+### `/campaign`
+
+| | |
+|---|---|
+| `create name:` | start a campaign here — you become its DM |
+| `list` | what's here, who runs it, where its notes go |
+| `rename name:` | rename one you run (its notes folder moves with it) |
+| `invite player: [name:]` | ask someone to join — **they** choose whether to be recorded |
+| `remove player:` | take someone off; they can no longer be recorded in it |
+| `output mode:` | where finished notes are posted |
+| `setchar name:` | your character name, as it appears in transcripts and notes |
+| `whoami` | what name you currently appear as |
+| `recap` | last session's TL;DR again |
+| `funny` | a random memorable moment from this campaign |
+| `search query:` | search every transcript in the campaign |
+| `ask question:` | a question answered from past sessions |
+| `history [count:]` | recent sessions |
+| `export session:` | a session's transcript as a file |
+| `stats` | sessions, hours, lines, and who talks most |
+| `npcs` / `locations` | everyone met and everywhere visited |
+| `archive` | the browsable campaign archive as one HTML file |
+
+Every subcommand that resolves a campaign takes an optional autocompleted
+`campaign:` — only needed when you're in more than one. A test enforces that,
+because six commands once shipped able to say "re-run with the `campaign`
+option" while having no such option.
+
 ### Starting a recording
 
 `/join` needs you to be on the campaign's roster. The roster is **the bot's
@@ -219,8 +254,8 @@ own**, not Discord's member list: in a server the bot was merely invited to,
 being able to see a voice channel is not permission to record the game
 happening in it.
 
-You get on it by being added with `/dm add`, by being given a character with
-`/dm character`, by creating the campaign yourself, or by having already spoken
+You get on it by being added with `/campaign invite`, by being given a character with
+the dashboard roster, by creating the campaign yourself, or by having already spoken
 in a recorded session — speaking enrols you, and everyone the bot had already
 heard was enrolled when this landed.
 
@@ -261,17 +296,17 @@ server.
 
 Each campaign keeps its own session numbering, roster, character names,
 transcript corrections, vault folder, ledger, archive page and notes
-destination. A `/correct` for one table's NPC does not rewrite the other's
+destination. A a correction for one table's NPC does not rewrite the other's
 transcripts, and one person can play different characters in both.
 
 Where a command needs to know which table you mean it asks, and never guesses:
 
-- **reading** (`/recap`, `/stats`, the ledger) resolves to the campaign you
+- **reading** (`/campaign recap`, `/campaign stats`, the ledger) resolves to the campaign you
   actually play in, so a second table in the server does not make every read
   ambiguous for everyone else;
-- **recording and naming yourself** (`/join`, `/setcharacter`) resolves to a
+- **recording and naming yourself** (`/join`, `/campaign setchar`) resolves to a
   campaign you are on the roster for, here;
-- **changing a campaign's records** (`/dm`, `/correct`) resolves to one you
+- **changing a campaign's records** (`/campaign`, a correction) resolves to one you
   run, and naming someone else's says who runs it.
 
 Campaign names have to be unique across the whole bot, because the name *is*
@@ -309,13 +344,18 @@ Three tiers, and none of them is a Discord permission.
 
 | Tier | Commands | Who |
 |---|---|---|
-| **The table** | `/join` `/leave` `/setcharacter` `/whoami` `/campaign` + the nine read commands | anyone in the server |
-| **Campaign manager** | `/dm` `/correct` `/uncorrect` `/corrections` `/status` | whoever created the campaign |
-| **Bot owner** | `/approve` `/transcribe` `/summarise` `/pause` `/resume` `/import` `/export` `/pending` | `OWNER_USER_ID` only |
+| **The table** | `/join` `/leave`, and `/campaign` `create` `list` `setchar` `whoami` + the read subcommands | anyone in the server |
+| **Campaign manager** | `/campaign` `rename` `invite` `remove` `output` | whoever created the campaign |
+| **Bot owner** | the pipeline — approvals, pause/resume, re-summarise, import, transcripts | the dashboard, behind `STATUS_TOKEN` |
+
+The tiers are per **subcommand** now. There is no owner tier left in Discord at
+all: those commands spend the owner's GPU, API budget and disk, so nobody else
+has a reason to reach them in any server — and a player opening the picker
+never sees them.
 
 "Anyone in the server" is the tier, not the whole check: the four commands that
 touch a live recording or a player's own record — `/join`, `/leave`,
-`/setcharacter`, `/whoami` — additionally need you on that campaign's roster,
+`/campaign setchar`, `/campaign whoami` — additionally need you on that campaign's roster,
 since being able to see a voice channel is not permission to record the game in
 it, or to end someone else's session.
 
@@ -375,45 +415,70 @@ Discord ignores the `integration_types` the bot registers and the commands
 stay server-only. The install link Discord generates there is what players
 use.
 
-- `/setcharacter name:<name>` — map your Discord account to your D&D character name; transcripts and notes use this instead of your Discord display name from then on
-- `/dm character player:<who> name:<character>` — the same thing, but the DM
-  setting it for someone else. Usable from a DM, and the player list is
-  autocompleted from everyone the bot has actually recorded, so nobody needs
-  to know a user id. `/dm roster` shows who plays what and who is still
-  unnamed; `/dm forget` clears one.
+### What each subcommand does
 
-  This is worth doing for the whole table, not just tidiness. The summariser
-  is told the attendee list, which is Discord names — so a player whose
-  character is called something else looks like a stranger the party met, and
-  gets written up as an NPC. With a roster set, both names are sent and marked
-  as the party. Sessions already recorded keep the speaker labels they were
-  captured with, but the roster covers every label the campaign has ever used,
-  so re-summarising an old session gets it right too.
-- `/funny` — pull a random funny/memorable moment from any completed session in this campaign's history (the AI summariser flags these, if any, as part of the normal per-session summary)
-- `/search query:<text>` — search every transcript in the campaign for a word or phrase (an NPC name, an item, a place) and get back the matching lines with the session number, timestamp and speaker. Answers "when did we first meet that guy?" without re-reading old notes
-- `/import [file:<attachment>] [url:<link>] [speaker:<label>]` — import a recording made outside Discord (an in-person game, a phone recording). Runs through the same transcribe → summarise → post pipeline. Use `url:` for anything over Discord's ~25MB attachment cap. **Every line is attributed to one label** (default "Table") — a single microphone has no per-speaker channels, so voices can't be told apart the way they can in a voice call
-- `/correct wrong:<text> right:<text>` — fix a name whisper keeps mishearing. Rewrites every past transcript in the campaign **and** is saved, so future sessions are corrected automatically
-- `/corrections` — list the saved corrections
-- `/uncorrect wrong:<text>` — remove a saved correction (undoes `/correct`; past transcripts already rewritten stay as they are)
-- `/ask question:<text>` — ask a question about the campaign ("who was the smuggler at the docks?") and get an answer drawn only from past session recaps and transcripts, with session numbers cited. Needs the configured summariser (Gemini or Claude) reachable
-- `/status` — see what's currently queued/retrying, and whether the configured summariser is reachable right now
-- `/pending` — everything currently in the pipeline: recording, transcribing, awaiting approval, or queued for summarising
-- `/approve [meeting_id] [provider:<gemini|anthropic>]` — release a session parked awaiting approval (omit the ID to approve everything waiting; `provider:` works the same as on `/summarise`)
-- `/pause` / `/resume` — stop and restart summarising without losing queued work
-- `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
-- `/campaign create name:<text>` — start a campaign in this server and become its DM. The name becomes the Obsidian folder its notes are filed in and the prefix of every session reference (`Cipher_01`), so it has to be unique across the bot
-- `/campaign list` — the campaigns here, who runs each, how many sessions, which folder, and where its notes go
-- `/campaign rename name:<text> [campaign]` — rename one you run; the vault folder moves with it, ledger included
-- `/campaign output mode:<dm|channel|default> [channel] [campaign]` — where this campaign's finished notes are posted
-- `/dm add player:<@user> [name] [campaign]` — put someone on the roster so they can `/join`, optionally naming their character in the same step. The one that works before a campaign has ever recorded, since there is nobody to autocomplete yet
-- `/dm remove player:<@user> [campaign]` — take someone off the roster. Their transcripts stay; this is about who can start a recording
-- `/dm character player:<name> name:<text> [campaign]` — set a recorded speaker's character name (and enrol them)
-- `/dm roster [campaign]` — who's at the table, what they play, and who still has no character set
-- `/dm forget player:<name> [campaign]` — clear a character name; they stay on the roster
-- `/whoami` — show what name you currently appear as in transcripts and notes
-- `/stats` — campaign-wide totals: sessions, hours recorded, lines transcribed, and who talks the most
-- `/npcs` / `/locations` — list everyone met / everywhere visited so far, straight from the campaign ledger, without opening Obsidian
-- `/archive` — get the browsable campaign archive (the same self-contained HTML page that syncs to Drive after every session) as a one-off attachment
+- **`setchar name:`** — your Discord account to your D&D character name;
+  transcripts and notes use it from then on.
+  This is worth doing for the whole table, not just for tidiness. The
+  summariser is told the attendee list, which is Discord names — so a player
+  whose character is called something else looks like a stranger the party met,
+  and gets written up as an NPC. With a roster set, both names are sent and
+  marked as the party. Sessions already recorded keep the speaker labels they
+  were captured with, but the roster covers every label the campaign has ever
+  used, so re-summarising an old session gets it right too. The DM can set one
+  for someone else from the dashboard's roster.
+- **`create name:`** — start a campaign here and become its DM. The name
+  becomes the Obsidian folder its notes are filed in and the prefix of every
+  session reference (`Cipher_01`), so it has to be unique across the bot.
+- **`list`** — the campaigns here, who runs each, how many sessions, which
+  folder, and where its notes go.
+- **`rename name:`** — rename one you run; the vault folder moves with it,
+  ledger included.
+- **`invite player: [name:]`** — ask someone to join. They get a DM explaining
+  what is recorded and choose for themselves; declining means their audio is
+  never captured. This is the only route onto a roster.
+- **`remove player:`** — take someone off. Their transcripts stay; this is
+  about who can be recorded from now on.
+- **`output mode:`** — where this campaign's finished notes are posted.
+- **`recap`** — re-post the last completed session's TL;DR, handy at the start
+  of the next one.
+- **`funny`** — a random funny or memorable moment from any completed session
+  (the summariser flags these as part of the normal per-session summary).
+- **`search query:`** — search every transcript in the campaign for a word or
+  phrase and get the matching lines with session number, timestamp and speaker.
+  Answers "when did we first meet that guy?" without re-reading old notes.
+- **`ask question:`** — a question answered only from past recaps and
+  transcripts, with session numbers cited. Needs the summariser reachable.
+- **`history [count:]`** — recent sessions, by the reference the vault uses.
+- **`export session:`** — a session's transcript as a `.txt`.
+- **`whoami`** — what name you currently appear as.
+- **`stats`** — sessions, hours recorded, lines transcribed, who talks most.
+- **`npcs`** / **`locations`** — everyone met and everywhere visited, straight
+  from the campaign ledger, without opening Obsidian.
+- **`archive`** — the browsable campaign archive (the same self-contained HTML
+  page that syncs to Drive after every session) as a one-off attachment.
+
+### And on the dashboard
+
+The operator's half, which used to be another dozen slash commands:
+
+- **approvals** — release a parked transcription (now / not yet / on the Pi) or
+  a parked summary, choosing which model writes it
+- **pause / resume** — either queue, without losing queued work
+- **re-summarise** — write a session's notes again, after a correction landed
+  or a recap came out badly
+- **roster** — who is at the table, what they play, whether they agreed to be
+  recorded, and setting or clearing a character name
+- **corrections** — fix a name whisper keeps mishearing. Rewrites every past
+  transcript in the campaign and is saved, so future sessions are corrected
+  automatically. Removing one stops it applying; lines already rewritten stay
+- **notes** — read any session's recap back
+- **transcript** — download the raw text
+- **import** — a recording made outside Discord (an in-person game, a phone
+  recording), through the same transcribe → summarise → post pipeline. **Every
+  line is attributed to one label** (default "Table") — a single microphone has
+  no per-speaker channels, so voices cannot be told apart the way they can in a
+  voice call
 
 ## Campaign vocabulary (whisper prompting)
 
@@ -427,9 +492,9 @@ transcribing, the bot builds a short prompt from the campaign's own
 vocabulary and hands it to whisper as decoding context. Sources, in priority
 order:
 
-1. **`/correct` targets** — words this campaign has already *proved* whisper
+1. **a correction targets** — words this campaign has already *proved* whisper
    mishears. Highest value, so they survive truncation first.
-2. **Player character names** from `/setcharacter` and `/dm character` — said every session.
+2. **Player character names** from `/campaign setchar` and the dashboard roster — said every session.
 3. **Ledger NPCs, then locations**, most recent first, since last week's
    villain is likelier to come up than session one's.
 
@@ -437,7 +502,7 @@ The prompt is guild-scoped, so two campaigns on one bot can't leak names into
 each other, and it's capped at whisper's 224-token window — truncation happens
 at whole-name boundaries, never mid-name.
 
-This attacks the same problem `/correct` exists to clean up afterwards, so the
+This attacks the same problem a correction exists to clean up afterwards, so the
 two compound: every correction you add makes future sessions less likely to
 need it.
 
@@ -508,12 +573,12 @@ the whole window.
 **If the PC is off, the session waits — indefinitely, and on purpose.** It
 never quietly falls back to the Pi: that would spend hours of Pi CPU to produce
 a worse transcript, unasked. Use **Use the Pi instead** (or
-`/transcribe when:pi`) when you actually want that. A snooze suppresses the
+"On the Pi" on the dashboard) when you actually want that. A snooze suppresses the
 automatic window too, so "remind me tomorrow" genuinely means tomorrow. A
 session interrupted by a crash or restart goes back through the same gate
 rather than resuming pre-approved at whatever hour the bot came back up.
 
-`/pending` lists everything waiting, and `/pause` holds the whole queue.
+the dashboard lists everything waiting, and Pause holds the whole queue.
 
 ## Summarise on approval (optional)
 
@@ -525,10 +590,10 @@ want to look at a transcript before it leaves the network.
 Set `SUMMARY_REQUIRE_APPROVAL=true` (plus `OWNER_USER_ID`) and the pipeline
 stops one step short: the transcript is written, the job parks in
 `awaiting_approval`, and you get a DM with a **Summarise now** button.
-`/pending` shows everything waiting and `/approve` releases it if you'd rather
+the dashboard shows everything waiting and the dashboard releases it if you'd rather
 not use the button.
 
-`/pause` goes further — it stops the queue entirely, so you can hold work back
+Pause goes further — it stops the queue entirely, so you can hold work back
 outright. Queued sessions stay exactly where they are and resume on `/resume`.
 
 ## Browsable archive
@@ -578,7 +643,7 @@ the config:
   at the moment of approval rather than being fixed by `SUMMARY_PROVIDER` when
   the session ended.
 - **Re-summarise**, on any session with a transcript, writes the notes again —
-  for a recap produced before a `/correct` landed, or one that simply came out
+  for a recap produced before a a correction landed, or one that simply came out
   badly.
 
 These used to be buttons in a Discord DM. They moved so that nothing in the
@@ -660,11 +725,11 @@ to, and you're DM'd about it as normal.
   players join the voice channel, stop when it empties. Skipped for now
   since it risks recording casual chatter that wasn't meant to be a
   session; manual `/join`/`/leave` keeps that intentional.
-- **Manual transcript correction** — a `/correct` command to fix a
+- **Manual transcript correction** — a a correction command to fix a
   whisper.cpp misheard fantasy name after the fact, since STT reliably
   mangles invented words.
 - **Session digest/reminder** — a scheduled message a day before your usual
-  game night, auto-posting `/recap` so everyone's refreshed without needing
+  game night, auto-posting `/campaign recap` so everyone's refreshed without needing
   to run the command manually.
 - **XP/loot ledger with running totals** — beyond just listing loot per
   session, tally running totals per character over the campaign.
@@ -801,7 +866,7 @@ name with emoji and path-breaking characters stripped. Renaming a campaign only
 affects notes exported *after* the rename — earlier ones stay where they are.
 
 Discord messages say `Session 02 (#16)`: the number matching the vault, and the
-meeting id that `/summarise`, `/transcribe` and `/export` actually take.
+meeting id that Re-summarise on the dashboard, the dashboard and `/campaign export` actually take.
 
 ## Character and location notes
 

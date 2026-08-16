@@ -129,6 +129,49 @@ export const ACTIONS = {
     return { status: 200, payload: forgetCharacter(db, { campaignId: id, userId: who }) };
   },
 
+  // Importing a recording made somewhere else — a phone on the table, a
+  // Craig export, an in-person session.
+  //
+  // Started and left running, rather than awaited. Downloading, converting and
+  // transcribing an hours-long recording takes hours, and the Discord version
+  // of this spent real effort fighting the 15-minute interaction window by
+  // editing its own reply as each phase completed. An HTTP request cannot do
+  // even that, and should not try: the job is kicked off, the response says so
+  // immediately, and progress appears in the same "Working on" card as every
+  // other transcription.
+  'import': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    const url = String(body?.url ?? '').trim();
+    if (!id) return badRequest('A numeric campaignId is required.');
+    if (!/^https?:\/\/\S+$/i.test(url)) return badRequest('A http(s) URL to the recording is required.');
+
+    const campaign = db.getCampaign(id);
+    if (!campaign) return badRequest('No such campaign.');
+
+    // A recording in flight owns the audio pipeline; a second one writing into
+    // it at the same time is how two sessions end up interleaved.
+    if (ctx?.activeSessions?.has(campaign.guild_id)) {
+      return { status: 409, payload: { ok: false, message: '⚠️ That server is recording right now — stop it first.' } };
+    }
+
+    ctx.startImport({
+      campaignId: id,
+      guildId: campaign.guild_id,
+      url,
+      speakerLabel: String(body?.speaker ?? '').trim() || 'Table',
+    });
+
+    return {
+      status: 202,
+      payload: {
+        ok: true,
+        message:
+          '📥 Import started. Downloading, converting and transcribing a long recording takes a while — ' +
+          'it will appear under "Working on", and the notes arrive the usual way.',
+      },
+    };
+  },
+
   'pause': (db, cfg, body) => {
     // Explicit rather than a toggle. A toggle sent twice by a double-click, or
     // by two tabs open on the same page, lands on the opposite of what the
@@ -148,12 +191,17 @@ export function findAction(pathname) {
   return name && Object.hasOwn(ACTIONS, name) ? { name, run: ACTIONS[name] } : null;
 }
 
-export function runAction({ pathname, body, db, cfg }) {
+// `ctx` carries the few things an action needs that are neither the database
+// nor the config — the live recording map, and the way to start a background
+// import. Passed in rather than imported so this module stays testable without
+// a running bot, and so the list of what an action can reach stays short and
+// visible.
+export function runAction({ pathname, body, db, cfg, ctx = {} }) {
   const action = findAction(pathname);
   if (!action) return { status: 404, payload: { ok: false, message: 'No such action.' } };
 
   try {
-    const result = action.run(db, cfg, body ?? {});
+    const result = action.run(db, cfg, body ?? {}, ctx);
     return { ...result, action: action.name };
   } catch (err) {
     // A failed action must never take the bot down, and must never hand the

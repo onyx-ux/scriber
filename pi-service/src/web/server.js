@@ -5,6 +5,7 @@ import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
+import { importAudio } from '../pipeline/import-audio.js';
 import { sessionLabel } from '../export/naming.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
 import { isSummariserReachable } from '../pipeline/model-client.js';
@@ -102,6 +103,34 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
   const send = (res, status, payload) =>
     res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
 
+  // What an action may reach beyond the database and the config. Deliberately
+  // small: the live recording map, so an import cannot start on top of a
+  // session in progress, and one function that starts a long job.
+  const ctx = {
+    activeSessions,
+    // Started, not awaited. Downloading, converting and transcribing an
+    // hours-long recording takes hours; the HTTP response says "started" and
+    // progress shows up in the status snapshot like any other transcription.
+    startImport({ campaignId, guildId, url, speakerLabel }) {
+      console.log(`[import] starting for campaign ${campaignId} from ${url}`);
+      importAudio({
+        db,
+        cfg,
+        guildId,
+        campaignId,
+        channelId: null,
+        channelName: 'imported',
+        url,
+        speakerLabel,
+        onProgress: (stage) => console.log(`[import] ${stage}`),
+      })
+        .then((result) => console.log(`[import] finished — session #${result.meetingId}`))
+        // Nothing is awaiting this, so an unhandled rejection here would take
+        // the whole process down rather than failing one import.
+        .catch((err) => console.error('[import] failed:', err));
+    },
+  };
+
   const server = createServer(async (req, res) => {
     // The dashboard may be served from another machine, so the browser needs
     // permission to talk to this. The allow-list is explicit about methods and
@@ -140,7 +169,7 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
         send(res, 400, { ok: false, message: err.message });
         return;
       }
-      const { status, payload, action } = runAction({ pathname: url.pathname, body, db, cfg });
+      const { status, payload, action } = runAction({ pathname: url.pathname, body, db, cfg, ctx });
       // Logged because these are the operations that used to leave an audit
       // trail in a Discord DM. Losing that when they moved would mean a job
       // could change state with nothing anywhere recording who did it.

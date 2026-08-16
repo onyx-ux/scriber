@@ -78,6 +78,7 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
     [
       'corrections/add',
       'corrections/remove',
+      'import',
       'pause',
       'roster/character',
       'roster/forget',
@@ -381,4 +382,60 @@ test('re-summarising a transcribed session queues it rather than duplicating the
   const jobs = db.listPendingJobs().filter((j) => j.meeting_id === meetingId && j.type === 'summarize');
   assert.equal(jobs.length, 1, 'twice must not post the session twice');
   assert.equal(jobs[0].status, 'pending');
+});
+
+// --- importing a recording made somewhere else ---
+
+test('an import is refused without a plausible URL and a real campaign', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const ctx = { activeSessions: new Map(), startImport: () => assert.fail('should not have started') };
+
+  for (const body of [
+    { campaignId },
+    { campaignId, url: 'not-a-url' },
+    { campaignId, url: 'file:///etc/passwd' },
+    { campaignId: 9999, url: 'https://example.com/a.mp3' },
+    { url: 'https://example.com/a.mp3' },
+  ]) {
+    assert.notEqual(runAction({ pathname: '/actions/import', body, db, cfg, ctx }).status, 202);
+  }
+});
+
+test('an import will not start on top of a live recording', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const ctx = {
+    activeSessions: new Map([['guild-1', { meetingId: 1 }]]),
+    startImport: () => assert.fail('two recordings would interleave into one audio pipeline'),
+  };
+
+  const res = runAction({
+    pathname: '/actions/import',
+    body: { campaignId, url: 'https://example.com/session.mp3' },
+    db,
+    cfg,
+    ctx,
+  });
+  assert.equal(res.status, 409);
+});
+
+// Started, not awaited: an hours-long recording cannot be transcribed inside
+// an HTTP request, and the Discord version spent real effort fighting the
+// 15-minute interaction window to pretend otherwise.
+test('an import is accepted and left running rather than awaited', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const started = [];
+  const ctx = { activeSessions: new Map(), startImport: (args) => started.push(args) };
+
+  const res = runAction({
+    pathname: '/actions/import',
+    body: { campaignId, url: 'https://example.com/session.mp3', speaker: 'The Table' },
+    db,
+    cfg,
+    ctx,
+  });
+
+  assert.equal(res.status, 202, 'accepted, not completed');
+  assert.equal(started.length, 1);
+  assert.equal(started[0].speakerLabel, 'The Table');
+  assert.equal(started[0].guildId, 'guild-1', 'filed against the campaign it was named for');
 });

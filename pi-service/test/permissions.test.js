@@ -161,36 +161,30 @@ test('the command surface splits into the three intended tiers', async () => {
   process.env.DISCORD_TOKEN ||= 'x';
   process.env.DISCORD_CLIENT_ID ||= 'x';
   process.env.GEMINI_API_KEY ||= 'x';
-  const { commandDefs, OWNER_ONLY, MANAGER_ONLY } = await import('../src/commands/index.js');
+  const { commandDefs, MANAGER_SUBCOMMANDS } = await import('../src/commands/index.js');
 
-  assert.deepEqual(
-    [...OWNER_ONLY].sort(),
-    ['approve', 'export', 'import', 'pause', 'pending', 'resume', 'summarise', 'transcribe'],
-    'the pipeline'
-  );
-  assert.deepEqual(
-    [...MANAGER_ONLY].sort(),
-    ['correct', 'corrections', 'dm', 'status', 'uncorrect'],
-    "the campaign's records, plus the read-only /status"
-  );
+  // The tiers are per SUBCOMMAND now. There is no owner tier left in Discord
+  // at all: approve, pause, transcribe, summarise, pending and import spend
+  // the owner's GPU, API budget and disk, so they moved to the dashboard
+  // rather than sitting in a picker every player can open.
+  assert.deepEqual([...MANAGER_SUBCOMMANDS].sort(), ['invite', 'output', 'remove', 'rename']);
 
-  // What is left is what the table itself may run. /campaign is here because
-  // an unclaimed campaign has to be claimable; its handler does that check.
-  const open = commandDefs
-    .map((c) => c.name)
-    .filter((n) => !OWNER_ONLY.has(n) && !MANAGER_ONLY.has(n))
-    .sort();
-  assert.deepEqual(open, [
-    'archive', 'ask', 'campaign', 'funny', 'history', 'join', 'leave',
-    'locations', 'npcs', 'recap', 'search', 'setcharacter', 'stats', 'whoami',
+  const campaign = commandDefs.find((c) => c.name === 'campaign');
+  const subs = campaign.options.filter((o) => o.type === 1).map((o) => o.name);
+
+  // Everything that is not a manager subcommand is something the table itself
+  // may run. `create` is here because an unclaimed campaign has to be
+  // claimable, and `list` because seeing what is here is not a privilege.
+  assert.deepEqual(subs.filter((s) => !MANAGER_SUBCOMMANDS.has(s)).sort(), [
+    'archive', 'ask', 'create', 'export', 'funny', 'history', 'list',
+    'locations', 'npcs', 'recap', 'search', 'setchar', 'stats', 'whoami',
   ]);
 
-  // Nothing gated is reachable from a user install — those are read-only.
-  const userInstallable = commandDefs.filter((c) => c.integration_types.includes(1)).map((c) => c.name);
-  assert.ok(
-    userInstallable.every((n) => !OWNER_ONLY.has(n) && !MANAGER_ONLY.has(n)),
-    'a user-installed command cannot be a gated one'
-  );
+  // The gated ones are reachable from a user install, and that is fine — the
+  // tier is enforced by RESOLUTION, not by which command carries them. A
+  // manager subcommand resolves only among campaigns you run, so installing
+  // the app grants nothing.
+  assert.ok(campaign.integration_types.includes(1), 'the reads travel with the player');
 });
 
 // --- campaigns as things in their own right ---

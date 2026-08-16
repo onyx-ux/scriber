@@ -274,32 +274,37 @@ test('listCampaignsForUser reports the campaign name when one is set', async (t)
 // enabling user install in the Developer Portal silently made all 27
 // user-installable on the first deploy. /join was then offered in servers the
 // bot is not in, where it can only fail.
-test('exactly the nine read commands are user-installable', async () => {
+test('the whole surface is three commands, and only the reads travel', async () => {
   process.env.DISCORD_TOKEN ||= 'x';
   process.env.DISCORD_CLIENT_ID ||= 'x';
   process.env.GEMINI_API_KEY ||= 'x';
   const { commandDefs } = await import('../src/commands/index.js');
 
-  const userInstallable = commandDefs.filter((c) => c.integration_types.includes(1)).map((c) => c.name);
-  assert.deepEqual(
-    userInstallable.sort(),
-    ['archive', 'ask', 'funny', 'history', 'locations', 'npcs', 'recap', 'search', 'stats']
-  );
+  // There used to be twenty-seven. A player who installed the app, or anyone
+  // opening the picker in a server the bot was invited to, saw the lot —
+  // including approve, pause, import and the rest of the pipeline, which
+  // spends the owner's GPU and API budget and has nothing to do with playing
+  // D&D. Those live on the dashboard now.
+  assert.deepEqual(commandDefs.map((c) => c.name).sort(), ['campaign', 'join', 'leave']);
 
   assert.ok(
     commandDefs.every((c) => Array.isArray(c.integration_types) && Array.isArray(c.contexts)),
     'every command states its own install types rather than inheriting the app default'
   );
 
-  const join = commandDefs.find((c) => c.name === 'join');
-  assert.deepEqual(join.integration_types, [0], '/join needs the bot in the voice channel');
-  assert.deepEqual(join.contexts, [0]);
-
-  // /dm and /campaign are the owner's housekeeping and stay usable in a DM
-  // with the bot, which is a context, not an install type.
-  for (const name of ['dm', 'campaign']) {
+  // /join and /leave have to be run from inside the voice channel being
+  // recorded, so they are meaningless anywhere the bot is not.
+  for (const name of ['join', 'leave']) {
     const c = commandDefs.find((x) => x.name === name);
-    assert.deepEqual(c.integration_types, [0], `/${name} is not user-installable`);
-    assert.deepEqual(c.contexts, [0, 1], `/${name} still works in a DM with the bot`);
+    assert.deepEqual(c.integration_types, [0], `/${name} needs the bot in the voice channel`);
+    assert.deepEqual(c.contexts, [0]);
   }
+
+  // /campaign carries USER_INSTALL for its READ subcommands, since Discord
+  // sets integration types per command rather than per subcommand. Nothing is
+  // opened up by that — each subcommand still resolves its own campaign
+  // through its own tier — but it is why this one command travels.
+  const campaign = commandDefs.find((c) => c.name === 'campaign');
+  assert.deepEqual(campaign.integration_types.sort(), [0, 1]);
+  assert.deepEqual(campaign.contexts.sort(), [0, 1, 2], 'a server, a DM with the bot, or a group chat');
 });
