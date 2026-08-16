@@ -810,6 +810,9 @@ test('everyone already at the table when consent arrived is carried over', async
   const id = h.db.createCampaign(GUILD, 'Established', DM_A);
   h.db.addCampaignMember(id, 'long-time-player', DM_A);
   h.db.raw.prepare('DELETE FROM campaign_consent WHERE campaign_id = ?').run(id);
+  // A database from before consent existed has no carry-over marker either —
+  // without clearing it this would test the guard rather than the carry-over.
+  h.db.raw.prepare("DELETE FROM settings WHERE key = 'consent_grandfathered'").run();
   assert.equal(h.db.mayRecord(id, 'long-time-player'), false, 'no row yet');
 
   // Re-opening runs the migration, which is where the carry-over happens.
@@ -856,4 +859,51 @@ test('/join asks about every person, and skips the ones who have not agreed', as
   assert.equal(mayRecord('undecided'), false, 'invited but has not answered');
   assert.equal(mayRecord('never-asked'), false, 'never asked at all');
   assert.deepEqual(asked, [PLAYER_A, 'undecided', 'never-asked']);
+});
+
+// The grandfather step ran on EVERY boot. ON CONFLICT DO NOTHING made that
+// look safe, and it was not: membership and consent are separate, so a member
+// can legitimately have no consent row — setCharacterName enrols someone, and
+// an invitation only records a row once it is delivered. Every restart then
+// read "member, no answer on file" as "grandfather them", which turned
+// restarting the bot into a way of being opted in without ever being asked.
+//
+// Seen for real: a declined row was deleted, the process reopened the
+// database, and the decline came back as granted.
+test('a restart cannot grant consent nobody gave', async (t) => {
+  const h = await harness(t);
+  const id = h.db.createCampaign(GUILD, 'Established', DM_A);
+
+  // A member with no consent row — exactly what naming someone produces.
+  h.db.addCampaignMember(id, 'never-asked', DM_A);
+  h.db.raw.prepare('DELETE FROM campaign_consent WHERE campaign_id = ? AND user_id = ?').run(id, 'never-asked');
+  assert.equal(h.db.mayRecord(id, 'never-asked'), false);
+
+  const path = h.db.raw.name;
+  h.db.close();
+  const again = openDb(path);
+  try {
+    assert.equal(again.mayRecord(id, 'never-asked'), false, 'restarting the bot is not consent');
+  } finally {
+    again.close();
+  }
+});
+
+test('a decline survives a restart', async (t) => {
+  const h = await harness(t);
+  const id = h.db.createCampaign(GUILD, 'Established', DM_A);
+  h.db.addCampaignMember(id, 'refuser', DM_A);
+  h.db.inviteToCampaign(id, 'refuser', DM_A, new Date(Date.now() + 3_600_000).toISOString());
+  h.db.decideConsent(id, 'refuser', false);
+  assert.equal(h.db.getConsent(id, 'refuser').state, 'declined');
+
+  const path = h.db.raw.name;
+  h.db.close();
+  const again = openDb(path);
+  try {
+    assert.equal(again.getConsent(id, 'refuser').state, 'declined', 'a decision is not re-decided on boot');
+    assert.equal(again.mayRecord(id, 'refuser'), false);
+  } finally {
+    again.close();
+  }
 });

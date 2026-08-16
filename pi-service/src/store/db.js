@@ -382,19 +382,35 @@ function migrate(db) {
   // re-consent mid-campaign would stop a running game dead; the ask applies
   // from here on. Written as an explicit row rather than an implicit "no row
   // means yes", so the rule is visible in the data rather than in code.
-  const carried = db
-    .prepare(
-      // WHERE true is not decoration: in an INSERT ... SELECT, SQLite cannot
-      // tell an upsert clause from part of the SELECT without one, and errors
-      // with "near DO: syntax error".
-      `INSERT INTO campaign_consent (campaign_id, user_id, state, invited_by, decided_at)
-       SELECT campaign_id, user_id, 'granted', 'grandfathered', datetime('now')
-         FROM campaign_members
-        WHERE true
-       ON CONFLICT(campaign_id, user_id) DO NOTHING`
-    )
-    .run().changes;
-  if (carried) console.log(`[db] ${carried} existing player(s) carried over as already agreeing to be recorded`);
+  // ONCE, on the first boot after consent arrived — never again.
+  //
+  // Running it every boot looks harmless (ON CONFLICT DO NOTHING protects
+  // anyone who has answered) and is not. Membership and consent are separate,
+  // so a member can legitimately have no consent row: setCharacterName enrols
+  // someone, and /campaign invite creates the row only when it is delivered.
+  // Every restart would then read "member, no answer on file" as "grandfather
+  // them" and grant consent nobody gave — turning a restart into a way to be
+  // opted in.
+  //
+  // Seen for real: a declined row was removed, the process reopened the
+  // database, and the decline came back as 'granted'.
+  const alreadyCarried = db.prepare(`SELECT value FROM settings WHERE key = 'consent_grandfathered'`).get();
+  if (!alreadyCarried) {
+    const carried = db
+      .prepare(
+        // WHERE true is not decoration: in an INSERT ... SELECT, SQLite cannot
+        // tell an upsert clause from part of the SELECT without one, and errors
+        // with "near DO: syntax error".
+        `INSERT INTO campaign_consent (campaign_id, user_id, state, invited_by, decided_at)
+         SELECT campaign_id, user_id, 'granted', 'grandfathered', datetime('now')
+           FROM campaign_members
+          WHERE true
+         ON CONFLICT(campaign_id, user_id) DO NOTHING`
+      )
+      .run().changes;
+    db.prepare(`INSERT INTO settings (key, value) VALUES ('consent_grandfathered', datetime('now'))`).run();
+    if (carried) console.log(`[db] ${carried} existing player(s) carried over as already agreeing to be recorded`);
+  }
 
   // The manager runs the campaign, so they are a member of it by definition —
   // including before they have ever spoken in one.
