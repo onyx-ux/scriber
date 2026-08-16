@@ -139,3 +139,39 @@ test('listCampaignsForUser reports the campaign name when one is set', async (t)
   assert.equal(c.campaign_name, 'Cipher');
   assert.equal(c.channel_name, '🎲Session', 'and the channel it was recorded in, as a fallback');
 });
+
+// --- what gets registered with Discord ---
+
+// A command that omits integration_types inherits the APPLICATION's, so
+// enabling user install in the Developer Portal silently made all 27
+// user-installable on the first deploy. /join was then offered in servers the
+// bot is not in, where it can only fail.
+test('exactly the nine read commands are user-installable', async () => {
+  process.env.DISCORD_TOKEN ||= 'x';
+  process.env.DISCORD_CLIENT_ID ||= 'x';
+  process.env.GEMINI_API_KEY ||= 'x';
+  const { commandDefs } = await import('../src/commands/index.js');
+
+  const userInstallable = commandDefs.filter((c) => c.integration_types.includes(1)).map((c) => c.name);
+  assert.deepEqual(
+    userInstallable.sort(),
+    ['archive', 'ask', 'funny', 'history', 'locations', 'npcs', 'recap', 'search', 'stats']
+  );
+
+  assert.ok(
+    commandDefs.every((c) => Array.isArray(c.integration_types) && Array.isArray(c.contexts)),
+    'every command states its own install types rather than inheriting the app default'
+  );
+
+  const join = commandDefs.find((c) => c.name === 'join');
+  assert.deepEqual(join.integration_types, [0], '/join needs the bot in the voice channel');
+  assert.deepEqual(join.contexts, [0]);
+
+  // /dm and /campaign are the owner's housekeeping and stay usable in a DM
+  // with the bot, which is a context, not an install type.
+  for (const name of ['dm', 'campaign']) {
+    const c = commandDefs.find((x) => x.name === name);
+    assert.deepEqual(c.integration_types, [0], `/${name} is not user-installable`);
+    assert.deepEqual(c.contexts, [0, 1], `/${name} still works in a DM with the bot`);
+  }
+});

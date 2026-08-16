@@ -348,7 +348,32 @@ export const commandDefs = [
       .setName('archive')
       .setDescription('Get the browsable campaign archive (a single HTML file) right now')
   ),
-].map((c) => c.toJSON());
+]
+  .map((c) => c.toJSON())
+  // Everything playerCommand() did not touch is pinned to GUILD_INSTALL here.
+  //
+  // Not decoration: a command that omits integration_types inherits the
+  // APPLICATION's installation contexts, so the moment user install is
+  // enabled in the Developer Portal every command silently becomes
+  // user-installable. Discord confirmed all 27 that way on the first deploy.
+  // /join would then be offered in servers the bot is not in, where it can
+  // only fail — and the roster and pipeline commands would be offered to
+  // whoever installed the app rather than to the table.
+  //
+  // dm_permission is the existing way /campaign and /dm say "the owner can
+  // run this in a DM with the bot", so it selects the one context those two
+  // need beyond GUILD.
+  .map((c) =>
+    c.integration_types
+      ? c
+      : {
+          ...c,
+          integration_types: [IntegrationType.GUILD_INSTALL],
+          contexts: c.dm_permission
+            ? [InteractionContext.GUILD, InteractionContext.BOT_DM]
+            : [InteractionContext.GUILD],
+        }
+  );
 
 // Shows the campaigns the bot has actually recorded, labelled by their set
 // name (or the channel they were recorded in), so a DM can pick one without
