@@ -70,7 +70,7 @@ export function buildInviteMessage({ campaignName, inviterName, retentionDays, e
       'Quill writes up your D&D sessions. If you accept, **your voice is recorded whenever Quill is in the voice channel** ' +
       "— it only listens while it's there, and it never speaks.\n\n" +
       '**What happens to it**\n' +
-      `• Your audio is turned into text on the bot owner's own machine.\n` +
+      `• Your audio is turned into text through a transcription Model.\n` +
       '• That text — not your audio — is then sent to an AI service to write the session summary.\n' +
       `• ${kept}\n` +
       '• Your recording is never sent anywhere else.\n\n' +

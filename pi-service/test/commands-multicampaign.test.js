@@ -704,7 +704,7 @@ test('the invitation DM says what happens and when it expires', async (t) => {
   assert.equal(cmd.dms.length, 1, 'exactly one DM, to the invited person');
   const dm = cmd.dms[0].payload.content;
   assert.match(dm, /your voice is recorded whenever Quill is in the voice channel/i);
-  assert.match(dm, /turned into text on the bot owner/i);
+  assert.match(dm, /turned into text through a transcription Model/i);
   assert.match(dm, /never sent anywhere else/i);
   assert.match(dm, /<t:\d+:f>/, 'and an expiry Discord renders in their own timezone');
   assert.ok(cmd.dms[0].payload.components?.length, 'with something to answer on');
