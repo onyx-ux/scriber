@@ -124,25 +124,76 @@ test('snoozing one server’s session does not delay another', async (t) => {
 });
 
 // Two campaigns on one bot must not bleed names into each other's transcripts.
+//
+// Keyed on real campaign ids, not on guild ids standing in for them: SQLite is
+// loosely typed, so passing 'guild-A' where a campaign id belongs stores the
+// string quite happily and the test goes on passing while testing nothing.
 test('campaign vocabulary does not leak between servers', async (t) => {
   const db = await freshDb(t);
-  db.setCharacterName('guild-A', 'u1', 'Kaelen Zyrthax');
-  db.setCharacterName('guild-B', 'u2', 'Bram Stormhill');
-  db.addCorrection('guild-A', 'kaylen', 'Kaelen Zyrthax');
+  const a = db.createCampaign('guild-A', 'Cipher', 'dm-a');
+  const b = db.createCampaign('guild-B', 'Strahd', 'dm-b');
+  db.setCharacterName(a, 'u1', 'Kaelen Zyrthax');
+  db.setCharacterName(b, 'u2', 'Bram Stormhill');
+  db.addCorrection(a, 'kaylen', 'Kaelen Zyrthax');
 
-  const a = buildWhisperPrompt({
-    corrections: db.listCorrections('guild-A'),
-    characters: db.listCharacters('guild-A'),
-  });
-  const b = buildWhisperPrompt({
-    corrections: db.listCorrections('guild-B'),
-    characters: db.listCharacters('guild-B'),
-  });
+  const promptA = buildWhisperPrompt({ corrections: db.listCorrections(a), characters: db.listCharacters(a) });
+  const promptB = buildWhisperPrompt({ corrections: db.listCorrections(b), characters: db.listCharacters(b) });
 
-  assert.match(a, /Kaelen Zyrthax/);
-  assert.doesNotMatch(a, /Bram/, 'guild A must not be biased toward guild B’s cast');
-  assert.match(b, /Bram Stormhill/);
-  assert.doesNotMatch(b, /Kaelen/);
+  assert.match(promptA, /Kaelen Zyrthax/);
+  assert.doesNotMatch(promptA, /Bram/, 'guild A must not be biased toward guild B’s cast');
+  assert.match(promptB, /Bram Stormhill/);
+  assert.doesNotMatch(promptB, /Kaelen/);
+});
+
+// The same, for two tables in ONE Discord — the case the guild key could never
+// express. Biasing whisper toward the wrong campaign's proper nouns is worse
+// than no prompt at all: it invents the other game's cast into this one.
+test('campaign vocabulary does not leak between two tables in one server', async (t) => {
+  const db = await freshDb(t);
+  const a = db.createCampaign('one-server', 'Cipher', 'dm-a');
+  const b = db.createCampaign('one-server', 'Strahd', 'dm-b');
+  db.setCharacterName(a, 'u1', 'Kaelen Zyrthax');
+  db.setCharacterName(b, 'u2', 'Bram Stormhill');
+
+  const promptA = buildWhisperPrompt({ corrections: db.listCorrections(a), characters: db.listCharacters(a) });
+  const promptB = buildWhisperPrompt({ corrections: db.listCorrections(b), characters: db.listCharacters(b) });
+
+  assert.match(promptA, /Kaelen/);
+  assert.doesNotMatch(promptA, /Bram/);
+  assert.match(promptB, /Bram/);
+  assert.doesNotMatch(promptB, /Kaelen/);
+});
+
+// The prompt is built from the MEETING, so the lookup that matters is
+// meeting.campaign_id — not its guild, which no longer identifies a campaign.
+test('the vocabulary prompt follows the meeting to its own campaign', async (t) => {
+  const { campaignPrompt } = await import('../src/stt/vocabulary.js');
+  const db = await freshDb(t);
+  const a = db.createCampaign('one-server', 'Cipher', 'dm-a');
+  const b = db.createCampaign('one-server', 'Strahd', 'dm-b');
+  db.setCharacterName(a, 'u1', 'Kaelen Zyrthax');
+  db.setCharacterName(b, 'u2', 'Bram Stormhill');
+
+  const meetingIn = (campaignId) =>
+    db.getMeeting(
+      db.createMeeting({
+        guildId: 'one-server',
+        campaignId,
+        channelId: 'c',
+        channelName: 'Voice',
+        startedAt: 'now',
+        audioDir: '/tmp',
+      })
+    );
+
+  const cfg = { whisperPrompt: true, obsidianExportDir: '/nonexistent' };
+  const forA = await campaignPrompt(db, cfg, meetingIn(a));
+  const forB = await campaignPrompt(db, cfg, meetingIn(b));
+
+  assert.match(forA, /Kaelen/);
+  assert.doesNotMatch(forA, /Bram/, "the other table in the same Discord is not in this session's vocabulary");
+  assert.match(forB, /Bram/);
+  assert.doesNotMatch(forB, /Kaelen/);
 });
 
 test('a per-session Pi override applies only to that session', async (t) => {
