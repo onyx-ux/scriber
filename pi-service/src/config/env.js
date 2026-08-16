@@ -142,15 +142,26 @@ export const config = validate({
   geminiApiKey: optional('GEMINI_API_KEY', null),
   geminiModel: optional('GEMINI_MODEL', 'gemini-3.6-flash'),
 
-  // --- read-only status API for the dashboard ---
+  // --- the dashboard's API ---
   // The bot otherwise makes only outbound connections, so this is the one
   // inbound port it opens. Serves operational data only — no tokens, no keys.
   // Empty/0 disables it entirely.
   statusPort: parseInt(optional('STATUS_PORT', '8090'), 10) || 0,
   statusHost: optional('STATUS_HOST', '0.0.0.0'),
-  // Optional shared secret. Unset is fine on a home LAN; set it if this port
-  // is ever reachable from anywhere else.
+  // Shared secret. Reads are open without it, which is a reasonable default
+  // for operational data on a home LAN. ACTIONS are not: approving a summary
+  // spends the API budget and approving a transcription seizes the PC's GPU,
+  // so with this unset the server refuses every action rather than treating
+  // "no credential configured" as "everyone is welcome". See web/server.js.
   statusToken: optional('STATUS_TOKEN', null),
+
+  // Where to find the dashboard, for the notification DMs to link to.
+  //
+  // The owner's DMs used to carry the approve/park buttons themselves. They
+  // are now a notification — the decision is made on the dashboard — so a DM
+  // that can't say WHERE is a DM telling you to go somewhere unspecified.
+  // Unset just omits the link.
+  dashboardUrl: optional('DASHBOARD_URL', null),
 
   // --- when transcription is allowed to use the PC's GPU ---
   // Transcription is the only step that reaches into another machine, and

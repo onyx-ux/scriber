@@ -1,5 +1,3 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-
 import { sessionLabel } from '../export/naming.js';
 
 // WHEN a finished recording is allowed to use the PC's GPU.
@@ -140,23 +138,14 @@ export function snoozeUntil(now, cfg) {
   return new Date(now.getTime() + cfg.transcribeSnoozeHours * 3600_000);
 }
 
-export function buildTranscribeRow(jobId, { serverReachable = true } = {}) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`${TRANSCRIBE_PREFIX}${jobId}:${ACTION_NOW}`)
-      .setLabel(serverReachable ? 'Transcribe now (PC)' : 'Transcribe when PC is up')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`${TRANSCRIBE_PREFIX}${jobId}:${ACTION_LATER}`)
-      .setLabel('Remind me later')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(`${TRANSCRIBE_PREFIX}${jobId}:${ACTION_PI}`)
-      .setLabel('Use the Pi instead (slow)')
-      .setStyle(ButtonStyle.Secondary)
-  );
-}
-
+// buildTranscribeRow lived here — the three scheduling buttons on the "ready
+// to transcribe" DM. Those decisions moved to the dashboard, so nothing sends
+// them any more and a builder for buttons nobody sends is just a place for a
+// future bug to hide.
+//
+// TRANSCRIBE_PREFIX and the parser below stay: DMs already delivered still
+// have the old buttons in scrollback, and they are answered with a pointer to
+// the dashboard rather than left to fail silently.
 export function parseTranscribeAction(customId) {
   if (!customId?.startsWith(TRANSCRIBE_PREFIX)) return null;
   const [rawJobId, action] = customId.slice(TRANSCRIBE_PREFIX.length).split(':');

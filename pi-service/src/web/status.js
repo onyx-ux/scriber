@@ -1,6 +1,7 @@
 import { listTranscriptions, describeTranscription } from '../pipeline/progress.js';
 import { nextAutoWindowStart } from '../pipeline/transcribe-schedule.js';
 import { detectOpusBackend } from '../voice/opus-backend.js';
+import { configuredProviders } from '../pipeline/model-client.js';
 
 // The snapshot the dashboard renders.
 //
@@ -58,6 +59,11 @@ export function buildStatus({
     startedAt: r.started_at,
     sessionStatus: r.meeting_status,
     utterances: r.utterance_count ?? 0,
+    // The dashboard acts on the JOB, not the meeting: a meeting can carry a
+    // transcribe job and a summarise job in its lifetime, and "approve session
+    // 12" is ambiguous between them. Absent before the dashboard could do
+    // anything, which is why it was never needed.
+    jobId: r.job_id ?? null,
     jobType: r.job_type ?? null,
     jobStatus: r.job_status ?? null,
     attempts: r.attempts ?? 0,
@@ -144,5 +150,13 @@ export function buildStatus({
       summarisePaused: db.getSetting('summarize_paused') === 'true',
       transcribePaused: db.getSetting('transcribe_paused') === 'true',
     },
+    // Which summarisers actually have a key, so the page can offer a choice at
+    // the moment of approval instead of guessing — and can leave the choice
+    // out entirely when there is only one. Names only; no keys.
+    providers: configuredProviders(cfg),
+    // Whether this bot will accept actions at all. Without it a dashboard with
+    // no STATUS_TOKEN configured looks merely broken: every button returns 403
+    // and the cause, one unset variable on the Pi, is invisible from the page.
+    actionsEnabled: Boolean(cfg.statusToken),
   };
 }

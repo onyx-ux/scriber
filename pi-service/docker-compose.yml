@@ -25,6 +25,49 @@ services:
       # ("device or resource busy"), since the mount point can't be moved.
       # Mounting the parent dir instead lets that rename happen normally.
       - ./rclone:/root/.config/rclone
-    # No ports need to be exposed — this service only makes outbound
-    # connections (to Discord's gateway, to the whisper server on the PC, and to
-    # Google Drive if DRIVE_SYNC_ENABLED=true).
+
+  # The dashboard, alongside the bot rather than on the PC.
+  #
+  # It used to run on the PC, which was fine while it was a window: if the PC
+  # was off you lost a status page you could not have used anyway, since the
+  # thing it described was the PC's own GPU.
+  #
+  # It stopped being fine when it became the control surface. Approving a
+  # SUMMARY needs nothing but the internet — the PC is irrelevant to it — so a
+  # dashboard that is only up when the PC is up meant a session recorded on
+  # Friday could not be released until someone turned a gaming rig on. And
+  # since the operator buttons have left Discord, there would have been no
+  # other way to do it.
+  #
+  # Here it shares a network with the bot, so nginx proxies to `bot:8090` by
+  # service name — no host IP, no mDNS from inside a container, nothing to
+  # re-point when the Pi's address changes.
+  dashboard:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on: [bot]
+    ports:
+      - '8095:80'
+    # Deliberately NO env_file here, unlike the bot.
+    #
+    # env_file: .env would hand this container DISCORD_TOKEN, GEMINI_API_KEY
+    # and ANTHROPIC_API_KEY — none of which a web server has any use for, and
+    # all of which would then be one careless `${...}` in a template away from
+    # being served to a browser. Compose interpolates ${STATUS_TOKEN} from the
+    # same .env anyway, so naming the one variable it actually needs costs
+    # nothing and keeps the rest out of reach.
+    environment:
+      PI_API: http://bot:8090
+      # Must match STATUS_TOKEN in .env, or the bot answers 401 for reads and
+      # 403 for every action.
+      STATUS_TOKEN: ${STATUS_TOKEN:-}
+    volumes:
+      - ../dashboard/html:/usr/share/nginx/html:ro
+      # envsubst runs over these at start-up, so the token is injected from the
+      # environment rather than baked into an image or committed.
+      - ../dashboard/templates:/etc/nginx/templates:ro
+      # Who gets in without a password. Kept out of the template so the list
+      # can be edited without a container rebuild.
+      - ../dashboard/config/allowed-ips.conf:/etc/nginx/allowed-ips.conf:ro
+      # htpasswd -B -c config/.htpasswd <username>
+      - ../dashboard/config/.htpasswd:/etc/nginx/.htpasswd:ro

@@ -61,6 +61,48 @@
   .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); margin-left: 6px; }
   .tag.warn { color: var(--warn); border-color: var(--warn); }
   .tag.live { color: var(--live); border-color: var(--live); }
+
+  /* Anything that acts. These used to be buttons in a Discord DM; the styling
+     keeps the same shape of decision — one obvious affirmative, the rest
+     quiet — because "approve" and "not yet" should not look equally likely. */
+  .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; cursor: pointer;
+           border: 1px solid var(--line); background: #1e2432; color: var(--text); transition: filter .15s; }
+  button:hover:not(:disabled) { filter: brightness(1.25); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.go { background: #14532d; border-color: #22c55e; color: #dcfce7; }
+  button.warn { background: #422006; border-color: var(--warn); color: #fde68a; }
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 22px; max-width: 620px;
+           background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 11px 16px;
+           box-shadow: 0 8px 30px #0009; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .toast.bad { border-color: var(--bad); color: #fecaca; }
+  .toast.good { border-color: var(--ok); }
+  .note { color: var(--warn); font-size: 13px; margin-top: 10px; }
+
+  /* One campaign, opened. Its own card rather than an expanding row: the
+     cards above are rebuilt every five seconds, and a panel with a half-typed
+     character name in it must not be one of the things thrown away. */
+  .camp { cursor: pointer; }
+  .camp:hover .name { color: var(--accent); }
+  .camp.open .name { color: var(--accent); }
+  #detail { display: none; }
+  #detail.open { display: block; }
+  .detail-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .detail-head h2 { margin: 0; }
+  .cols { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); margin-top: 6px; }
+  .cols h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+             margin: 0 0 8px; font-weight: 600; }
+  .who { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .who:last-child { border-bottom: 0; }
+  .who .sub { color: var(--dim); font-size: 12.5px; }
+  .who .acts { margin-top: 0; }
+  input, select { font: inherit; font-size: 13px; padding: 5px 9px; border-radius: 7px; min-width: 0;
+                  border: 1px solid var(--line); background: #0d1017; color: var(--text); }
+  input:focus, select:focus { outline: 1px solid var(--accent); }
+  form.inline { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+  form.inline input { flex: 1 1 110px; }
+  .yes { color: var(--ok); } .no { color: var(--bad); } .maybe { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -80,6 +122,8 @@
     <div id="campaigns"></div>
   </div>
 
+  <div class="card wide" id="detail"></div>
+
   <div class="grid">
     <div class="card">
       <h2>Now recording</h2>
@@ -94,6 +138,7 @@
     <div class="card">
       <h2>Waiting for you</h2>
       <div id="waiting"></div>
+      <div class="acts" id="waiting-bulk"></div>
     </div>
 
     <div class="card">
@@ -112,6 +157,8 @@
     </div>
   </div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 // Same origin by default: nginx proxies /api to the Pi and adds the status
@@ -192,7 +239,7 @@ function render(s) {
             (c.members && c.named < c.members ? `<span class="tag">${c.members - c.named} unnamed</span>` : '');
           const where = c.guildName ? esc(c.guildName) : `server ${esc(c.guildId)}`;
           return `
-            <div class="camp">
+            <div class="camp${openCampaignId === c.id ? ' open' : ''}" data-campaign="${c.id}">
               <div>
                 <div class="name">${esc(c.name || c.channel || 'unnamed campaign')}${tags}</div>
                 <div class="meta">${where} · ${c.members} player(s) · last played ${esc(ago(c.lastSessionAt))} · notes → ${esc(c.output)}</div>
@@ -228,19 +275,59 @@ function render(s) {
         </div>`).join('')
     : empty('Idle.');
 
+  // The decisions that used to be buttons in a Discord DM.
+  //
+  // Ordered so the two that need an answer come first: a session waiting on
+  // you is the reason to open this page, and one that is merely queued is not.
   const waiting = [
-    ...s.queue.awaitingTranscribe.map((q) => ({ ...q, what: 'needs your approval to transcribe' })),
+    ...s.queue.awaitingTranscribe.map((q) => ({ ...q, what: 'needs your approval to transcribe', act: 'transcribe' })),
+    ...s.queue.awaitingSummary.map((q) => ({ ...q, what: 'needs your approval to summarise', act: 'summary' })),
     ...s.queue.queuedTranscribe.map((q) => ({ ...q, what: 'approved — waiting for the PC' })),
-    ...s.queue.awaitingSummary.map((q) => ({ ...q, what: 'needs your approval to summarise' })),
     ...s.queue.queuedSummary.map((q) => ({ ...q, what: 'queued to summarise' })),
   ];
+
+  const providers = s.providers ?? [];
+  const canAct = s.actionsEnabled !== false;
+
+  // A provider is only worth choosing between when there IS a choice. With one
+  // configured the button says what it does; with two it says who does it.
+  function summaryButtons(jobId) {
+    if (providers.length <= 1) {
+      return `<button class="go" data-act="summary/approve" data-job="${jobId}">Summarise now</button>`;
+    }
+    return providers
+      .map((p) => `<button class="go" data-act="summary/approve" data-job="${jobId}" data-provider="${esc(p)}">${esc(PROVIDER_NAMES[p] ?? p)}</button>`)
+      .join('');
+  }
+
+  function actions(q) {
+    if (!q.act || !q.jobId || !canAct) return '';
+    const buttons =
+      q.act === 'transcribe'
+        ? `<button class="go" data-act="transcribe" data-job="${q.jobId}" data-action="now">Transcribe now</button>
+           <button data-act="transcribe" data-job="${q.jobId}" data-action="later">Not yet</button>
+           <button data-act="transcribe" data-job="${q.jobId}" data-action="pi">On the Pi (slow)</button>`
+        : summaryButtons(q.jobId);
+    return `<div class="acts">${buttons}</div>`;
+  }
+
   $('waiting').innerHTML = waiting.length
     ? waiting.map((q) => `
         <div class="item">
           <div class="title">#${q.meetingId} — ${esc(q.channel)}</div>
           <div class="sub">${esc(q.what)}${q.utterances ? ` · ${q.utterances} lines` : ''}${q.lastError ? `<br>last error: ${esc(q.lastError)}` : ''}</div>
-        </div>`).join('')
+          ${actions(q)}
+        </div>`).join('') + (canAct ? '' : DISABLED_NOTE)
     : empty('Nothing waiting.');
+
+  // "Release everything" is separated from the per-session buttons on purpose:
+  // it is the one click here that spends real money without naming what it
+  // spent it on, so it should not sit in the same row as a single approval.
+  const bulk = s.queue.awaitingSummary.length;
+  $('waiting-bulk').innerHTML =
+    bulk > 1 && canAct
+      ? `<button data-act="summary/approve-all" data-confirm="Release all ${bulk} waiting summaries?">Release all ${bulk} summaries</button>`
+      : '';
 
   $('servers').innerHTML = s.servers.length
     ? s.servers.map((g) => {
@@ -257,12 +344,278 @@ function render(s) {
     [s.schedule.inWindowNow ? 'Window' : 'Next window', s.schedule.inWindowNow ? 'open now' : whenLocal(s.schedule.nextAutoWindowAt)],
   ]);
 
+  // The two queues are shown as state plus the button that changes it, rather
+  // than a toggle: a toggle sent twice — a double-click, or two tabs open on
+  // this page — lands on the opposite of what the person who clicked it saw.
+  // Each button says the state it will move to, so it is the same click
+  // whatever the page last managed to render.
+  const pauseButton = (queue, paused) =>
+    !canAct
+      ? paused ? 'paused' : 'running'
+      : `<button class="${paused ? 'go' : 'warn'}" data-act="pause" data-queue="${queue}" data-paused="${paused ? 'false' : 'true'}"
+          ${paused ? '' : `data-confirm="Pause ${queue === 'summarize' ? 'summarising' : 'transcription'}? Nothing new will start."`}>
+          ${paused ? 'Resume' : 'Pause'}</button>`;
+
   $('health').innerHTML = rows([
     ['PC whisper server', `${dot(s.health.whisperServer)}${s.health.whisperServer === null ? 'unknown' : s.health.whisperServer ? 'reachable' : 'not reachable'}`],
     [`Summariser (${esc(s.health.summariserName)})`, `${dot(s.health.summariser)}${s.health.summariser === null ? 'unknown' : s.health.summariser ? 'ready' : 'unavailable'}`],
-    ['Transcribing', s.health.transcribePaused ? `${dot(false)}paused` : `${dot(true)}running`],
-    ['Summarising', s.health.summarisePaused ? `${dot(false)}paused` : `${dot(true)}running`],
+    [
+      `Transcribing ${s.health.transcribePaused ? `${dot(false)}paused` : `${dot(true)}running`}`,
+      pauseButton('transcribe', s.health.transcribePaused),
+    ],
+    [
+      `Summarising ${s.health.summarisePaused ? `${dot(false)}paused` : `${dot(true)}running`}`,
+      pauseButton('summarize', s.health.summarisePaused),
+    ],
   ]);
+}
+
+const PROVIDER_NAMES = { gemini: 'Gemini', anthropic: 'Claude' };
+
+// --- one campaign, opened ---
+//
+// Everything /dm roster, /corrections and /history used to answer, plus the
+// two things you actually do with them.
+//
+// Rendered into its own card, and NOT from the five-second poll. Two reasons:
+// this data changes a few times a month rather than a few times a minute, so
+// polling it for every campaign the bot serves would grow each request with
+// the size of the whole install; and a panel containing a half-typed character
+// name must not be one of the things a refresh throws away.
+
+let openCampaignId = null;
+
+function consentClass(state) {
+  return state === 'granted' ? 'yes' : state === 'declined' ? 'no' : 'maybe';
+}
+
+function rosterRow(view, p) {
+  // The Discord display name is what the operator recognises; the id is what
+  // the action needs. Showing both means a roster entry is identifiable even
+  // for someone the bot has never heard speak, who therefore has no name.
+  const who = p.displayName ? esc(p.displayName) : `user ${esc(p.userId)}`;
+  const plays = p.characterName ? `plays <b>${esc(p.characterName)}</b>` : '<i>no character set</i>';
+  const heard = p.lines ? `${p.lines} line${p.lines === 1 ? '' : 's'}` : 'not recorded yet';
+
+  return `
+    <div class="who">
+      <div>
+        <div>${who}${p.enrolled ? '' : ' <span class="tag warn">not on the roster</span>'}</div>
+        <div class="sub">${plays} · ${heard} · <span class="${consentClass(p.consent.state)}">${esc(p.consent.label)}</span></div>
+      </div>
+      <div class="acts">
+        <form class="inline" data-act="roster/character" data-campaign="${view.id}" data-user="${esc(p.userId)}">
+          <input name="name" placeholder="character" value="${esc(p.characterName || '')}" size="12">
+          <button type="submit">Save</button>
+        </form>
+        ${p.characterName ? `<button data-act="roster/forget" data-campaign="${view.id}" data-user="${esc(p.userId)}">Clear</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function sessionRow(view, s) {
+  const done = s.lines > 0;
+  return `
+    <div class="who">
+      <div>
+        <div>${esc(s.ref || `#${s.meetingId}`)}</div>
+        <div class="sub">${esc((s.startedAt || '').slice(0, 10))} · ${esc(s.status)}${s.lines ? ` · ${s.lines} lines` : ''}</div>
+      </div>
+      <div class="acts">
+        ${done ? `<button data-download="${s.meetingId}">Transcript</button>` : ''}
+        ${done ? `<button data-act="summary/again" data-meeting="${s.meetingId}" data-confirm="Write the notes for ${s.ref || `#${s.meetingId}`} again?">Re-summarise</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderDetail(view) {
+  $('detail').className = 'card wide open';
+  $('detail').innerHTML = `
+    <div class="detail-head">
+      <h2>${esc(view.label)}</h2>
+      <span class="muted">${view.roster.length} at the table · ${view.sessions.length} session${view.sessions.length === 1 ? '' : 's'}</span>
+      <span style="margin-left:auto"><button data-close-detail>Close</button></span>
+    </div>
+    <div class="cols">
+      <div>
+        <h3>Roster</h3>
+        ${view.roster.length ? view.roster.map((p) => rosterRow(view, p)).join('') : empty('Nobody yet.')}
+      </div>
+      <div>
+        <h3>Corrections</h3>
+        ${
+          view.corrections.length
+            ? view.corrections
+                .map(
+                  (c) => `
+              <div class="who">
+                <div><div>"${esc(c.wrong)}" → <b>${esc(c.right)}</b></div></div>
+                <div class="acts">
+                  <button data-act="corrections/remove" data-campaign="${view.id}" data-wrong="${esc(c.wrong)}">Remove</button>
+                </div>
+              </div>`
+                )
+                .join('')
+            : empty('None saved.')
+        }
+        <form class="inline" data-act="corrections/add" data-campaign="${view.id}">
+          <input name="wrong" placeholder="what whisper hears" required>
+          <input name="right" placeholder="what it should say" required>
+          <button type="submit">Add</button>
+        </form>
+        <div class="sub muted" style="margin-top:8px">
+          Applied to every future transcript, and replayed over this campaign's existing ones.
+        </div>
+      </div>
+      <div>
+        <h3>Sessions</h3>
+        ${view.sessions.length ? view.sessions.map((s) => sessionRow(view, s)).join('') : empty('None recorded.')}
+      </div>
+    </div>`;
+}
+
+async function openCampaign(id) {
+  openCampaignId = id;
+  try {
+    const res = await fetch(`${API}/campaign?id=${id}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    renderDetail(await res.json());
+  } catch (err) {
+    toast(`Couldn't load that campaign — ${err.message}`, false);
+    closeCampaign();
+  }
+}
+
+function closeCampaign() {
+  openCampaignId = null;
+  $('detail').className = 'card wide';
+  $('detail').innerHTML = '';
+}
+
+// The transcript needs the auth header, which a plain <a href> cannot carry —
+// so it is fetched and handed to the browser as a blob rather than linked.
+async function downloadTranscript(meetingId) {
+  try {
+    const res = await fetch(`${API}/transcript?meeting=${meetingId}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `session-${meetingId}-transcript.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast(`Couldn't fetch that transcript — ${err.message}`, false);
+  }
+}
+
+const DISABLED_NOTE =
+  '<div class="note">Actions are turned off on this bot — set <code>STATUS_TOKEN</code> in ' +
+  '<code>pi-service/.env</code> (and in the dashboard) to approve from here.</div>';
+
+let toastTimer = null;
+function toast(message, ok) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = `toast show ${ok ? 'good' : 'bad'}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, ok ? 4000 : 9000);
+}
+
+// One listener for every button on the page, rather than one per render.
+//
+// The cards are rebuilt from scratch every five seconds, so any handler
+// attached to a button would be thrown away with it — and a click landing in
+// the gap between two renders would do nothing at all. Delegation survives
+// the rebuild because it is bound to the document, not to the buttons.
+document.addEventListener('click', async (event) => {
+  // Opening a campaign, closing it, and downloading a transcript are not
+  // actions against the API's action table, so they are handled before it.
+  if (event.target.closest('[data-close-detail]')) return closeCampaign();
+
+  const download = event.target.closest('button[data-download]');
+  if (download) return downloadTranscript(download.dataset.download);
+
+  const row = event.target.closest('.camp[data-campaign]');
+  if (row) {
+    const id = Number(row.dataset.campaign);
+    return id === openCampaignId ? closeCampaign() : openCampaign(id);
+  }
+
+  const button = event.target.closest('button[data-act]');
+  if (!button || button.disabled) return;
+  // A submit button inside a form is the form's business, not this listener's
+  // — otherwise adding a correction would fire twice, once here without the
+  // typed values and once from the submit handler with them.
+  if (button.type === 'submit') return;
+
+  if (button.dataset.confirm && !confirm(button.dataset.confirm)) return;
+
+  // Disabled for the round trip so an impatient second click cannot send the
+  // same approval twice. The API refuses the duplicate anyway — this just
+  // stops the page reporting a confusing "already released" at someone who
+  // only meant to click once.
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '…';
+
+  const d = button.dataset;
+  const body = {};
+  if (d.job) body.jobId = Number(d.job);
+  if (d.meeting) body.meetingId = Number(d.meeting);
+  if (d.campaign) body.campaignId = Number(d.campaign);
+  if (d.user) body.userId = d.user;
+  if (d.wrong) body.wrong = d.wrong;
+  if (d.provider) body.provider = d.provider;
+  if (d.action) body.action = d.action;
+  if (d.queue) body.queue = d.queue;
+  if (d.paused) body.paused = d.paused === 'true';
+
+  await send(d.act, body);
+  button.disabled = false;
+  button.textContent = label;
+});
+
+// Forms rather than buttons wherever there is something to type. A form gives
+// Enter-to-submit and required-field validation for free, and both matter for
+// the two things typed most often here: a character name and a correction.
+document.addEventListener('submit', async (event) => {
+  const form = event.target.closest('form[data-act]');
+  if (!form) return;
+  event.preventDefault();
+
+  const body = Object.fromEntries(new FormData(form));
+  if (form.dataset.campaign) body.campaignId = Number(form.dataset.campaign);
+  if (form.dataset.user) body.userId = form.dataset.user;
+
+  const submit = form.querySelector('button[type=submit]');
+  if (submit) submit.disabled = true;
+  await send(form.dataset.act, body);
+  if (submit) submit.disabled = false;
+});
+
+// One place that talks to the action API, so the refresh-afterwards rule and
+// the error handling are not written twice.
+async function send(action, body) {
+  try {
+    const res = await fetch(`${API}/actions/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = await res.json().catch(() => ({}));
+    toast(payload.message || `HTTP ${res.status}`, res.ok && payload.ok !== false);
+  } catch (err) {
+    toast(`Couldn't reach the bot — ${err.message}`, false);
+    return;
+  }
+
+  // Straight to a refresh rather than waiting up to five seconds: the whole
+  // point of pressing the button is to watch the thing move. The open campaign
+  // is reloaded too, since roster and correction actions change what it shows
+  // and nothing else will refresh it.
+  tick();
+  if (openCampaignId) openCampaign(openCampaignId);
 }
 
 async function tick() {

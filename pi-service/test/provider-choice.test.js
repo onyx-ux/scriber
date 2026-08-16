@@ -11,7 +11,7 @@ import {
   summariserLabel,
   contextTokens,
 } from '../src/pipeline/model-client.js';
-import { buildApprovalRow, providerChoiceNote, APPROVE_PREFIX } from '../src/delivery/approval-notify.js';
+import { providerChoiceNote, APPROVE_PREFIX } from '../src/delivery/approval-notify.js';
 import { openDb } from '../src/store/db.js';
 
 const baseCfg = {
@@ -91,31 +91,16 @@ test('configuredProviders lists only what has credentials', () => {
   assert.deepEqual(configuredProviders({ ...baseCfg, geminiApiKey: null }), [], 'no keys means nothing can run');
 });
 
-// --- approval buttons ---
+// The approval buttons used to be built here and tested for Discord's
+// custom_id limits. They are gone: approving happens on the dashboard, which
+// sends a job id in a JSON body and has no such limit. What survives is the
+// note that names the MODEL behind each provider — the dashboard's buttons are
+// no roomier than Discord's were, so "Gemini" still needs spelling out
+// somewhere.
 
-test('one button per configured provider, plus "Not yet"', () => {
-  const row = buildApprovalRow(42, { ...baseCfg, anthropicApiKey: 'sk-x' }).toJSON();
-  const ids = row.components.map((c) => c.custom_id);
-  assert.deepEqual(ids, ['scriber:approve:42:gemini', 'scriber:approve:42:anthropic', 'scriber:park:42']);
-});
-
-test('with only one provider set up, the button stays a plain "Summarise now"', () => {
-  const row = buildApprovalRow(42, baseCfg).toJSON();
-  const ids = row.components.map((c) => c.custom_id);
-  assert.deepEqual(ids, ['scriber:approve:42', 'scriber:park:42'], 'no pointless provider picker for a single option');
-});
-
-test('button custom_ids stay within Discord\'s 100-character limit', () => {
-  const row = buildApprovalRow(999999999, { ...baseCfg, anthropicApiKey: 'sk-x' }).toJSON();
-  for (const c of row.components) {
-    assert.ok(c.custom_id.length <= 100, `${c.custom_id} is too long`);
-    assert.ok(c.label.length <= 80, `${c.label} is too long`);
-  }
-});
-
-// The DM's buttons only have room for a provider name, so the message body has
-// to say which model each one actually means.
-test('the DM note names the model behind each button, and is empty when there is no choice', () => {
+// The buttons only have room for a provider name, so the message body has to
+// say which model each one actually means.
+test('the note names the model behind each provider, and is empty when there is no choice', () => {
   const note = providerChoiceNote({ ...baseCfg, anthropicApiKey: 'sk-x' });
   assert.match(note, /gemini-3\.1-flash-lite/);
   assert.match(note, /claude-opus-5/);

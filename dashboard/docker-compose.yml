@@ -1,6 +1,15 @@
 services:
-  # Runs on the PC. A single static page plus a thin proxy to the bot's status
-  # API on the Pi.
+  # The PC's OPTIONAL copy. The dashboard's real home is now the Pi, where it
+  # runs as a second service in pi-service/docker-compose.yml alongside the bot
+  # — see the note there. Short version: once the approve/park buttons left
+  # Discord, a control surface that was only up when the gaming PC was up meant
+  # a Friday session could not be released until someone booted it.
+  #
+  # This file is still here because pointing a second copy at the same API
+  # costs nothing and is useful for working on the page itself. Nothing needs
+  # it to be running.
+  #
+  # A single static page plus a thin proxy to the bot's API on the Pi.
   #
   # The page used to fetch the Pi directly from the browser, with no backend
   # at all. That was fine while the dashboard was LAN-only and the API was

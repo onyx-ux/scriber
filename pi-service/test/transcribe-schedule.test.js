@@ -8,7 +8,6 @@ import {
   decideTranscribeAction,
   snoozeUntil,
   parseTranscribeAction,
-  buildTranscribeRow,
   transcribeRequestMessage,
   reminderMessage,
   TRANSCRIBE_PREFIX,
@@ -153,7 +152,13 @@ test('snoozeUntil moves by the configured hours', () => {
   assert.equal(until.getTime() - WED_10AM.getTime(), 24 * 3600_000);
 });
 
-// --- buttons ---
+// --- the buttons already sitting in scrollback ---
+//
+// The bot no longer SENDS these — scheduling moved to the dashboard — but
+// every DM it has already delivered still carries them, so the parser has to
+// keep recognising them. They are answered with a pointer to the dashboard
+// rather than left to fail silently, and that answer depends on this still
+// telling a transcribe button apart from anything else.
 
 test('button ids round-trip and reject anything foreign', () => {
   for (const action of [ACTION_NOW, ACTION_LATER, ACTION_PI]) {
@@ -163,12 +168,6 @@ test('button ids round-trip and reject anything foreign', () => {
   assert.equal(parseTranscribeAction(`${TRANSCRIBE_PREFIX}7:destroy`), null);
   assert.equal(parseTranscribeAction(`${TRANSCRIBE_PREFIX}abc:now`), null);
   assert.equal(parseTranscribeAction(undefined), null);
-});
-
-test('button ids stay inside Discord’s 100-character limit', () => {
-  for (const b of buildTranscribeRow(999_999_999).components) {
-    assert.ok(b.data.custom_id.length <= 100, b.data.custom_id);
-  }
 });
 
 // --- what the owner actually reads ---

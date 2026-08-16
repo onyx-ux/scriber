@@ -242,6 +242,44 @@ test('the payload carries every field the dashboard renders', async (t) => {
   assert.ok('campaigns' in s.servers[0], 'servers[].campaigns');
 });
 
+// --- what the dashboard needs in order to ACT, not just to display ---
+
+test('a waiting job carries the job id, not just the meeting', async (t) => {
+  const db = await freshDb(t);
+  const id = meeting(db);
+  const job = db.enqueueTranscribeJob(id, { requireApproval: true });
+
+  const [waiting] = buildStatus({ db, cfg }).queue.awaitingTranscribe;
+  assert.equal(waiting.jobId, job.id);
+
+  // A meeting carries a transcribe job and later a summarise job, so
+  // "approve session 12" names two different things at two different times.
+  // The dashboard has to act on the job.
+  db.finalizeTranscription(id, [{ userId: 'u', displayName: 'A', text: 'x', startMs: 0, endMs: 1 }], {
+    requireApproval: true,
+  });
+  const [summary] = buildStatus({ db, cfg }).queue.awaitingSummary;
+  assert.equal(summary.meetingId, id, 'same meeting');
+  assert.notEqual(summary.jobId, job.id, 'different job');
+});
+
+test('the page is told which summarisers it may offer', async (t) => {
+  const db = await freshDb(t);
+
+  assert.deepEqual(buildStatus({ db, cfg: { ...cfg, geminiApiKey: 'k' } }).providers, ['gemini']);
+  const both = buildStatus({ db, cfg: { ...cfg, geminiApiKey: 'k', anthropicApiKey: 'k2' } }).providers;
+  assert.deepEqual(both.sort(), ['anthropic', 'gemini'], 'so the choice is offered at approval time');
+});
+
+// A dashboard whose every button returns 403 looks broken, and the cause —
+// one unset variable on the Pi — is invisible from the page.
+test('the page is told whether this bot will accept actions at all', async (t) => {
+  const db = await freshDb(t);
+
+  assert.equal(buildStatus({ db, cfg }).actionsEnabled, false, 'no STATUS_TOKEN, no actions');
+  assert.equal(buildStatus({ db, cfg: { ...cfg, statusToken: 'secret' } }).actionsEnabled, true);
+});
+
 // This is served unauthenticated on the LAN by default, and can be exposed to
 // a URL — so who runs which game must not be in it.
 test('the overview carries no user ids', async (t) => {

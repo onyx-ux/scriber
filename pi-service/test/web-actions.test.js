@@ -1,0 +1,384 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { openDb } from '../src/store/db.js';
+import { runAction, findAction, ACTIONS } from '../src/web/actions.js';
+import {
+  approveSummary,
+  approveAllSummaries,
+  transcribeAction,
+  setPaused,
+} from '../src/pipeline/job-actions.js';
+
+// The dashboard's control surface.
+//
+// These matter more than the average handler test: this is the file that turns
+// a read-only status port into something that can spend the owner's API budget
+// and seize the PC's GPU. Everything here is about what the API refuses.
+
+async function harness(t) {
+  const dir = await mkdtemp(join(tmpdir(), 'quill-actions-'));
+  const db = openDb(join(dir, 'db.sqlite'));
+  const cfg = {
+    summaryProvider: 'gemini',
+    geminiApiKey: 'test-key',
+    geminiModel: 'gemini-3.6-flash',
+    transcribeSnoozeHours: 12,
+  };
+  const campaignId = db.createCampaign('guild-1', 'Cipher', 'dm-1');
+  t.after(async () => {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  return { db, cfg, dir, campaignId };
+}
+
+// A meeting with a parked job of the given type, which is the state every
+// action here acts on. Built through the real pipeline calls rather than by
+// writing job rows directly, so a change to how jobs are parked shows up here
+// instead of leaving these testing a shape nothing produces any more.
+function parked(db, type, campaignId) {
+  const meetingId = db.createMeeting({
+    guildId: 'guild-1',
+    campaignId,
+    channelId: 'voice',
+    channelName: 'Voice Chat',
+    startedAt: new Date().toISOString(),
+    audioDir: '/tmp',
+  });
+
+  if (type === 'transcribe') {
+    return { meetingId, jobId: db.enqueueTranscribeJob(meetingId, { requireApproval: true }).id };
+  }
+
+  const job = db.finalizeTranscription(
+    meetingId,
+    [{ userId: 'someone', displayName: 'Someone', startMs: 0, endMs: 1000, text: 'hello' }],
+    { requireApproval: true }
+  );
+  return { meetingId, jobId: job.id };
+}
+
+// --- what the action table will not do ---
+
+test('an unknown action is not found rather than guessed at', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = runAction({ pathname: '/actions/delete-everything', body: {}, db, cfg });
+
+  assert.equal(res.status, 404);
+  assert.equal(res.payload.ok, false);
+});
+
+test('the action list is closed — no path reaches an arbitrary db method', () => {
+  assert.deepEqual(
+    Object.keys(ACTIONS).sort(),
+    [
+      'corrections/add',
+      'corrections/remove',
+      'pause',
+      'roster/character',
+      'roster/forget',
+      'summary/again',
+      'summary/approve',
+      'summary/approve-all',
+      'summary/park',
+      'transcribe',
+    ],
+    'adding one has to be a decision someone makes on purpose'
+  );
+  assert.equal(findAction('/actions/../status'), null);
+  assert.equal(findAction('/status'), null);
+});
+
+test('a job id that is not a number is refused, not coerced', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  for (const jobId of ['12abc', '', null, {}, '1e3', -4, 1.5]) {
+    const res = runAction({ pathname: '/actions/summary/approve', body: { jobId }, db, cfg });
+    assert.equal(res.status, 400, `jobId ${JSON.stringify(jobId)} should be refused`);
+  }
+});
+
+test('pause sets a state rather than toggling one', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+
+  // A toggle sent twice by a double-click lands on the opposite of what the
+  // person who clicked it saw, so the action requires an explicit boolean.
+  assert.equal(runAction({ pathname: '/actions/pause', body: { queue: 'summarize' }, db, cfg }).status, 400);
+
+  const body = { queue: 'summarize', paused: true };
+  runAction({ pathname: '/actions/pause', body, db, cfg });
+  runAction({ pathname: '/actions/pause', body, db, cfg });
+  assert.equal(db.getSetting('summarize_paused'), 'true', 'twice is the same as once');
+});
+
+test('pause refuses a queue it does not have', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = setPaused(db, { queue: 'everything', paused: true });
+
+  assert.equal(res.ok, false);
+  assert.equal(db.getSetting('everything_paused'), null, 'a typo must not create a setting');
+});
+
+test('an unknown transcribe action is refused', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { jobId } = parked(db, 'transcribe', campaignId);
+  const res = runAction({ pathname: '/actions/transcribe', body: { jobId, action: 'delete' }, db, cfg });
+
+  assert.equal(res.status, 400);
+  assert.equal(db.getJob(jobId).status, 'awaiting_approval', 'and changes nothing');
+});
+
+// --- what it does do ---
+
+test('approving a summary releases exactly that job', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const mine = parked(db, 'summarize', campaignId);
+  const other = parked(db, 'summarize', campaignId);
+
+  const res = runAction({ pathname: '/actions/summary/approve', body: { jobId: mine.jobId }, db, cfg });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(db.getJob(mine.jobId).status, 'pending');
+  assert.equal(db.getJob(other.jobId).status, 'awaiting_approval', 'the other stays parked');
+});
+
+test('approving twice is refused the second time', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { jobId } = parked(db, 'summarize', campaignId);
+
+  assert.equal(approveSummary(db, cfg, { jobId }).ok, true);
+  const again = approveSummary(db, cfg, { jobId });
+  assert.equal(again.ok, false);
+  assert.match(again.message, /already released/);
+});
+
+test('a provider that is not set up is named, not silently swapped', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { jobId } = parked(db, 'summarize', campaignId);
+
+  const res = approveSummary(db, cfg, { jobId, provider: 'anthropic' });
+  assert.equal(res.ok, false);
+  assert.match(res.message, /isn't set up/);
+  assert.equal(db.getJob(jobId).status, 'awaiting_approval', 'and the job stays parked');
+
+  const nonsense = approveSummary(db, cfg, { jobId, provider: 'gpt' });
+  assert.match(nonsense.message, /Unknown provider/);
+});
+
+test('transcribe now releases the job; later parks it with a time', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const now = parked(db, 'transcribe', campaignId);
+  assert.equal(transcribeAction(db, cfg, { jobId: now.jobId, action: 'now' }).ok, true);
+  assert.equal(db.getJob(now.jobId).status, 'pending');
+
+  const later = parked(db, 'transcribe', campaignId);
+  const res = transcribeAction(db, cfg, { jobId: later.jobId, action: 'later' });
+  assert.equal(res.ok, true);
+  assert.equal(db.getJob(later.jobId).status, 'awaiting_approval');
+  assert.ok(new Date(res.until).getTime() > Date.now(), 'and comes back later, not never');
+});
+
+test('transcribing on the Pi bypasses the GPU schedule and says so in settings', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { jobId } = parked(db, 'transcribe', campaignId);
+
+  transcribeAction(db, cfg, { jobId, action: 'pi' });
+  assert.equal(db.getJob(jobId).status, 'pending');
+  assert.equal(db.getSetting(`transcribe_target_${jobId}`), 'pi');
+});
+
+test('a job already running is left alone', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { jobId } = parked(db, 'transcribe', campaignId);
+  db.markJobRunning(jobId);
+
+  const res = transcribeAction(db, cfg, { jobId, action: 'now' });
+  assert.equal(res.ok, false);
+  assert.match(res.message, /right now/);
+});
+
+// The bug this surfaced: db.approveAllWaiting() matches every parked job of
+// any type, so "approve all summaries" also released parked TRANSCRIPTIONS —
+// jobs sitting there precisely because nobody had agreed to spend the GPU yet
+// — and then reported the count as summaries.
+test('approving all summaries does not release a parked transcription', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const summary = parked(db, 'summarize', campaignId);
+  const transcription = parked(db, 'transcribe', campaignId);
+
+  const res = approveAllSummaries(db, cfg);
+
+  assert.equal(res.released, 1, 'only the summary');
+  assert.equal(db.getJob(summary.jobId).status, 'pending');
+  assert.equal(
+    db.getJob(transcription.jobId).status,
+    'awaiting_approval',
+    'the GPU is not seized by a button that said it was releasing summaries'
+  );
+});
+
+test('approving a transcription through the summary action is refused', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { jobId } = parked(db, 'transcribe', campaignId);
+
+  const res = approveSummary(db, cfg, { jobId });
+  assert.equal(res.ok, false);
+  assert.match(res.message, /transcription, not a summary/);
+  assert.equal(db.getJob(jobId).status, 'awaiting_approval');
+});
+
+test('approving all when nothing waits says so instead of claiming work', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = approveAllSummaries(db, cfg);
+
+  assert.equal(res.ok, true);
+  assert.equal(res.released, 0);
+  assert.match(res.message, /Nothing is waiting/);
+});
+
+// A thrown error must never reach the caller as a stack trace: this port can
+// be published, and the bot must stay up.
+test('an action that throws answers 500 without leaking the error', async (t) => {
+  const { cfg } = await harness(t);
+  const exploding = {
+    getJob() {
+      throw new Error('SQLITE_CORRUPT: /data/db.sqlite is toast');
+    },
+  };
+
+  const res = runAction({ pathname: '/actions/summary/approve', body: { jobId: 1 }, db: exploding, cfg });
+  assert.equal(res.status, 500);
+  assert.doesNotMatch(res.payload.message, /SQLITE|db\.sqlite/);
+});
+
+// --- a campaign's records ---
+//
+// The /correct and /dm side. These are the actions that rewrite already-stored
+// transcripts, so the tests are mostly about blast radius.
+
+test('a correction rewrites its own campaign and no other', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const other = db.createCampaign('guild-1', 'Strahd', 'dm-2');
+  const mine = parked(db, 'summarize', campaignId).meetingId;
+  const theirs = parked(db, 'summarize', other).meetingId;
+
+  db.finalizeTranscription(mine, [{ userId: 'u', displayName: 'A', startMs: 0, endMs: 1, text: 'Vecks opens it' }]);
+  db.finalizeTranscription(theirs, [{ userId: 'u', displayName: 'A', startMs: 0, endMs: 1, text: 'Vecks opens it' }]);
+
+  const res = runAction({
+    pathname: '/actions/corrections/add',
+    body: { campaignId, wrong: 'Vecks', right: 'Vex' },
+    db,
+    cfg,
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.changed, 1);
+  assert.equal(db.listUtterances(mine)[0].text, 'Vex opens it');
+  assert.equal(db.listUtterances(theirs)[0].text, 'Vecks opens it', 'the other table is untouched');
+  assert.deepEqual(db.listCorrections(other), []);
+});
+
+test('a correction that changes nothing is refused before it is saved', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+
+  for (const body of [
+    { campaignId, wrong: 'Vex', right: 'vex' },
+    { campaignId, wrong: '  ', right: 'Vex' },
+    { campaignId, wrong: 'Vecks', right: '' },
+  ]) {
+    assert.equal(runAction({ pathname: '/actions/corrections/add', body, db, cfg }).payload.ok, false);
+  }
+  assert.deepEqual(db.listCorrections(campaignId), [], 'and none of them were stored');
+});
+
+test('removing a correction leaves the lines it already rewrote alone', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const meetingId = parked(db, 'summarize', campaignId).meetingId;
+  db.finalizeTranscription(meetingId, [{ userId: 'u', displayName: 'A', startMs: 0, endMs: 1, text: 'Vecks' }]);
+
+  runAction({ pathname: '/actions/corrections/add', body: { campaignId, wrong: 'Vecks', right: 'Vex' }, db, cfg });
+  const res = runAction({ pathname: '/actions/corrections/remove', body: { campaignId, wrong: 'Vecks' }, db, cfg });
+
+  assert.equal(res.payload.ok, true);
+  assert.deepEqual(db.listCorrections(campaignId), []);
+  assert.equal(db.listUtterances(meetingId)[0].text, 'Vex', 'undoing the rule is not undoing the rewrite');
+});
+
+test('removing a correction that was never saved says so', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = runAction({ pathname: '/actions/corrections/remove', body: { campaignId, wrong: 'Nope' }, db, cfg });
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /No saved correction/);
+});
+
+// A username is not an id. Without this, a typo silently creates a roster
+// entry for a person who does not exist, and the real player still has none.
+test('a roster action refuses anything that is not a Discord id', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+
+  for (const who of ['matthew', '', 'user#1234', '12', 'abc123456789']) {
+    const res = runAction({
+      pathname: '/actions/roster/character',
+      body: { campaignId, userId: who, name: 'Vex' },
+      db,
+      cfg,
+    });
+    assert.equal(res.status, 400, `${JSON.stringify(who)} should be refused`);
+  }
+});
+
+test('naming a player enrols them but does not consent for them', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const who = '175407464513011713';
+
+  const res = runAction({
+    pathname: '/actions/roster/character',
+    body: { campaignId, userId: who, name: 'Vex' },
+    db,
+    cfg,
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(db.getCharacterName(campaignId, who), 'Vex');
+  assert.equal(db.isCampaignMember(campaignId, who), true, 'naming someone puts them at the table');
+  assert.equal(db.mayRecord(campaignId, who), false, 'but being added by someone else is not agreeing');
+  assert.match(res.payload.message, /not agreed to be recorded/, 'and the dashboard is told so plainly');
+});
+
+test('forgetting a character keeps the player on the roster', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const who = '175407464513011713';
+  runAction({ pathname: '/actions/roster/character', body: { campaignId, userId: who, name: 'Vex' }, db, cfg });
+
+  const res = runAction({ pathname: '/actions/roster/forget', body: { campaignId, userId: who }, db, cfg });
+  assert.equal(res.payload.ok, true);
+  assert.equal(db.getCharacterName(campaignId, who), null);
+  assert.equal(db.isCampaignMember(campaignId, who), true);
+});
+
+// --- re-summarising ---
+
+test('a session with no transcript cannot be summarised', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { meetingId } = parked(db, 'transcribe', campaignId);
+
+  const res = runAction({ pathname: '/actions/summary/again', body: { meetingId }, db, cfg });
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /no transcript yet/);
+});
+
+test('re-summarising a transcribed session queues it rather than duplicating the job', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { meetingId } = parked(db, 'summarize', campaignId);
+
+  runAction({ pathname: '/actions/summary/again', body: { meetingId }, db, cfg });
+  runAction({ pathname: '/actions/summary/again', body: { meetingId }, db, cfg });
+
+  const jobs = db.listPendingJobs().filter((j) => j.meeting_id === meetingId && j.type === 'summarize');
+  assert.equal(jobs.length, 1, 'twice must not post the session twice');
+  assert.equal(jobs[0].status, 'pending');
+});

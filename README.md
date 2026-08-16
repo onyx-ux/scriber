@@ -572,13 +572,19 @@ merged automatically, so session length isn't capped either way.
 transcribing you can send that one summary somewhere else, without changing
 the config:
 
-- **The approval DM** (with `SUMMARY_REQUIRE_APPROVAL=true`) shows one button
-  per configured provider — **Gemini**, **Claude** — plus
-  **Not yet**. Whichever you press is what writes that session. The message
-  lists which model sits behind each button, since a button label only has
-  room for the provider name.
-- **`/summarise meeting_id:<id> provider:<...>`** and
-  **`/approve [meeting_id] provider:<...>`** do the same thing from a command.
+- **The dashboard** (with `SUMMARY_REQUIRE_APPROVAL=true`) shows one button per
+  configured provider — **Gemini**, **Claude** — on each session waiting for
+  you. Whichever you press is what writes that session, so the choice is made
+  at the moment of approval rather than being fixed by `SUMMARY_PROVIDER` when
+  the session ended.
+- **Re-summarise**, on any session with a transcript, writes the notes again —
+  for a recap produced before a `/correct` landed, or one that simply came out
+  badly.
+
+These used to be buttons in a Discord DM. They moved so that nothing in the
+pipeline depends on a Discord interaction arriving; the DM is now a
+notification with a link, and `DASHBOARD_URL` is what it links to. Buttons
+still sitting in old DMs answer with a pointer rather than failing silently.
 
 Only providers that are actually set up appear — each needs its API key
 present. Asking for one that isn't configured gets a clear refusal rather than
@@ -667,36 +673,72 @@ to, and you're DM'd about it as normal.
 - **Audio clip attachments** — clip and attach the actual audio for a
   specific dramatic moment, rather than only text.
 
-## Status dashboard
+## The dashboard
 
-A single page showing what the bot is doing right now: which servers it's in,
-what it's recording, what it's transcribing (with progress), and what's queued
-waiting on you.
+Where the bot is operated from. It shows what's happening right now — which
+servers it's in, what it's recording, what it's transcribing, what's queued —
+and it's where you **approve** things, manage a campaign's roster and
+corrections, and pull a transcript.
 
 Two pieces, deliberately:
 
-- **the bot** serves a read-only JSON snapshot on `STATUS_PORT` (8090). This is
-  the only inbound port it opens — everything else it does is outbound-only.
-  The payload is operational data with no tokens or keys in it, and a test
+- **the bot** serves JSON on `STATUS_PORT` (8090). This is the only inbound
+  port it opens — everything else it does is outbound-only. The status payload
+  is operational data with no tokens, keys or user ids in it, and a test
   asserts that.
-- **`dashboard/`** runs on the PC: nginx serving one static HTML file. There is
-  no backend. The browser polls the Pi directly, so the dashboard container is
-  stateless, restartable, and cannot affect a recording in progress.
+- **nginx** serves one static HTML file and proxies `/api` to the bot, adding
+  the token server-side. It runs **on the Pi**, as a second service in
+  `pi-service/docker-compose.yml`.
 
 ```bash
-cd dashboard && docker compose up -d      # http://localhost:8095
+cd pi-service && docker compose up -d     # http://pihouse.local:8095
 ```
 
-Point it at a different host without rebuilding:
-`http://localhost:8095/?api=http://other-host:8090`
+### Why it lives on the Pi
+
+It used to run on the PC, which was fine while it was a *window*: with the PC
+off you lost a status page describing the PC's own GPU, which you couldn't have
+used anyway.
+
+That stopped being true when it became the *control surface*. Approving a
+**summary** needs nothing but the internet — the PC is irrelevant to it — so a
+dashboard only up when the PC is up meant a session recorded on Friday couldn't
+be released until someone booted a gaming rig. And since the operator buttons
+left Discord, there'd be no other way to do it.
+
+Sharing a compose project with the bot means nginx reaches it as `bot:8090` by
+service name: no host IP, no mDNS from inside a container, nothing to re-point
+when the Pi's address changes. `dashboard/docker-compose.yml` still exists for
+running a second copy on the PC, which is useful when working on the page.
+
+### Reads are open. Actions are not.
+
+`STATUS_TOKEN` does two different jobs, and the asymmetry is deliberate:
+
+| | without `STATUS_TOKEN` | with it |
+|---|---|---|
+| **reads** (`/status`, `/campaign`, `/transcript`) | open | token required |
+| **actions** (`POST /actions/*`) | **all refused** | token required |
+
+Open reads are a reasonable default for operational data on a home LAN. Writes
+are not: an unauthenticated POST can spend the API budget, seize the PC's GPU
+mid-evening, or stop the queue. So with no token configured there is no correct
+credential to present, and rather than read that as "everyone is welcome" the
+bot refuses every action and says so — at boot, and in the page, which shows an
+explanation instead of buttons. `STATUS_PORT=0` disables the API entirely.
+
+The nginx container is deliberately given **only** `STATUS_TOKEN` and `PI_API`,
+not the bot's `env_file` — a web server has no use for `DISCORD_TOKEN` or
+`GEMINI_API_KEY`, and one careless `${...}` in a template is all it would take
+to serve one to a browser.
 
 Reachability (whisper server, summariser) is refreshed on the bot's own
 60-second timer rather than per request — the page polls every 5 seconds, and
 probing the GPU box at that rate would put a permanent trickle of traffic on
-the LAN for no reason.
-
-`STATUS_TOKEN` is required — the dashboard sends it as `X-Status-Token`.
-`STATUS_PORT=0` disables the API entirely.
+the LAN for no reason. The per-campaign detail is fetched only when you open a
+campaign: it changes a few times a month, and polling a roster, a correction
+list and a session history for every campaign would grow each request with the
+size of the whole install.
 
 **The dashboard is the only thing meant to face a URL.** nginx proxies `/api`
 to the Pi and adds the token server-side, so the Pi's port can stay on the LAN

@@ -1,8 +1,5 @@
-import {
-  buildTranscribeRow,
-  transcribeRequestMessage,
-  reminderMessage,
-} from '../pipeline/transcribe-schedule.js';
+import { transcribeRequestMessage, reminderMessage } from '../pipeline/transcribe-schedule.js';
+import { dashboardPointer } from './approval-notify.js';
 
 // DMs the owner about a recording that is waiting for the PC's GPU.
 //
@@ -10,9 +7,13 @@ import {
 // question for the one person who owns the hardware, not something the table
 // needs to see after every session.
 //
+// A notification, not a control — the buttons moved to the dashboard, so
+// nothing in the pipeline depends on a Discord interaction arriving. See the
+// note in approval-notify.js.
+//
 // Best-effort throughout — a DM that can't be delivered must never stop the
-// recording being transcribed later. The automatic window still applies, and
-// /pending and /transcribe still work, so a failed DM costs convenience
+// recording being transcribed later. The automatic window still applies and
+// the dashboard shows the job regardless, so a failed DM costs convenience
 // rather than the session.
 async function dmOwner(discordClient, cfg, payload, context) {
   if (!cfg.ownerUserId) {
@@ -43,15 +44,15 @@ export function notifyTranscribeReady({
     discordClient,
     cfg,
     {
-      content: transcribeRequestMessage({
-        meeting,
-        meetingId: meeting.id,
-        utteranceCount,
-        now,
-        cfg,
-        serverReachable,
-      }),
-      components: [buildTranscribeRow(jobId, { serverReachable })],
+      content:
+        transcribeRequestMessage({
+          meeting,
+          meetingId: meeting.id,
+          utteranceCount,
+          now,
+          cfg,
+          serverReachable,
+        }) + dashboardPointer(cfg),
     },
     `meeting ${meeting.id} is ready to transcribe (job ${jobId})`
   );
@@ -62,14 +63,14 @@ export function notifyTranscribeReminder({ discordClient, cfg, meeting, jobId, n
     discordClient,
     cfg,
     {
-      content: reminderMessage({
-        meeting,
-        meetingId: meeting.id,
-        waitingSinceIso: meeting.ended_at || meeting.started_at,
-        cfg,
-        now,
-      }),
-      components: [buildTranscribeRow(jobId, { serverReachable: true })],
+      content:
+        reminderMessage({
+          meeting,
+          meetingId: meeting.id,
+          waitingSinceIso: meeting.ended_at || meeting.started_at,
+          cfg,
+          now,
+        }) + dashboardPointer(cfg),
     },
     `reminder for meeting ${meeting.id} (job ${jobId})`
   );

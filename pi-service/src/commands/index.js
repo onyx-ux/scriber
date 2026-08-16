@@ -5,25 +5,15 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { startCapture } from '../voice/capture.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
-import {
-  isSummariserReachable,
-  summariserLabel,
-  withProvider,
-  isValidProvider,
-  configuredProviders,
-} from '../pipeline/model-client.js';
+import { isSummariserReachable, summariserLabel, withProvider } from '../pipeline/model-client.js';
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
 import { campaignFolder, campaignFolderFor } from '../export/naming.js';
 import { listTranscriptions, describeTranscription, formatDuration } from '../pipeline/progress.js';
-import {
-  parseTranscribeAction,
-  snoozeUntil,
-  withinAutoWindow,
-  ACTION_LATER,
-  ACTION_PI,
-  TRANSCRIBE_PREFIX,
-} from '../pipeline/transcribe-schedule.js';
+import { withinAutoWindow, TRANSCRIBE_PREFIX } from '../pipeline/transcribe-schedule.js';
+// The operations themselves, shared with the dashboard so the two surfaces
+// cannot drift — see pipeline/job-actions.js.
+import { transcribeAction, approveAllSummaries, providerUnusableReason } from '../pipeline/job-actions.js';
 import { notifyTranscribeReady } from '../delivery/transcribe-notify.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
 import { applyCorrections } from '../campaign/corrections.js';
@@ -55,7 +45,7 @@ import {
 import { exportCampaignSite } from '../export/site.js';
 import {
   notifyApprovalNeeded,
-  buildApprovalRow,
+  dashboardPointer,
   APPROVE_PREFIX,
   PARK_PREFIX,
 } from '../delivery/approval-notify.js';
@@ -85,7 +75,6 @@ import {
   SEARCH_HEADER,
   LEAVE_AWAITING_APPROVAL,
   APPROVED_CONFIRM,
-  PARKED_CONFIRM,
   QUEUE_PAUSED,
   QUEUE_RESUMED,
   PENDING_EMPTY,
@@ -1392,32 +1381,11 @@ async function handleLeave(interaction, db, cfg) {
   }
 }
 
-// Shared by the DM buttons and /transcribe, so both routes behave identically.
-async function applyTranscribeAction(db, cfg, jobId, action) {
-  const job = db.raw.prepare(`SELECT * FROM jobs WHERE id = ? AND type = 'transcribe'`).get(jobId);
-  if (!job) return { ok: false, message: '⚠️ That transcription job no longer exists.' };
-  if (job.status === 'done') return { ok: false, message: '✅ That session is already transcribed.' };
-  if (job.status === 'running') return { ok: false, message: '⏳ That session is being transcribed right now.' };
-
-  if (action === ACTION_LATER) {
-    const until = snoozeUntil(new Date(), cfg);
-    db.snoozeTranscribeJob(job.id, until.toISOString());
-    return {
-      ok: true,
-      message: `⏰ Put off for ${cfg.transcribeSnoozeHours}h — I'll ask again after <t:${Math.floor(until.getTime() / 1000)}:f>. The automatic window is suppressed until then, so nothing will touch the PC.`,
-    };
-  }
-
-  if (action === ACTION_PI) {
-    // Explicitly asked for the slow path, so bypass the whole GPU schedule.
-    db.approveTranscribeNow(job.id);
-    db.setSetting(`transcribe_target_${job.id}`, 'pi');
-    return { ok: true, message: '🐌 Queued on the Pi instead — no GPU needed, but expect hours rather than minutes.' };
-  }
-
-  db.approveTranscribeNow(job.id);
-  return { ok: true, message: "▶️ Approved — it'll start within a minute, as soon as the PC answers." };
-}
+// applyTranscribeAction used to live here, shared by the DM buttons and
+// /transcribe. It now lives in pipeline/job-actions.js, shared by those two
+// AND the dashboard — see the note there about why neither surface may own
+// the behaviour.
+const applyTranscribeAction = (db, cfg, jobId, action) => transcribeAction(db, cfg, { jobId, action });
 
 // A typed reference ("Cipher_02") resolved against the campaigns this caller
 // may look at. The membership filter is the point: a bare meeting id named no
@@ -1492,20 +1460,6 @@ async function handleSummarizeNow(interaction, db, cfg) {
   db.requeueSummarizeNow(meetingId, provider);
   const note = provider ? `\n_Summarising with ${summariserLabel(effectiveCfg)}._` : '';
   await interaction.reply(pick(SUMMARIZE_QUEUED, { meetingId }) + note);
-}
-
-// A provider the user explicitly asked for but that isn't set up (no API key)
-// should say so plainly, rather than silently falling back to the default and
-// producing a summary from something they didn't choose.
-function providerUnusableReason(cfg, requested) {
-  if (!requested) return null;
-  if (!isValidProvider(requested)) return `⚠️ Unknown provider "${requested}".`;
-  if (!configuredProviders(cfg).includes(requested)) {
-    return `⚠️ **${requested}** isn't set up on this bot — its API key is missing. Configured right now: ${configuredProviders(
-      cfg
-    ).join(', ')}.`;
-  }
-  return null;
 }
 
 async function handleExport(interaction, db, cfg) {
@@ -1898,46 +1852,30 @@ async function handleApprovalButton(interaction, db, cfg) {
   // below could ever be it.
   if (customId.startsWith(CONSENT_PREFIX)) return handleConsentButton(interaction, db);
 
-  // Scheduling buttons from the "ready to transcribe" DM.
-  if (customId.startsWith(TRANSCRIBE_PREFIX)) {
-    const parsed = parseTranscribeAction(customId);
-    if (!parsed) {
-      return interaction.update({ content: '⚠️ Unrecognised button.', components: [] });
-    }
-    const { ok, message } = await applyTranscribeAction(db, cfg, parsed.jobId, parsed.action);
-    // Keep the buttons when nothing changed (e.g. already running), drop them
-    // once a choice has been applied so it can't be double-clicked.
-    return interaction.update({ content: message, components: ok ? [] : interaction.message.components });
-  }
-
-  if (customId.startsWith(APPROVE_PREFIX)) {
-    // "<jobId>" (use the configured default) or "<jobId>:<provider>".
-    const [rawJobId, provider = null] = customId.slice(APPROVE_PREFIX.length).split(':');
-    const jobId = parseInt(rawJobId, 10);
-    const job = db.getJob(jobId);
-    if (!job) {
-      return interaction.update({ content: '⚠️ That job no longer exists.', components: [] });
-    }
-    const released = db.approveJob(jobId, provider);
-    const label = summariserLabel(withProvider(cfg, provider));
-    // Dropping the buttons on success stops a second click re-queueing a job
-    // that has already moved on.
+  // The operator buttons — approve, park, and the transcribe scheduling row.
+  //
+  // These are no longer SENT: the decisions moved to the dashboard so that
+  // nothing in the pipeline depends on a Discord interaction arriving. But
+  // every DM the bot has already delivered still has them sitting in
+  // scrollback, and a button that silently fails is worse than one that
+  // explains itself — Discord shows "interaction failed" and leaves you
+  // wondering whether it worked.
+  //
+  // So they are answered rather than handled. The job is untouched; the
+  // dashboard is where it gets decided.
+  if (
+    customId.startsWith(TRANSCRIBE_PREFIX) ||
+    customId.startsWith(APPROVE_PREFIX) ||
+    customId.startsWith(PARK_PREFIX)
+  ) {
     return interaction.update({
-      content: released
-        ? `${pick(APPROVED_CONFIRM, { meetingId: job.meeting_id })}\n_Summarising with ${label}._`
-        : `⚠️ Session #${job.meeting_id} was already released (currently: ${job.status}).`,
+      content:
+        '🖥️ **This moved to the dashboard.**\n' +
+        'Approving a transcription or a summary now happens there, so the pipeline no longer needs Discord to be ' +
+        'up for anything but the game itself. Nothing has changed about this session — it is still waiting, and ' +
+        'the dashboard is showing it.' +
+        dashboardPointer(cfg),
       components: [],
-    });
-  }
-
-  if (customId.startsWith(PARK_PREFIX)) {
-    const jobId = parseInt(customId.slice(PARK_PREFIX.length), 10);
-    const job = db.getJob(jobId);
-    // Keep the buttons — the whole point is that they can approve it later
-    // from this same DM.
-    return interaction.update({
-      content: pick(PARKED_CONFIRM, { meetingId: job ? job.meeting_id : '?' }),
-      components: [buildApprovalRow(jobId, cfg)],
     });
   }
 }
@@ -1962,14 +1900,12 @@ async function handleApprove(interaction, db, cfg) {
   const note = provider ? `\n_Summarising with ${summariserLabel(effectiveCfg)}._` : '';
 
   if (meetingId === null) {
-    const count = db.approveAllWaiting(provider);
-    return interaction.reply({
-      content:
-        count === 0
-          ? '📭 Nothing was awaiting approval.'
-          : `✅ Released ${count} parked session(s) for summarising.${note}`,
-      flags: MessageFlags.Ephemeral,
-    });
+    // approveAllSummaries rather than db.approveAllWaiting: the raw query
+    // matches every parked job of any type, so this used to release parked
+    // TRANSCRIPTIONS too — and report the count as summaries. See the note in
+    // pipeline/job-actions.js.
+    const { message } = approveAllSummaries(db, cfg, { provider });
+    return interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
   }
 
   const job = db.listPendingJobs().find((j) => j.meeting_id === meetingId && j.status === 'awaiting_approval');
