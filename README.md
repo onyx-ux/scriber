@@ -728,7 +728,7 @@ it is created and never changes: a number derived by counting rows would shift
 under its own notes the first time a session was deleted, renaming files that
 are already synced to Drive and linked from the ledger.
 
-`/campaign name:...` sets the folder. Without one it falls back to the channel
+`/campaign create name:...` sets the folder. Without one it falls back to the channel
 name with emoji and path-breaking characters stripped. Renaming a campaign only
 affects notes exported *after* the rename — earlier ones stay where they are.
 

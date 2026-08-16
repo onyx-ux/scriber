@@ -26,6 +26,22 @@ export function campaignLabel(campaign) {
   return campaign?.name || campaign?.channel_name || 'unnamed campaign';
 }
 
+// Whether a name can be used at all, before asking whether it is taken.
+//
+// A campaign's name has to survive two transformations: into a vault folder,
+// and into the session reference people type. "🎲" survives neither —
+// safeFolderName strips emoji and falls back to a generic "Campaign", and
+// refSlug is left with nothing. Allowed through, that campaign could never
+// refer to its own sessions (`/summarise`, `/export` and `/transcribe` all
+// take a reference) and its notes would land in a folder that every other
+// vanishing name also claims.
+//
+// Discord names are full of emoji, so this is not hypothetical: the channel
+// this bot was built against is called "🎲Session".
+export function nameIsUsable(name) {
+  return refSlug(name).length > 0;
+}
+
 // Whether a name is already taken, and by whom.
 //
 // A campaign's name is not just a label: it is the vault folder its notes are

@@ -175,6 +175,73 @@ test('/campaign create refuses a name already in use', async (t) => {
   assert.equal(h.db.listCampaignsInGuild(GUILD).length, 1, 'and does not create a second one');
 });
 
+// A name has to survive becoming a folder AND a session reference. These
+// survive neither: safeFolderName strips them to nothing and falls back to a
+// generic "Campaign", and refSlug is left empty — so the campaign could never
+// refer to its own sessions, and every other vanishing name would claim the
+// same vault folder. Discord names are full of emoji, so this is not
+// hypothetical.
+for (const name of ['🎲', '🎲🎲', '...', '///']) {
+  test(`/campaign create refuses ${JSON.stringify(name)}, which leaves nothing to file under`, async (t) => {
+    const h = await harness(t);
+    const said = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name } }));
+
+    assert.match(said, /can't file anything under/);
+    assert.equal(h.db.listCampaigns().length, 0, 'and creates nothing');
+  });
+}
+
+// Whitespace alone is caught one step earlier, by the empty-name check, and
+// "give it a name" is the better thing to say about it than an explanation of
+// folder slugs.
+test('/campaign create refuses a name that is only whitespace', async (t) => {
+  const h = await harness(t);
+  const said = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: '   ' } }));
+
+  assert.match(said, /Give the campaign a name/);
+  assert.equal(h.db.listCampaigns().length, 0);
+});
+
+test('a name with emoji AND letters is fine — only the letters have to survive', async (t) => {
+  const h = await harness(t);
+  const said = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: '🎲 Sunless Citadel' } }));
+
+  assert.match(said, /You run it/);
+  assert.match(said, /SunlessCitadel_01/, 'the reference drops the emoji and the spaces');
+  assert.equal(h.db.listCampaigns()[0].name, '🎲 Sunless Citadel', 'while the name itself keeps them');
+});
+
+test('/campaign rename refuses a name that leaves nothing either', async (t) => {
+  const h = await harness(t);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: 'Cipher' } }));
+  const [c] = h.db.listCampaignsInGuild(GUILD);
+
+  const said = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'rename', options: { name: '🎲', campaign: c.id } }));
+  assert.match(said, /can't file anything under/);
+  assert.equal(h.db.getCampaignName(c.id), 'Cipher', 'and keeps the old name');
+});
+
+// Two names that look different can be the same session reference.
+test('names that collapse to the same reference cannot both exist', async (t) => {
+  const h = await harness(t);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: 'Test2' } }));
+  const said = await run(h.dispatch, command('campaign', { user: DM_B, sub: 'create', options: { name: 'Test 2' } }));
+
+  assert.match(said, /already a campaign called/, 'both would answer to Test2_01');
+  assert.equal(h.db.listCampaigns().length, 1);
+});
+
+// safeFolderName caps at 60 characters, so two long names can share a folder.
+test('two long names that truncate to the same folder cannot both exist', async (t) => {
+  const h = await harness(t);
+  const long = 'A'.repeat(80);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: long } }));
+  const said = await run(h.dispatch, command('campaign', { user: DM_B, sub: 'create', options: { name: `${long}B` } }));
+
+  assert.match(said, /already a campaign called/);
+  assert.equal(h.db.listCampaigns().length, 1);
+});
+
 test('/campaign create refuses in a DM, where there is no server to attach to', async (t) => {
   const h = await harness(t);
   const said = await run(h.dispatch, command('campaign', { user: DM_A, guildId: null, sub: 'create', options: { name: 'X' } }));
@@ -319,6 +386,53 @@ test('/corrections lists only this campaign', async (t) => {
   await run(dispatch, command('correct', { user: DM_A, options: { wrong: 'Vecks', right: 'Vex', campaign: cipher.id } }));
   const said = await run(dispatch, command('corrections', { user: DM_B, options: { campaign: strahd.id } }));
   assert.match(said, /No corrections saved/);
+});
+
+// --- stopping a recording belongs to the table being recorded ---
+
+// A bot holds one voice connection per Discord, so activeSessions is keyed by
+// guild — which meant anyone in the server could end the session. Near enough
+// while a server meant a campaign; with two tables the other group's DM could
+// end this one's mid-scene, and it cannot be resumed.
+async function recording(t) {
+  const h = await twoTables(t);
+  const meetingId = h.db.createMeeting({
+    guildId: GUILD,
+    campaignId: h.cipher.id,
+    channelId: 'voice',
+    channelName: 'Voice Chat',
+    startedAt: new Date().toISOString(),
+    audioDir: '/tmp',
+  });
+  activeSessions.set(GUILD, {
+    meetingId,
+    handle: { disconnect() {} },
+    capturedUtterances: [],
+    audioDir: '/tmp',
+    channelName: 'Voice Chat',
+    startedAtMs: Date.now(),
+  });
+  return { ...h, meetingId };
+}
+
+test("the other table's DM cannot stop this table's recording", async (t) => {
+  const { dispatch } = await recording(t);
+  const said = await run(dispatch, command('leave', { user: DM_B }));
+
+  assert.match(said, /you're not at that table/);
+  assert.equal(activeSessions.has(GUILD), true, 'and the session is still running');
+});
+
+test('a player at the table can stop it', async (t) => {
+  const { dispatch } = await recording(t);
+  await run(dispatch, command('leave', { user: PLAYER_A }));
+  assert.equal(activeSessions.has(GUILD), false);
+});
+
+test('the bot owner can stop it, so a session cannot be stranded', async (t) => {
+  const { dispatch } = await recording(t);
+  await run(dispatch, command('leave', { user: OWNER }));
+  assert.equal(activeSessions.has(GUILD), false);
 });
 
 // --- the gate ---

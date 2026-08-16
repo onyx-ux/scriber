@@ -35,6 +35,7 @@ import {
   resolveManagedCampaign,
   campaignLabel,
   campaignNameClash,
+  nameIsUsable,
 } from '../campaign/resolve.js';
 import { refuseUnlessOwner, isOwner } from '../campaign/permissions.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
@@ -812,6 +813,16 @@ async function handleCampaignCreate(interaction, db, cfg) {
     return interaction.reply({ content: '⚠️ Give the campaign a name.', flags: MessageFlags.Ephemeral });
   }
 
+  if (!nameIsUsable(name)) {
+    return interaction.reply({
+      content:
+        `⚠️ I can't file anything under \`${name}\`. A campaign's name becomes the folder its notes live in ` +
+        'and the start of every session reference (`Cipher_02`), and that one leaves nothing behind once emoji ' +
+        'and path characters are stripped. Give it at least one letter or number.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   const clash = campaignNameClash(db, name);
   if (clash) {
     return interaction.reply({
@@ -892,6 +903,16 @@ async function handleCampaignRename(interaction, db, cfg, target) {
   const trimmed = interaction.options.getString('name').trim();
   if (!trimmed) {
     return interaction.reply({ content: '⚠️ Give the campaign a name.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (!nameIsUsable(trimmed)) {
+    return interaction.reply({
+      content:
+        `⚠️ I can't file anything under \`${trimmed}\`. A campaign's name becomes the folder its notes live in ` +
+        'and the start of every session reference (`Cipher_02`), and that one leaves nothing behind once emoji ' +
+        'and path characters are stripped. Give it at least one letter or number.',
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   const clash = campaignNameClash(db, trimmed, target.id);
@@ -1172,6 +1193,30 @@ async function handleLeave(interaction, db, cfg) {
   if (!session) {
     return interaction.reply({ content: pick(LEAVE_NOT_RECORDING), flags: MessageFlags.Ephemeral });
   }
+
+  // Stopping a recording belongs to the table being recorded.
+  //
+  // /leave has always been open to anyone in the server, which was near enough
+  // while a server meant a campaign. With two tables it is not: the other
+  // group's DM could end this one's session mid-scene, and the recording
+  // cannot be resumed — /join starts a new one with a new session number.
+  //
+  // Membership, not management, so any player can stop it; the owner too,
+  // since somebody has to be able to end a session whose table has all left.
+  const recording = db.getMeeting(session.meetingId);
+  const mayStop =
+    !recording?.campaign_id ||
+    isOwner(interaction.user.id, cfg) ||
+    db.isCampaignMember(recording.campaign_id, interaction.user.id);
+
+  if (!mayStop) {
+    const which = db.getCampaign(recording.campaign_id);
+    return interaction.reply({
+      content: `🎲 I'm recording **${campaignLabel(which)}** right now, and you're not at that table — someone who is can stop it.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   activeSessions.delete(interaction.guildId);
 
   await interaction.reply(pick(LEAVE_START));
