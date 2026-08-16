@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Renames an entity note and repoints every link in the campaign at it.
 //
-//   node scripts/rename-note.mjs <guildId|folder> "Seth" "Saf"          # dry run
-//   node scripts/rename-note.mjs <guildId|folder> "Seth" "Saf" --write
+//   node scripts/rename-note.mjs <campaign|folder> "Seth" "Saf"          # dry run
+//   node scripts/rename-note.mjs <campaign|folder> "Seth" "Saf" --write
 //
 // For when the extractor named a character from what the transcript sounded
 // like and the table knows better. The old name is kept as an alias, so
@@ -14,25 +14,22 @@ import { openDb } from '../src/store/db.js';
 import { campaignFolder } from '../src/export/naming.js';
 import { renameInNote, renameLinks } from '../src/campaign/rename-entity.js';
 import { npcFileName } from '../src/campaign/npc-extract.js';
+import { pickCampaign } from './lib/pick-campaign.mjs';
 
 const args = process.argv.slice(2);
 const write = args.includes('--write');
 const [which, from, to] = args.filter((a) => !a.startsWith('--'));
 
 if (!which || !from || !to) {
-  console.error('usage: node scripts/rename-note.mjs <guildId|folder> <old name> <new name> [--write]');
+  console.error('usage: node scripts/rename-note.mjs <campaign|folder> <old name> <new name> [--write]');
   process.exit(1);
 }
 
 let folder = which;
 if (/^\d{15,}$/.test(which)) {
   const db = openDb(join(config.dataDir, 'db.sqlite'));
-  const campaign = db.listCampaigns().find((c) => c.guild_id === which);
-  if (!campaign) {
-    console.error(`no campaign recorded for guild ${which}`);
-    process.exit(1);
-  }
-  folder = campaignFolder({ channel_name: campaign.channel_name }, campaign.campaign_name);
+  const campaign = pickCampaign(db, which);
+  folder = campaignFolder({ channel_name: campaign.channel_name }, campaign.name);
 }
 
 const root = join(config.obsidianExportDir, folder);

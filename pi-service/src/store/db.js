@@ -29,26 +29,29 @@ CREATE TABLE IF NOT EXISTS utterances (
 );
 CREATE INDEX IF NOT EXISTS idx_utterances_meeting ON utterances(meeting_id);
 
--- The job queue is what makes "PC is sometimes off" safe: a summarize job
--- is enqueued the moment transcription finishes, independent of whether
--- the summariser is currently reachable. queue-worker.js polls this table.
+-- Who plays what, per CAMPAIGN rather than per server: one Discord can host
+-- two tables, and the same person may play in both under different names.
 CREATE TABLE IF NOT EXISTS characters (
-  guild_id TEXT NOT NULL,
+  campaign_id INTEGER NOT NULL,
   user_id TEXT NOT NULL,
   character_name TEXT NOT NULL,
-  PRIMARY KEY (guild_id, user_id)
+  PRIMARY KEY (campaign_id, user_id)
 );
 
 -- Per-campaign speech-to-text corrections. Columns are *_text rather than
 -- "wrong"/"right" because RIGHT is a SQL keyword (RIGHT JOIN) in newer SQLite.
 CREATE TABLE IF NOT EXISTS corrections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  guild_id TEXT NOT NULL,
+  campaign_id INTEGER NOT NULL,
   wrong_text TEXT NOT NULL,
   correct_text TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (guild_id, wrong_text)
+  UNIQUE (campaign_id, wrong_text)
 );
+
+-- The job queue is what makes "PC is sometimes off" safe: a summarize job
+-- is enqueued the moment transcription finishes, independent of whether
+-- the summariser is currently reachable. queue-worker.js polls this table.
 
 -- Simple persistent key/value store, so operator state (e.g. the summarise
 -- queue being paused) survives a restart rather than living only in memory.
@@ -217,6 +220,99 @@ function migrate(db) {
     console.log(`[db] migrated: added meetings.campaign_id (${filled} session(s) assigned)`);
   }
 
+  // Run on every boot, not just the once. Every read is keyed on campaign_id
+  // now, so a meeting that somehow has none is not merely untidy — it is
+  // invisible to /recap, /history, /stats, the archive and the ledger, while
+  // still sitting in the database looking fine. Cheap to check, and the guild
+  // always tells us which campaign it belonged to.
+  const adopted = db
+    .prepare(
+      `UPDATE meetings
+          SET campaign_id = (SELECT MIN(c.id) FROM campaigns c WHERE c.guild_id = meetings.guild_id)
+        WHERE campaign_id IS NULL`
+    )
+    .run().changes;
+  if (adopted) console.log(`[db] ${adopted} session(s) with no campaign adopted by their server's oldest`);
+
+  // The roster and the correction list move off the guild and onto the
+  // campaign, which is the last thing standing between one server and two
+  // tables. Both are keyed by guild in their primary key / unique constraint,
+  // and SQLite cannot alter either — hence the copy-and-rename, same as
+  // campaigns above.
+  //
+  // Sharing them across a server was never right, only harmless while a guild
+  // held one campaign: two tables in one Discord would otherwise share a
+  // roster, so naming your paladin in one game renames you in the other, and
+  // a /correct for one campaign's NPC rewrites the other's transcripts.
+  const charCols = db.prepare(`PRAGMA table_info(characters)`).all().map((c) => c.name);
+  const corrCols = db.prepare(`PRAGMA table_info(corrections)`).all().map((c) => c.name);
+
+  if (!charCols.includes('campaign_id') || !corrCols.includes('campaign_id')) {
+    // A guild can appear in these tables and nowhere else — a table that set
+    // its roster up before recording anything. The backfill above only made
+    // campaigns for guilds with meetings, so without this those rows would
+    // re-key onto a NULL campaign and vanish.
+    const orphanSources = [
+      charCols.includes('guild_id') ? `SELECT guild_id FROM characters` : null,
+      corrCols.includes('guild_id') ? `SELECT guild_id FROM corrections` : null,
+    ].filter(Boolean);
+
+    if (orphanSources.length) {
+      db.exec(`
+        INSERT INTO campaigns (guild_id)
+        SELECT guild_id FROM (${orphanSources.join(' UNION ')}) g
+         WHERE g.guild_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM campaigns c WHERE c.guild_id = g.guild_id)
+      `);
+    }
+
+    db.exec('BEGIN');
+    try {
+      if (!charCols.includes('campaign_id')) {
+        db.exec(`
+          CREATE TABLE characters_new (
+            campaign_id INTEGER NOT NULL,
+            user_id TEXT NOT NULL,
+            character_name TEXT NOT NULL,
+            PRIMARY KEY (campaign_id, user_id)
+          );
+          INSERT INTO characters_new (campaign_id, user_id, character_name)
+               SELECT (SELECT MIN(c.id) FROM campaigns c WHERE c.guild_id = ch.guild_id),
+                      ch.user_id, ch.character_name
+                 FROM characters ch
+                WHERE EXISTS (SELECT 1 FROM campaigns c WHERE c.guild_id = ch.guild_id);
+          DROP TABLE characters;
+          ALTER TABLE characters_new RENAME TO characters;
+        `);
+      }
+
+      if (!corrCols.includes('campaign_id')) {
+        db.exec(`
+          CREATE TABLE corrections_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL,
+            wrong_text TEXT NOT NULL,
+            correct_text TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (campaign_id, wrong_text)
+          );
+          INSERT INTO corrections_new (campaign_id, wrong_text, correct_text, created_at)
+               SELECT (SELECT MIN(c.id) FROM campaigns c WHERE c.guild_id = co.guild_id),
+                      co.wrong_text, co.correct_text, co.created_at
+                 FROM corrections co
+                WHERE EXISTS (SELECT 1 FROM campaigns c WHERE c.guild_id = co.guild_id);
+          DROP TABLE corrections;
+          ALTER TABLE corrections_new RENAME TO corrections;
+        `);
+      }
+      db.exec('COMMIT');
+      console.log('[db] migrated: rosters and corrections are now per-campaign');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   // Where a campaign's finished notes go, chosen by whoever runs it.
   //
   // NOTES_TO_OWNER_DM / NOTES_CHANNEL_ID set this for the whole bot, which is
@@ -265,6 +361,21 @@ function migrate(db) {
     ON CONFLICT(campaign_id, user_id) DO NOTHING
   `);
 }
+
+// One shape for a campaign wherever it is read, so the display code never has
+// to care which query produced the row.
+//
+// channel_name and sessions are derived rather than stored: a campaign that
+// nobody has named is shown by the channel it last recorded in, and a campaign
+// with no sessions at all still has to appear — it is brand new and needs
+// setting up, which is precisely when it must be selectable.
+const CAMPAIGN_VIEW = `
+  SELECT c.*,
+         (SELECT m.channel_name FROM meetings m
+           WHERE m.campaign_id = c.id ORDER BY m.id DESC LIMIT 1)  AS channel_name,
+         (SELECT COUNT(*)      FROM meetings m WHERE m.campaign_id = c.id) AS sessions,
+         (SELECT MAX(m.started_at) FROM meetings m WHERE m.campaign_id = c.id) AS last_session_at
+    FROM campaigns c`;
 
 export function openDb(path) {
   mkdirSync(dirname(path), { recursive: true });
@@ -315,25 +426,24 @@ function wrap(db) {
     }),
 
     // --- campaign names ---
+    //
+    // Everything below takes a CAMPAIGN id. It used to take a guild id, back
+    // when those were the same thing; they are not, and a guild that holds two
+    // campaigns would have had both of them answer to the first one's records.
 
-    setCampaignName(guildId, name) {
+    setCampaignName(campaignId, name) {
       // Must not reset next_session — the row may already exist because
       // sessions have been recorded, and clobbering the counter would restart
       // numbering over notes that already exist.
-      db.prepare(`UPDATE campaigns SET name = ?, updated_at = datetime('now') WHERE id = ?`).run(
-        name,
-        defaultCampaignId(guildId)
-      );
+      db.prepare(`UPDATE campaigns SET name = ?, updated_at = datetime('now') WHERE id = ?`).run(name, campaignId);
     },
 
-    getCampaignName(guildId) {
-      return db.prepare(`SELECT name FROM campaigns WHERE guild_id = ?`).get(guildId)?.name ?? null;
+    getCampaignName(campaignId) {
+      return db.prepare(`SELECT name FROM campaigns WHERE id = ?`).get(campaignId)?.name ?? null;
     },
 
-    getCampaignManager(guildId) {
-      return (
-        db.prepare(`SELECT manager_user_id FROM campaigns WHERE guild_id = ?`).get(guildId)?.manager_user_id ?? null
-      );
+    getCampaignManager(campaignId) {
+      return db.prepare(`SELECT manager_user_id FROM campaigns WHERE id = ?`).get(campaignId)?.manager_user_id ?? null;
     },
 
     // Claims an UNMANAGED campaign for a user, and returns who holds it
@@ -341,37 +451,42 @@ function wrap(db) {
     // campaign that already has one is left alone, so this can be called on
     // every /campaign without a separate "is it claimed?" round trip racing
     // against itself.
-    claimCampaign: db.transaction((guildId, userId) => {
-      const id = defaultCampaignId(guildId);
+    claimCampaign: db.transaction((campaignId, userId) => {
       db.prepare(
         `UPDATE campaigns SET manager_user_id = COALESCE(manager_user_id, ?), updated_at = datetime('now') WHERE id = ?`
-      ).run(userId, id);
-      const manager = db.prepare(`SELECT manager_user_id FROM campaigns WHERE id = ?`).get(id).manager_user_id;
+      ).run(userId, campaignId);
+      const manager = db.prepare(`SELECT manager_user_id FROM campaigns WHERE id = ?`).get(campaignId)?.manager_user_id;
       // The manager is a member of their own campaign by definition, before
       // they have ever spoken in it.
-      db.prepare(
-        `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'manager')
-         ON CONFLICT(campaign_id, user_id) DO NOTHING`
-      ).run(id, manager);
-      return manager;
+      if (manager) {
+        db.prepare(
+          `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'manager')
+           ON CONFLICT(campaign_id, user_id) DO NOTHING`
+        ).run(campaignId, manager);
+      }
+      return manager ?? null;
     }),
 
     // Handing a campaign over, and the backfill that gives existing campaigns
     // a manager on first boot after the column was added.
-    setCampaignManager(guildId, userId) {
+    setCampaignManager: db.transaction((campaignId, userId) => {
       db.prepare(`UPDATE campaigns SET manager_user_id = ?, updated_at = datetime('now') WHERE id = ?`).run(
         userId,
-        defaultCampaignId(guildId)
+        campaignId
       );
-    },
+      db.prepare(
+        `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'manager')
+         ON CONFLICT(campaign_id, user_id) DO NOTHING`
+      ).run(campaignId, userId);
+    }),
 
     // mode is 'dm' (to the campaign's manager) or 'channel'. A null mode
     // means "whatever the bot is configured to do", which is where every
     // campaign starts.
-    setCampaignOutput(guildId, mode, channelId = null) {
+    setCampaignOutput(campaignId, mode, channelId = null) {
       db.prepare(
         `UPDATE campaigns SET output_mode = ?, output_channel_id = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(mode, channelId, defaultCampaignId(guildId));
+      ).run(mode, channelId, campaignId);
     },
 
     // Looked up from a MEETING, because that is what the delivery code has in
@@ -396,22 +511,32 @@ function wrap(db) {
     },
 
     listCampaignsInGuild(guildId) {
-      return db.prepare(`SELECT * FROM campaigns WHERE guild_id = ? ORDER BY id`).all(guildId);
+      return db.prepare(`${CAMPAIGN_VIEW} WHERE c.guild_id = ? ORDER BY c.id`).all(guildId);
     },
 
     getCampaign(campaignId) {
-      return db.prepare(`SELECT * FROM campaigns WHERE id = ?`).get(campaignId) ?? null;
+      return db.prepare(`${CAMPAIGN_VIEW} WHERE c.id = ?`).get(campaignId) ?? null;
     },
 
-    createCampaign(guildId, name, managerUserId) {
+    createCampaign: db.transaction((guildId, name, managerUserId) => {
       const id = db
         .prepare(`INSERT INTO campaigns (guild_id, name, manager_user_id) VALUES (?, ?, ?)`)
         .run(guildId, name, managerUserId).lastInsertRowid;
-      db.prepare(`INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'manager')`).run(
-        id,
-        managerUserId
-      );
+      if (managerUserId) {
+        db.prepare(`INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'manager')`).run(
+          id,
+          managerUserId
+        );
+      }
       return id;
+    }),
+
+    countCampaignsInGuild(guildId) {
+      return db.prepare(`SELECT COUNT(*) AS n FROM campaigns WHERE guild_id = ?`).get(guildId).n;
+    },
+
+    countCampaignsManagedBy(userId) {
+      return db.prepare(`SELECT COUNT(*) AS n FROM campaigns WHERE manager_user_id = ?`).get(userId).n;
     },
 
     addCampaignMember(campaignId, userId, addedBy = null) {
@@ -446,10 +571,9 @@ function wrap(db) {
     listCampaignsForMember(userId) {
       return db
         .prepare(
-          `SELECT c.*
-             FROM campaign_members cm
-             JOIN campaigns c ON c.id = cm.campaign_id
-            WHERE cm.user_id = ?
+          `${CAMPAIGN_VIEW}
+            WHERE EXISTS (SELECT 1 FROM campaign_members cm
+                           WHERE cm.campaign_id = c.id AND cm.user_id = ?)
             ORDER BY c.guild_id, c.id`
         )
         .all(userId);
@@ -461,21 +585,19 @@ function wrap(db) {
         .run(userId).changes;
     },
 
-    // Campaigns the bot has actually recorded, so /campaign can offer them by
-    // name in a DM — where there is no guild to infer one from.
+    // Every campaign the bot knows, so /campaign can offer them by name in a
+    // DM — where there is no guild to infer one from.
+    //
+    // Driven from the campaigns table, not from meetings. It used to be the
+    // other way round, which meant a campaign only existed once it had been
+    // recorded — so a freshly created one could not be named, claimed or
+    // picked from any autocomplete until after its first session, which is
+    // exactly when you need to set it up.
+    //
+    // channel_name is the last channel it recorded in, kept only as the
+    // display fallback for a campaign nobody has named yet.
     listCampaigns() {
-      return db
-        .prepare(
-          `SELECT m.guild_id,
-                  MAX(m.channel_name) AS channel_name,
-                  c.name AS campaign_name,
-                  COUNT(*) AS sessions
-             FROM meetings m
-             LEFT JOIN campaigns c ON c.guild_id = m.guild_id
-            GROUP BY m.guild_id
-            ORDER BY MAX(m.id) DESC`
-        )
-        .all();
+      return db.prepare(`${CAMPAIGN_VIEW} ORDER BY c.guild_id, c.id`).all();
     },
 
     setMeetingStatus(meetingId, status) {
@@ -490,10 +612,10 @@ function wrap(db) {
       return db.prepare(`SELECT * FROM meetings WHERE id = ?`).get(meetingId);
     },
 
-    listRecentMeetings(guildId, limit = 10) {
+    listRecentMeetings(campaignId, limit = 10) {
       return db
-        .prepare(`SELECT * FROM meetings WHERE guild_id = ? ORDER BY started_at DESC LIMIT ?`)
-        .all(guildId, limit);
+        .prepare(`SELECT * FROM meetings WHERE campaign_id = ? ORDER BY started_at DESC LIMIT ?`)
+        .all(campaignId, limit);
     },
 
     listUtterances(meetingId) {
@@ -535,10 +657,28 @@ function wrap(db) {
          VALUES (?, 'summarize', ?, ?, datetime('now'))`
       );
 
+      // Anyone who spoke in a recorded session plainly belongs to that
+      // campaign, so speaking enrols you. Without this, membership only ever
+      // grew by the DM naming someone: a player who joined the table after the
+      // roster was created could be recorded all evening and still be refused
+      // by /join, since /join checks membership rather than participation.
+      const enrol = db.prepare(
+        `INSERT INTO campaign_members (campaign_id, user_id, added_by)
+         SELECT m.campaign_id, ?, 'spoke' FROM meetings m
+          WHERE m.id = ? AND m.campaign_id IS NOT NULL
+         ON CONFLICT(campaign_id, user_id) DO NOTHING`
+      );
+
       const tx = db.transaction((rows) => {
         del.run(meetingId);
         for (const u of rows) {
           ins.run(meetingId, u.userId, u.displayName, u.startMs, u.endMs, u.text);
+        }
+        // 'imported' is the synthetic speaker every line of an /import is
+        // attributed to, not a Discord account — enrolling it would put a
+        // non-existent user on the roster.
+        for (const userId of new Set(rows.map((u) => u.userId))) {
+          if (userId && userId !== 'imported') enrol.run(userId, meetingId);
         }
         setStatus.run(meetingId);
         // Don't stack a duplicate job if one is already waiting for this meeting.
@@ -777,35 +917,36 @@ function wrap(db) {
 
     // --- speech-to-text corrections ---
 
-    addCorrection(guildId, wrongText, correctText) {
+    addCorrection(campaignId, wrongText, correctText) {
       db.prepare(
-        `INSERT INTO corrections (guild_id, wrong_text, correct_text) VALUES (?, ?, ?)
-         ON CONFLICT(guild_id, wrong_text) DO UPDATE SET correct_text = excluded.correct_text`
-      ).run(guildId, wrongText, correctText);
+        `INSERT INTO corrections (campaign_id, wrong_text, correct_text) VALUES (?, ?, ?)
+         ON CONFLICT(campaign_id, wrong_text) DO UPDATE SET correct_text = excluded.correct_text`
+      ).run(campaignId, wrongText, correctText);
     },
 
-    listCorrections(guildId) {
+    listCorrections(campaignId) {
       return db
-        .prepare(`SELECT wrong_text, correct_text FROM corrections WHERE guild_id = ? ORDER BY id ASC`)
-        .all(guildId);
+        .prepare(`SELECT wrong_text, correct_text FROM corrections WHERE campaign_id = ? ORDER BY id ASC`)
+        .all(campaignId);
     },
 
-    removeCorrection(guildId, wrongText) {
-      return db.prepare(`DELETE FROM corrections WHERE guild_id = ? AND wrong_text = ?`).run(guildId, wrongText).changes;
+    removeCorrection(campaignId, wrongText) {
+      return db.prepare(`DELETE FROM corrections WHERE campaign_id = ? AND wrong_text = ?`).run(campaignId, wrongText)
+        .changes;
     },
 
     // Rewrites already-stored transcripts. Takes the replace function rather
     // than doing it in SQL because SQLite's REPLACE() is case-sensitive and
     // has no word-boundary support, so "vecks" wouldn't match "Vecks" and
     // correcting a short name would corrupt longer words containing it.
-    rewriteUtterances(guildId, rewrite) {
+    rewriteUtterances(campaignId, rewrite) {
       const rows = db
         .prepare(
           `SELECT u.id, u.text FROM utterances u
              JOIN meetings m ON m.id = u.meeting_id
-            WHERE m.guild_id = ?`
+            WHERE m.campaign_id = ?`
         )
-        .all(guildId);
+        .all(campaignId);
 
       const update = db.prepare(`UPDATE utterances SET text = ? WHERE id = ?`);
       let changed = 0;
@@ -884,22 +1025,30 @@ function wrap(db) {
 
     // --- character name mapping ---
 
-    setCharacterName(guildId, userId, characterName) {
+    // Naming someone enrols them. Setting a character name is how a DM says
+    // "this person is at my table", and the two were separate steps before:
+    // the message said /dm character adds you to the roster, and it did not,
+    // so a named player was still refused by /join.
+    setCharacterName: db.transaction((campaignId, userId, characterName) => {
       db.prepare(
-        `INSERT INTO characters (guild_id, user_id, character_name) VALUES (?, ?, ?)
-         ON CONFLICT(guild_id, user_id) DO UPDATE SET character_name = excluded.character_name`
-      ).run(guildId, userId, characterName);
-    },
+        `INSERT INTO characters (campaign_id, user_id, character_name) VALUES (?, ?, ?)
+         ON CONFLICT(campaign_id, user_id) DO UPDATE SET character_name = excluded.character_name`
+      ).run(campaignId, userId, characterName);
+      db.prepare(
+        `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'character')
+         ON CONFLICT(campaign_id, user_id) DO NOTHING`
+      ).run(campaignId, userId);
+    }),
 
-    getCharacterName(guildId, userId) {
+    getCharacterName(campaignId, userId) {
       const row = db
-        .prepare(`SELECT character_name FROM characters WHERE guild_id = ? AND user_id = ?`)
-        .get(guildId, userId);
+        .prepare(`SELECT character_name FROM characters WHERE campaign_id = ? AND user_id = ?`)
+        .get(campaignId, userId);
       return row?.character_name || null;
     },
 
-    listCharacters(guildId) {
-      return db.prepare(`SELECT * FROM characters WHERE guild_id = ?`).all(guildId);
+    listCharacters(campaignId) {
+      return db.prepare(`SELECT * FROM characters WHERE campaign_id = ?`).all(campaignId);
     },
 
     // The campaigns a given person has actually spoken in.
@@ -911,16 +1060,11 @@ function wrap(db) {
     listCampaignsForUser(userId) {
       return db
         .prepare(
-          `SELECT m.guild_id,
-                  MAX(m.channel_name)  AS channel_name,
-                  c.name               AS campaign_name,
-                  MAX(m.started_at)    AS last_seen
-             FROM utterances u
-             JOIN meetings m   ON m.id = u.meeting_id
-             LEFT JOIN campaigns c ON c.guild_id = m.guild_id
-            WHERE u.user_id = ?
-            GROUP BY m.guild_id
-            ORDER BY last_seen DESC`
+          `${CAMPAIGN_VIEW}
+            WHERE EXISTS (SELECT 1 FROM utterances u
+                            JOIN meetings m ON m.id = u.meeting_id
+                           WHERE m.campaign_id = c.id AND u.user_id = ?)
+            ORDER BY last_session_at DESC`
         )
         .all(userId);
     },
@@ -930,64 +1074,83 @@ function wrap(db) {
     // CURRENT name — that is what a DM should be picking from — but a summary
     // of an old session is reading a transcript labelled with the old one, so
     // "who is a player" has to span the whole history.
-    listSpeakerNames(guildId) {
+    listSpeakerNames(campaignId) {
       return db
         .prepare(
           `SELECT DISTINCT u.display_name AS displayName
              FROM utterances u
              JOIN meetings m ON m.id = u.meeting_id
-            WHERE m.guild_id = ?`
+            WHERE m.campaign_id = ?`
         )
-        .all(guildId)
+        .all(campaignId)
         .map((r) => r.displayName)
         .filter(Boolean);
     },
 
-    forgetCharacterName(guildId, userId) {
-      return db.prepare(`DELETE FROM characters WHERE guild_id = ? AND user_id = ?`).run(guildId, userId).changes;
+    // Clears the character name but leaves them on the roster: forgetting what
+    // someone's paladin is called is not the same as throwing them out of the
+    // campaign, and conflating the two would silently revoke their /join.
+    forgetCharacterName(campaignId, userId) {
+      return db.prepare(`DELETE FROM characters WHERE campaign_id = ? AND user_id = ?`).run(campaignId, userId).changes;
     },
 
-    // Everyone the bot has actually heard in this campaign, with whatever
-    // character name is on file for them.
+    // Who is at this table, with whatever character name is on file.
     //
-    // The characters table alone is not enough to offer a roster: it only has
-    // rows for players who have already been named, and the whole point of
-    // the roster command is to name the ones who have not. The utterances are
-    // the only record of who is at this table, so they are the source of the
-    // list and the characters table is a left join onto it.
+    // Three sources, unioned, because each one alone has a hole:
+    //   * campaign_members — everyone the DM has enrolled, including players
+    //     who have not spoken yet. This is what /join checks.
+    //   * characters — someone named before their first session.
+    //   * utterances — everyone the bot has actually heard, which is the only
+    //     record of a player who turned up and was never enrolled.
+    //
+    // It used to be the utterances alone, which meant a brand new campaign's
+    // roster was empty until its first recording — so the DM could not set the
+    // table up before playing, which is the one time they most want to.
     //
     // Latest display name wins: someone who changes their Discord nickname
     // mid-campaign should appear under the name they use now, not the one
-    // they had in session 1.
-    listRoster(guildId) {
+    // they had in session 1. A member who has never spoken has no display name
+    // here at all; the caller resolves it from Discord.
+    listRoster(campaignId) {
       return db
         .prepare(
-          `SELECT u.user_id AS userId,
+          `WITH people AS (
+             SELECT user_id FROM campaign_members WHERE campaign_id = @campaignId
+             UNION
+             SELECT user_id FROM characters WHERE campaign_id = @campaignId
+             UNION
+             SELECT u.user_id FROM utterances u
+               JOIN meetings m ON m.id = u.meeting_id
+              WHERE m.campaign_id = @campaignId
+           )
+           SELECT p.user_id AS userId,
                   (SELECT u2.display_name
                      FROM utterances u2
                      JOIN meetings m2 ON m2.id = u2.meeting_id
-                    WHERE m2.guild_id = @guildId AND u2.user_id = u.user_id
+                    WHERE m2.campaign_id = @campaignId AND u2.user_id = p.user_id
                     ORDER BY u2.id DESC
-                    LIMIT 1)             AS displayName,
-                  c.character_name       AS characterName,
-                  COUNT(*)               AS lines
-             FROM utterances u
-             JOIN meetings m ON m.id = u.meeting_id
-             LEFT JOIN characters c
-                    ON c.guild_id = m.guild_id AND c.user_id = u.user_id
-            WHERE m.guild_id = @guildId
-            GROUP BY u.user_id
-            ORDER BY lines DESC`
+                    LIMIT 1)                AS displayName,
+                  ch.character_name         AS characterName,
+                  (SELECT COUNT(*)
+                     FROM utterances u3
+                     JOIN meetings m3 ON m3.id = u3.meeting_id
+                    WHERE m3.campaign_id = @campaignId AND u3.user_id = p.user_id) AS lines,
+                  EXISTS (SELECT 1 FROM campaign_members cm
+                           WHERE cm.campaign_id = @campaignId AND cm.user_id = p.user_id) AS enrolled
+             FROM people p
+             LEFT JOIN characters ch
+                    ON ch.campaign_id = @campaignId AND ch.user_id = p.user_id
+            ORDER BY lines DESC, p.user_id`
         )
-        .all({ guildId });
+        .all({ campaignId });
     },
 
     // --- most recent completed meeting, for /recap ---
 
-    getLastCompletedMeeting(guildId) {
+    getLastCompletedMeeting(campaignId) {
       return db
-        .prepare(`SELECT * FROM meetings WHERE guild_id = ? AND status = 'done' ORDER BY started_at DESC LIMIT 1`)
-        .get(guildId);
+        .prepare(`SELECT * FROM meetings WHERE campaign_id = ? AND status = 'done' ORDER BY started_at DESC LIMIT 1`)
+        .get(campaignId);
     },
 
     countUtterances(meetingId) {
@@ -996,30 +1159,34 @@ function wrap(db) {
 
     // --- full-text lookup across every transcript in the campaign (/search) ---
 
-    searchUtterances(guildId, term, limit = 25) {
+    searchUtterances(campaignId, term, limit = 25) {
       // LIKE's own wildcards have to be neutralised or a search for "50%"
       // or "under_dark" would silently match far more than the user meant.
       const escaped = String(term).replace(/[\\%_]/g, (c) => `\\${c}`);
       return db
         .prepare(
           `SELECT u.text, u.display_name, u.start_ms,
-                  m.id AS meeting_id, m.channel_name, m.started_at
+                  m.id AS meeting_id, m.session_number, m.channel_name, m.started_at
              FROM utterances u
              JOIN meetings m ON m.id = u.meeting_id
-            WHERE m.guild_id = ?
+            WHERE m.campaign_id = ?
               AND u.text LIKE ? ESCAPE '\\'
             ORDER BY m.started_at DESC, u.start_ms ASC
             LIMIT ?`
         )
-        .all(guildId, `%${escaped}%`, limit);
+        .all(campaignId, `%${escaped}%`, limit);
     },
 
     // --- every completed meeting with a summary, for /funny to pull from ---
 
-    listCompletedMeetings(guildId) {
+    listCompletedMeetings(campaignId) {
       return db
-        .prepare(`SELECT * FROM meetings WHERE guild_id = ? AND status = 'done' AND summary_json IS NOT NULL`)
-        .all(guildId);
+        .prepare(
+          `SELECT * FROM meetings
+            WHERE campaign_id = ? AND status = 'done' AND summary_json IS NOT NULL
+            ORDER BY started_at ASC`
+        )
+        .all(campaignId);
     },
 
     // --- orphaned session recovery (bot crashed/restarted mid-session) ---
@@ -1028,12 +1195,43 @@ function wrap(db) {
       return db.prepare(`SELECT * FROM meetings WHERE status IN ('recording', 'transcribing')`).all();
     },
 
+    // --- the owner's view of every table the bot serves, for the dashboard ---
+    //
+    // One row per campaign rather than per server, which is the whole point of
+    // this being here: with several campaigns in one Discord, a server-shaped
+    // summary can no longer tell you who is playing what.
+    campaignOverview() {
+      return db
+        .prepare(
+          `SELECT c.id, c.guild_id, c.name, c.manager_user_id, c.output_mode, c.next_session,
+                  (SELECT m.channel_name FROM meetings m
+                    WHERE m.campaign_id = c.id ORDER BY m.id DESC LIMIT 1)        AS channel_name,
+                  (SELECT COUNT(*) FROM meetings m WHERE m.campaign_id = c.id)     AS sessions,
+                  (SELECT COUNT(*) FROM meetings m
+                    WHERE m.campaign_id = c.id AND m.status = 'done')              AS completed,
+                  (SELECT MAX(m.started_at) FROM meetings m WHERE m.campaign_id = c.id) AS last_session_at,
+                  (SELECT COUNT(*) FROM campaign_members cm WHERE cm.campaign_id = c.id) AS members,
+                  (SELECT COUNT(*) FROM characters ch WHERE ch.campaign_id = c.id) AS named,
+                  (SELECT COUNT(*) FROM utterances u
+                     JOIN meetings m ON m.id = u.meeting_id
+                    WHERE m.campaign_id = c.id)                                    AS lines,
+                  (SELECT COALESCE(SUM(
+                            (julianday(m.ended_at) - julianday(m.started_at)) * 86400000
+                          ), 0)
+                     FROM meetings m
+                    WHERE m.campaign_id = c.id AND m.ended_at IS NOT NULL)         AS total_ms
+             FROM campaigns c
+            ORDER BY (last_session_at IS NULL), last_session_at DESC, c.id`
+        )
+        .all();
+    },
+
     // --- campaign-wide totals, for /stats ---
 
-    campaignStats(guildId) {
+    campaignStats(campaignId) {
       const meetings = db
-        .prepare(`SELECT id, started_at, ended_at FROM meetings WHERE guild_id = ? AND status = 'done'`)
-        .all(guildId);
+        .prepare(`SELECT id, session_number, started_at, ended_at FROM meetings WHERE campaign_id = ? AND status = 'done'`)
+        .all(campaignId);
 
       let totalMs = 0;
       let longest = null;
@@ -1042,15 +1240,15 @@ function wrap(db) {
         const ms = new Date(m.ended_at).getTime() - new Date(m.started_at).getTime();
         if (!Number.isFinite(ms) || ms <= 0) continue;
         totalMs += ms;
-        if (!longest || ms > longest.ms) longest = { id: m.id, ms };
+        if (!longest || ms > longest.ms) longest = { id: m.id, sessionNumber: m.session_number, ms };
       }
 
       const totalLines = db
         .prepare(
           `SELECT COUNT(*) AS n FROM utterances u JOIN meetings m ON m.id = u.meeting_id
-            WHERE m.guild_id = ? AND m.status = 'done'`
+            WHERE m.campaign_id = ? AND m.status = 'done'`
         )
-        .get(guildId).n;
+        .get(campaignId).n;
 
       // Ranked by lines rather than words — cheap to compute and a fair enough
       // proxy for "who talked the most" without tokenising every utterance.
@@ -1058,12 +1256,12 @@ function wrap(db) {
         .prepare(
           `SELECT u.display_name, COUNT(*) AS lines
              FROM utterances u JOIN meetings m ON m.id = u.meeting_id
-            WHERE m.guild_id = ? AND m.status = 'done'
+            WHERE m.campaign_id = ? AND m.status = 'done'
             GROUP BY u.display_name
             ORDER BY lines DESC
             LIMIT 5`
         )
-        .all(guildId);
+        .all(campaignId);
 
       return {
         totalSessions: meetings.length,
@@ -1071,6 +1269,7 @@ function wrap(db) {
         totalLines,
         talkative,
         longestMeetingId: longest?.id ?? null,
+        longestSessionNumber: longest?.sessionNumber ?? null,
         longestMs: longest?.ms ?? 0,
       };
     },

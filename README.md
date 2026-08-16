@@ -219,20 +219,48 @@ own**, not Discord's member list: in a server the bot was merely invited to,
 being able to see a voice channel is not permission to record the game
 happening in it.
 
-You get on it by being added with `/dm character`, by claiming the campaign
-with `/campaign name:...`, or by having already spoken in a recorded session —
-everyone the bot had already heard was enrolled when this landed.
+You get on it by being added with `/dm add`, by being given a character with
+`/dm character`, by creating the campaign yourself, or by having already spoken
+in a recorded session — speaking enrols you, and everyone the bot had already
+heard was enrolled when this landed.
 
 `/join campaign:` picks between tables when you're at more than one in the
 same server. With one, which is the normal case, the option never has to be
 touched.
 
-> Creating a *second* campaign in one server is deliberately not possible yet.
-> The reads (`/recap`, `/stats`, the ledger, the roster) still resolve a guild
-> to its oldest campaign, so a second one would have its sessions mixed into
-> the first's records. Those move to campaign ids next; until they do, the
-> data model supports several tables per server and the command surface does
-> not.
+### Several campaigns in one server
+
+One Discord commonly hosts two groups playing different games in different
+voice channels. `/campaign create name:...` starts each one; everything the bot
+records, remembers and answers with is then keyed on the **campaign**, not the
+server.
+
+    /campaign create name:Cipher     -> you run Cipher, sessions read Cipher_01
+    /campaign create name:Strahd     -> a different table, its own Session 01
+    /campaign list                   -> what is here, who runs it, where notes go
+
+Each campaign keeps its own session numbering, roster, character names,
+transcript corrections, vault folder, ledger, archive page and notes
+destination. A `/correct` for one table's NPC does not rewrite the other's
+transcripts, and one person can play different characters in both.
+
+Where a command needs to know which table you mean it asks, and never guesses:
+
+- **reading** (`/recap`, `/stats`, the ledger) resolves to the campaign you
+  actually play in, so a second table in the server does not make every read
+  ambiguous for everyone else;
+- **recording and naming yourself** (`/join`, `/setcharacter`) resolves to a
+  campaign you are on the roster for, here;
+- **changing a campaign's records** (`/dm`, `/correct`) resolves to one you
+  run, and naming someone else's says who runs it.
+
+Campaign names have to be unique across the whole bot, because the name *is*
+the vault folder and the session-reference prefix — two campaigns sharing
+either would interleave their notes or make `Cipher_02` ambiguous.
+
+The one thing that stays per-server is recording itself: a bot can hold only
+one voice connection per Discord, so two tables in one server cannot record at
+the same time whatever the bookkeeping says.
 
 ### Referring to a session
 
@@ -262,16 +290,23 @@ Three tiers, and none of them is a Discord permission.
 | Tier | Commands | Who |
 |---|---|---|
 | **The table** | `/join` `/leave` `/setcharacter` `/whoami` `/campaign` + the nine read commands | anyone in the server |
-| **Campaign manager** | `/dm` `/correct` `/uncorrect` `/corrections` | whoever claimed the campaign |
-| **Bot owner** | `/approve` `/transcribe` `/summarise` `/pause` `/resume` `/import` `/export` `/status` `/pending` | `OWNER_USER_ID` only |
+| **Campaign manager** | `/dm` `/correct` `/uncorrect` `/corrections` `/status` | whoever created the campaign |
+| **Bot owner** | `/approve` `/transcribe` `/summarise` `/pause` `/resume` `/import` `/export` `/pending` | `OWNER_USER_ID` only |
 
-**Naming a campaign claims it.** The first person to run `/campaign name:...`
-in a server becomes its manager, and from then on only they can rename it, set
-the roster, or correct transcripts. Manage Server was the obvious gate and is
-the wrong one: the person running the game is often not the person
-administering the Discord, and in a server the bot was merely invited to the
-two have nothing to do with each other. So the bot tracks it itself
-(`campaigns.manager_user_id`).
+**Creating a campaign claims it.** Whoever runs `/campaign create` becomes its
+manager, and from then on only they can rename it, set the roster, or correct
+its transcripts. Manage Server was the obvious gate and is the wrong one: the
+person running the game is often not the person administering the Discord, and
+in a server the bot was merely invited to the two have nothing to do with each
+other. So the bot tracks it itself (`campaigns.manager_user_id`).
+
+The tier is enforced by *resolution*, not by a separate check: a manager
+command resolves only among campaigns you run, so a command that resolves is a
+command you may run. There is no second gate to fall out of step with.
+
+Creating is open to anyone, since that is how a table starts using the bot, but
+capped (10 campaigns per server, 20 per person) so it is not a spam primitive
+in a public server.
 
 The bot owner can always act, so a campaign whose manager has left the server
 can still be unstuck. Campaigns that predate this are adopted by the owner on
@@ -340,7 +375,15 @@ use.
 - `/approve [meeting_id] [provider:<gemini|anthropic>]` — release a session parked awaiting approval (omit the ID to approve everything waiting; `provider:` works the same as on `/summarise`)
 - `/pause` / `/resume` — stop and restart summarising without losing queued work
 - `/recap` — re-post the last completed session's TL;DR (handy at the start of the next session)
-- `/campaign [name] [campaign]` — name the campaign. That name becomes the Obsidian folder its session notes are filed in. **Works in a DM**, since naming a campaign is housekeeping the table doesn't need to watch; a DM has no server to infer the campaign from, so the `campaign:` option picks one (autocompleted by name, with session counts). Omit `name:` to see the current one
+- `/campaign create name:<text>` — start a campaign in this server and become its DM. The name becomes the Obsidian folder its notes are filed in and the prefix of every session reference (`Cipher_01`), so it has to be unique across the bot
+- `/campaign list` — the campaigns here, who runs each, how many sessions, which folder, and where its notes go
+- `/campaign rename name:<text> [campaign]` — rename one you run; the vault folder moves with it, ledger included
+- `/campaign output mode:<dm|channel|default> [channel] [campaign]` — where this campaign's finished notes are posted
+- `/dm add player:<@user> [name] [campaign]` — put someone on the roster so they can `/join`, optionally naming their character in the same step. The one that works before a campaign has ever recorded, since there is nobody to autocomplete yet
+- `/dm remove player:<@user> [campaign]` — take someone off the roster. Their transcripts stay; this is about who can start a recording
+- `/dm character player:<name> name:<text> [campaign]` — set a recorded speaker's character name (and enrol them)
+- `/dm roster [campaign]` — who's at the table, what they play, and who still has no character set
+- `/dm forget player:<name> [campaign]` — clear a character name; they stay on the roster
 - `/whoami` — show what name you currently appear as in transcripts and notes
 - `/stats` — campaign-wide totals: sessions, hours recorded, lines transcribed, and who talks the most
 - `/npcs` / `/locations` — list everyone met / everywhere visited so far, straight from the campaign ledger, without opening Obsidian
@@ -464,12 +507,17 @@ outright. Queued sessions stay exactly where they are and resume on `/resume`.
 
 ## Browsable archive
 
-Alongside the markdown, the bot writes `campaign-archive.html` into the export
-folder after every session — a single self-contained page listing every
-session with its recap, plus a campaign-wide NPC/location index, the funny
-moments, and a live search box. No server and no open port on the Pi: it's
-just a file, so it syncs to Drive with everything else and opens from a phone,
-a laptop, or a USB stick. Full transcripts stay in the `.md` files beside it.
+Alongside the markdown, the bot writes `campaign-archive.html` into **the
+campaign's own folder** after every session — a single self-contained page
+listing every session with its recap, plus a campaign-wide NPC/location index,
+the funny moments, and a live search box. No server and no open port on the
+Pi: it's just a file, so it syncs to Drive with everything else and opens from
+a phone, a laptop, or a USB stick. Full transcripts stay in the `.md` files
+beside it.
+
+It used to sit at the top of the export folder, one file for everything, which
+was fine while a server meant a campaign — with two, each regeneration
+overwrote the other's archive with its own sessions.
 
 ## Choosing the summariser
 
@@ -635,7 +683,7 @@ passes straight through, anything else is asked for the username and password
 in `dashboard/config/.htpasswd`. Either is enough — without `satisfy any` the
 two would be ANDed and the house would be asked for a password as well.
 
-    docker run --rm httpd:alpine htpasswd -nbB matt 'a-long-password'       > dashboard/config/.htpasswd
+    docker run --rm httpd:alpine htpasswd -nbB matt 'REDACTED-SEE-README'       > dashboard/config/.htpasswd
 
 Both `.htpasswd` and `dashboard/.env` are gitignored.
 

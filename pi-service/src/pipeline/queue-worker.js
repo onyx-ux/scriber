@@ -105,6 +105,7 @@ export async function tick(db, discordClient, cfg) {
 
   let progress = null;
   try {
+    const campaignId = meeting.campaign_id;
     const utterances = db.listUtterances(meeting.id);
     const transcript = buildTranscriptText(utterances);
     const meta = {
@@ -114,7 +115,7 @@ export async function tick(db, discordClient, cfg) {
       // Who is NOT an NPC. A player whose character is named something other
       // than their Discord name was being written up as a stranger the party
       // met — see campaign/character-names.js.
-      playerCharacters: rosterNames(db, meeting.guild_id),
+      playerCharacters: rosterNames(db, campaignId),
     };
 
     if (job.provider) {
@@ -133,7 +134,7 @@ export async function tick(db, discordClient, cfg) {
     // One folder name drives everything this campaign writes — the session
     // note, the ledger, and both Drive destinations — so they cannot drift
     // apart if /campaign renames the campaign mid-pipeline.
-    const campaignName = db.getCampaignName(meeting.guild_id);
+    const campaignName = db.getCampaignName(campaignId);
     const folder = campaignFolder(meeting, campaignName);
 
     // Pull the ledger down first — you may have edited NPCs.md/Locations.md
@@ -203,7 +204,7 @@ export async function tick(db, discordClient, cfg) {
 
     // Regenerate the browsable archive page. Best-effort — a failure here
     // must not fail an otherwise-complete session.
-    await exportCampaignSite(db, meeting.guild_id, cfg).catch((err) =>
+    await exportCampaignSite(db, campaignId, cfg).catch((err) =>
       console.warn(`[site] archive page not regenerated: ${err.message}`)
     );
 

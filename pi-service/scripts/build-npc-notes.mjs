@@ -2,7 +2,7 @@
 // Builds one Obsidian note per NPC for a campaign, read from the FULL session
 // transcripts rather than the per-session summaries.
 //
-//   node scripts/build-npc-notes.mjs <guildId> [--write] [--model <name>]
+//   node scripts/build-npc-notes.mjs <campaign|guildId> [--write] [--model <name>]
 //
 // Dry run by default: prints what it found and what it would write. The
 // transcripts are large, so each session costs a real API call either way —
@@ -27,6 +27,7 @@ import {
   renderNpcNote,
   npcFileName,
 } from '../src/campaign/npc-extract.js';
+import { pickCampaign } from './lib/pick-campaign.mjs';
 
 const args = process.argv.slice(2);
 const guildId = args.find((a) => !a.startsWith('--'));
@@ -44,24 +45,30 @@ const modelFlag = args.indexOf('--model');
 const model = modelFlag !== -1 ? args[modelFlag + 1] : 'gemini-3.6-flash';
 
 if (!guildId) {
-  console.error('usage: node scripts/build-npc-notes.mjs <guildId> [--write] [--model <name>]');
+  console.error('usage: node scripts/build-npc-notes.mjs <campaign|guildId> [--write] [--model <name>]');
   process.exit(1);
 }
 
 const db = openDb(join(config.dataDir, 'db.sqlite'));
+
+// The argument used to be a guild id, back when a guild was a campaign.
+// It still may be — pickCampaign takes an id, a guild or a name, and
+// refuses to guess when a guild holds several.
+const campaign = pickCampaign(db, guildId);
+const campaignId = campaign.id;
 const cfg = { ...config, summaryProvider: 'gemini', geminiModel: model };
 
 const meetings = db
-  .listCompletedMeetings(guildId)
+  .listCompletedMeetings(campaignId)
   .slice()
   .sort((a, b) => (a.session_number ?? a.id) - (b.session_number ?? b.id));
 
 if (meetings.length === 0) {
-  console.error(`no completed sessions for guild ${guildId}`);
+  console.error(`no completed sessions for ${campaign.name ?? guildId}`);
   process.exit(1);
 }
 
-const campaignName = db.getCampaignName(guildId);
+const campaignName = db.getCampaignName(campaignId);
 const folder = campaignFolder(meetings[0], campaignName);
 console.log(`campaign : ${campaignName || meetings[0].channel_name} -> ${folder}/`);
 console.log(`model    : ${model}`);
@@ -100,7 +107,7 @@ for (const meeting of cached ? [] : meetings) {
   // Both halves of every player's identity, not just the speaker labels in
   // this transcript: a character whose name differs from the Discord name was
   // being extracted as an NPC. See campaign/character-names.js.
-  const players = rosterNames(db, guildId);
+  const players = rosterNames(db, campaignId);
   const sessionNumber = meeting.session_number ?? meeting.id;
 
   process.stdout.write(

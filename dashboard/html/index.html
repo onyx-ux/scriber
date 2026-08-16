@@ -44,6 +44,23 @@
   #err { display: none; background: #2a1418; border: 1px solid var(--bad); color: #fecaca;
          padding: 12px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; }
   code { background: #0d1017; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+
+  /* The owner's overview: totals across every table the bot serves, then one
+     row per campaign. Above the operational cards because "what is this bot
+     actually carrying" is the question you open the page with. */
+  .totals { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin-bottom: 14px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.5px; }
+  .stat .l { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .07em; margin-top: 2px; }
+  .card.wide { margin-bottom: 14px; }
+  .camp { display: grid; gap: 4px 12px; grid-template-columns: 1fr auto; padding: 11px 0; border-bottom: 1px solid var(--line); }
+  .camp:last-child { border-bottom: 0; }
+  .camp .name { font-weight: 600; }
+  .camp .meta, .camp .num { color: var(--dim); font-size: 13px; }
+  .camp .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); margin-left: 6px; }
+  .tag.warn { color: var(--warn); border-color: var(--warn); }
+  .tag.live { color: var(--live); border-color: var(--live); }
 </style>
 </head>
 <body>
@@ -55,6 +72,13 @@
   </header>
 
   <div id="err"></div>
+
+  <div class="totals" id="totals"></div>
+
+  <div class="card wide">
+    <h2>Campaigns</h2>
+    <div id="campaigns"></div>
+  </div>
 
   <div class="grid">
     <div class="card">
@@ -128,9 +152,56 @@ function dot(state) {
 const rows = (pairs) => pairs.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="val">${v}</span></div>`).join('');
 const empty = (msg) => `<div class="empty">${esc(msg)}</div>`;
 
+function ago(iso) {
+  if (!iso) return 'never';
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 14) return `${days}d ago`;
+  return `${Math.floor(days / 7)}w ago`;
+}
+
 function render(s) {
   $('who').innerHTML = `${dot(s.bot.online)}${esc(s.bot.user || 'offline')} · up ${duration(s.bot.uptimeMs)} · opus ${esc(s.bot.opus.name)}`;
   $('stamp').textContent = 'updated ' + new Date(s.generatedAt).toLocaleTimeString();
+
+  // Older bots won't send these; the page should degrade rather than break.
+  const totals = s.totals ?? null;
+  $('totals').innerHTML = totals
+    ? [
+        [totals.campaigns, totals.campaigns === 1 ? 'Campaign' : 'Campaigns'],
+        [totals.players, 'Players'],
+        [totals.sessions, 'Sessions'],
+        [totals.hours.toFixed(0) + 'h', 'Recorded'],
+        [totals.lines.toLocaleString(), 'Lines'],
+      ]
+        .map(([n, l]) => `<div class="stat"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`)
+        .join('')
+    : '';
+
+  const campaigns = s.campaigns ?? [];
+  $('campaigns').innerHTML = campaigns.length
+    ? campaigns
+        .map((c) => {
+          // An unclaimed campaign has nobody who can run /dm or /correct on
+          // it, which is worth surfacing — it is the state a campaign gets
+          // stranded in when its DM leaves the server.
+          const tags =
+            (c.recording ? '<span class="tag live">recording</span>' : '') +
+            (c.claimed ? '' : '<span class="tag warn">unclaimed</span>') +
+            (c.members && c.named < c.members ? `<span class="tag">${c.members - c.named} unnamed</span>` : '');
+          const where = c.guildName ? esc(c.guildName) : `server ${esc(c.guildId)}`;
+          return `
+            <div class="camp">
+              <div>
+                <div class="name">${esc(c.name || c.channel || 'unnamed campaign')}${tags}</div>
+                <div class="meta">${where} · ${c.members} player(s) · last played ${esc(ago(c.lastSessionAt))} · notes → ${esc(c.output)}</div>
+              </div>
+              <div class="num">${c.sessions} session${c.sessions === 1 ? '' : 's'}<br>${c.hours.toFixed(1)}h · ${c.lines.toLocaleString()} lines</div>
+            </div>`;
+        })
+        .join('')
+    : empty('No campaigns yet.');
 
   $('recording').innerHTML = s.recording.length
     ? s.recording.map((r) => `
@@ -172,7 +243,11 @@ function render(s) {
     : empty('Nothing waiting.');
 
   $('servers').innerHTML = s.servers.length
-    ? s.servers.map((g) => `<div class="row"><span class="k">${dot(true)}${esc(g.name)}</span><span class="val">${g.recording ? '<span class="pill act">recording</span>' : '<span class="pill">idle</span>'}</span></div>`).join('')
+    ? s.servers.map((g) => {
+        const held = g.campaigns > 1 ? ` <span class="tag">${g.campaigns} campaigns</span>` : '';
+        const state = g.recording ? '<span class="pill act">recording</span>' : '<span class="pill">idle</span>';
+        return `<div class="row"><span class="k">${dot(true)}${esc(g.name)}${held}</span><span class="val">${state}</span></div>`;
+      }).join('')
     : empty('No servers.');
 
   $('schedule').innerHTML = rows([

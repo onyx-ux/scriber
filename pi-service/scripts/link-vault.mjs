@@ -1,7 +1,7 @@
 // Links every name the vault knows about, everywhere it is mentioned.
 //
-//   node scripts/link-vault.mjs <guildId|folder>          # dry run
-//   node scripts/link-vault.mjs <guildId|folder> --write
+//   node scripts/link-vault.mjs <campaign|folder>          # dry run
+//   node scripts/link-vault.mjs <campaign|folder> --write
 //
 // The exporter links a session recap as it writes it, but only against the
 // names the ledger held AT THAT MOMENT. The per-entity notes under NPCs/ and
@@ -19,13 +19,14 @@ import { campaignFolder } from '../src/export/naming.js';
 import { readVaultEntities, buildNameIndex, addPlainNames } from '../src/campaign/vault-index.js';
 import { linkifyNote } from '../src/campaign/vault-linker.js';
 import { readKnownEntityNames } from '../src/campaign/ledger.js';
+import { pickCampaign } from './lib/pick-campaign.mjs';
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('link-vault.mjs')) {
   const args = process.argv.slice(2);
   const write = args.includes('--write');
   const which = args.find((a) => !a.startsWith('--'));
   if (!which) {
-    console.error('usage: node scripts/link-vault.mjs <guildId|folder> [--write]');
+    console.error('usage: node scripts/link-vault.mjs <campaign|folder> [--write]');
     process.exit(1);
   }
 
@@ -35,12 +36,8 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   let folder = which;
   if (/^\d{15,}$/.test(which)) {
     const db = openDb(join(config.dataDir, 'db.sqlite'));
-    const campaign = db.listCampaigns().find((c) => c.guild_id === which);
-    if (!campaign) {
-      console.error(`no campaign recorded for guild ${which}`);
-      process.exit(1);
-    }
-    folder = campaignFolder({ channel_name: campaign.channel_name }, campaign.campaign_name);
+    const campaign = pickCampaign(db, which);
+    folder = campaignFolder({ channel_name: campaign.channel_name }, campaign.name);
   }
 
   const root = join(config.obsidianExportDir, folder);

@@ -2,7 +2,7 @@
 // Builds one Obsidian note per PLAYER CHARACTER, read from the FULL session
 // transcripts rather than the per-session summaries.
 //
-//   node scripts/build-character-notes.mjs <guildId> --dm "Old Dad" \
+//   node scripts/build-character-notes.mjs <campaign|guildId> --dm "Old Dad" \
 //     --pc "Brett=BenTen" --pc Aurion --pc Tad [--write]
 //
 // The roster is given on the command line rather than guessed, because the
@@ -32,6 +32,7 @@ import {
   applyRoster,
   renderCharacterNote,
 } from '../src/campaign/character-extract.js';
+import { pickCampaign } from './lib/pick-campaign.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback = null) => {
@@ -50,12 +51,18 @@ const dm = flag('--dm');
 
 if (!guildId) {
   console.error(
-    'usage: node scripts/build-character-notes.mjs <guildId> [--pc <speaker>[=<character>] ...] [--dm <speaker>] [--write]'
+    'usage: node scripts/build-character-notes.mjs <campaign|guildId> [--pc <speaker>[=<character>] ...] [--dm <speaker>] [--write]'
   );
   process.exit(1);
 }
 
 const db = openDb(join(config.dataDir, 'db.sqlite'));
+
+// The argument used to be a guild id, back when a guild was a campaign.
+// It still may be — pickCampaign takes an id, a guild or a name, and
+// refuses to guess when a guild holds several.
+const campaign = pickCampaign(db, guildId);
+const campaignId = campaign.id;
 
 // The roster comes from /dm character unless it is given on the command line.
 // That command is where the DM already records who plays what, and having two
@@ -66,7 +73,7 @@ const roster = flagAll('--pc').length
       return { player: player.trim(), character: (character || '').trim() || null };
     })
   : db
-      .listRoster(guildId)
+      .listRoster(campaignId)
       .filter((r) => r.characterName)
       .map((r) => ({ player: r.displayName, character: r.characterName }));
 
@@ -79,16 +86,16 @@ if (roster.length === 0) {
 const cfg = { ...config, summaryProvider: 'gemini', geminiModel: model };
 
 const meetings = db
-  .listCompletedMeetings(guildId)
+  .listCompletedMeetings(campaignId)
   .slice()
   .sort((a, b) => (a.session_number ?? a.id) - (b.session_number ?? b.id));
 
 if (meetings.length === 0) {
-  console.error(`no completed sessions for guild ${guildId}`);
+  console.error(`no completed sessions for ${campaign.name ?? guildId}`);
   process.exit(1);
 }
 
-const campaignName = db.getCampaignName(guildId);
+const campaignName = db.getCampaignName(campaignId);
 const folder = campaignFolder(meetings[0], campaignName);
 console.log(`campaign : ${campaignName || meetings[0].channel_name} -> ${folder}/`);
 console.log(`model    : ${model}`);

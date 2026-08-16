@@ -20,6 +20,9 @@ async function tmpDb(t) {
   return db;
 }
 
+// The campaign in server G, which for these tests is the only one there.
+const only = (db, guildId = 'G') => db.defaultCampaignId(guildId);
+
 function record(db, { guildId = 'G', userId, displayName, lines = 1 }) {
   const id = db.createMeeting({
     guildId,
@@ -48,9 +51,9 @@ test('the roster is everyone recorded, whether or not they have a character', as
   const db = await tmpDb(t);
   record(db, { userId: 'u1', displayName: 'Brett', lines: 3 });
   record(db, { userId: 'u2', displayName: 'Aurion', lines: 1 });
-  db.setCharacterName('G', 'u1', 'BenTen');
+  db.setCharacterName(only(db), 'u1', 'BenTen');
 
-  const roster = db.listRoster('G');
+  const roster = db.listRoster(only(db));
   assert.deepEqual(
     roster.map((r) => [r.displayName, r.characterName, r.lines]),
     [
@@ -67,9 +70,9 @@ test('a player with no character still appears, so they can be given one', async
   const db = await tmpDb(t);
   record(db, { userId: 'u1', displayName: 'Saf' });
 
-  assert.deepEqual(db.listCharacters('G'), []);
-  assert.equal(db.listRoster('G').length, 1);
-  assert.equal(db.listRoster('G')[0].characterName, null);
+  assert.deepEqual(db.listCharacters(only(db)), []);
+  assert.equal(db.listRoster(only(db)).length, 1);
+  assert.equal(db.listRoster(only(db))[0].characterName, null);
 });
 
 test('a renamed player is listed under the name they use now', async (t) => {
@@ -77,7 +80,7 @@ test('a renamed player is listed under the name they use now', async (t) => {
   record(db, { userId: 'u1', displayName: 'OldNick' });
   record(db, { userId: 'u1', displayName: 'NewNick' });
 
-  const [entry] = db.listRoster('G');
+  const [entry] = db.listRoster(only(db));
   assert.equal(entry.displayName, 'NewNick');
   assert.equal(entry.lines, 2, 'and their whole history still counts');
 });
@@ -87,18 +90,18 @@ test('one table cannot see another table', async (t) => {
   record(db, { guildId: 'G', userId: 'u1', displayName: 'Brett' });
   record(db, { guildId: 'H', userId: 'u2', displayName: 'Someone Else' });
 
-  assert.deepEqual(db.listRoster('G').map((r) => r.displayName), ['Brett']);
+  assert.deepEqual(db.listRoster(only(db)).map((r) => r.displayName), ['Brett']);
 });
 
 test('forgetting a character leaves the player on the roster', async (t) => {
   const db = await tmpDb(t);
   record(db, { userId: 'u1', displayName: 'Brett' });
-  db.setCharacterName('G', 'u1', 'BenTen');
+  db.setCharacterName(only(db), 'u1', 'BenTen');
 
-  assert.equal(db.forgetCharacterName('G', 'u1'), 1);
-  assert.equal(db.forgetCharacterName('G', 'u1'), 0, 'a second clear is a no-op, not an error');
-  assert.equal(db.listRoster('G')[0].characterName, null);
-  assert.equal(resolveSpeakerName(db, 'G', 'u1', 'Brett'), 'Brett');
+  assert.equal(db.forgetCharacterName(only(db), 'u1'), 1);
+  assert.equal(db.forgetCharacterName(only(db), 'u1'), 0, 'a second clear is a no-op, not an error');
+  assert.equal(db.listRoster(only(db))[0].characterName, null);
+  assert.equal(resolveSpeakerName(db, only(db), 'u1', 'Brett'), 'Brett');
 });
 
 // --- what the summariser is told ---
@@ -108,9 +111,9 @@ test('forgetting a character leaves the player on the roster', async (t) => {
 test('rosterNames carries BOTH the Discord name and the character', async (t) => {
   const db = await tmpDb(t);
   record(db, { userId: 'u1', displayName: 'Brett' });
-  db.setCharacterName('G', 'u1', 'BenTen');
+  db.setCharacterName(only(db), 'u1', 'BenTen');
 
-  const names = rosterNames(db, 'G');
+  const names = rosterNames(db, only(db));
   assert.ok(names.includes('Brett'), JSON.stringify(names));
   assert.ok(names.includes('BenTen'), JSON.stringify(names));
 });
@@ -121,10 +124,10 @@ test('rosterNames carries BOTH the Discord name and the character', async (t) =>
 test('rosterNames covers a player named only after they were recorded', async (t) => {
   const db = await tmpDb(t);
   record(db, { userId: 'u1', displayName: 'Brett' }); // captured before
-  db.setCharacterName('G', 'u1', 'BenTen');
+  db.setCharacterName(only(db), 'u1', 'BenTen');
   record(db, { userId: 'u1', displayName: 'BenTen' }); // captured after
 
-  const names = rosterNames(db, 'G');
+  const names = rosterNames(db, only(db));
   assert.ok(names.includes('Brett'));
   assert.ok(names.includes('BenTen'));
 });
@@ -132,14 +135,14 @@ test('rosterNames covers a player named only after they were recorded', async (t
 test('rosterNames includes a character set before that player ever spoke', async (t) => {
   const db = await tmpDb(t);
   record(db, { userId: 'u1', displayName: 'Brett' });
-  db.setCharacterName('G', 'u2', 'Newcomer');
+  db.setCharacterName(only(db), 'u2', 'Newcomer');
 
-  assert.ok(rosterNames(db, 'G').includes('Newcomer'));
+  assert.ok(rosterNames(db, only(db)).includes('Newcomer'));
 });
 
 test('an empty roster is an empty list, not a crash', async (t) => {
   const db = await tmpDb(t);
-  assert.deepEqual(rosterNames(db, 'G'), []);
+  assert.deepEqual(rosterNames(db, only(db)), []);
 });
 
 // --- the prompt ---

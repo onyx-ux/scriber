@@ -29,9 +29,15 @@ import { resolveSpeakerName } from '../campaign/character-names.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
 import { readLedgerFile } from '../campaign/ledger.js';
-import { resolveScope } from '../campaign/scope.js';
-import { refuseUnlessOwner, refuseUnlessManager, isManager, isOwner } from '../campaign/permissions.js';
-import { resolveSessionRef, sessionRef } from '../campaign/session-ref.js';
+import {
+  resolveReadableCampaign,
+  resolveMemberCampaign,
+  resolveManagedCampaign,
+  campaignLabel,
+  campaignNameClash,
+} from '../campaign/resolve.js';
+import { refuseUnlessOwner, isOwner } from '../campaign/permissions.js';
+import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import { exportCampaignSite } from '../export/site.js';
 import {
@@ -124,14 +130,29 @@ export const OWNER_ONLY = new Set([
   'approve', 'transcribe', 'summarise', 'pause', 'resume', 'import', 'export', 'pending',
 ]);
 
-// A campaign's records. Held by whoever claimed the campaign with /campaign,
-// not by a Discord permission — see campaign/permissions.js. /campaign itself
-// is absent because an UNCLAIMED campaign has to be claimable by the person
-// setting it up; its handler does the check.
+// A campaign's records. Held by whoever created the campaign, not by a Discord
+// permission — see campaign/permissions.js. /campaign itself is absent because
+// creating one has to be possible for someone who runs none yet; its
+// subcommands do their own checks.
 // /status is read-only — it says what is queued and whether the summariser is
 // reachable — so a manager waiting on their own session can check without
 // having to ask the owner.
 export const MANAGER_ONLY = new Set(['dm', 'correct', 'uncorrect', 'corrections', 'status']);
+
+// Commands that act on the table you are sitting at: they need a campaign you
+// are on the roster for, in this server.
+const MEMBER_COMMANDS = new Set(['join', 'setcharacter', 'whoami']);
+
+// How many campaigns one Discord may hold, and how many one person may run.
+//
+// Creating a campaign is open to anyone — that is how a table starts using the
+// bot, and requiring the owner to bless each one defeats the point. Open and
+// unbounded is a different thing though: /campaign create writes a row and a
+// vault folder, so in a public server it would be a free spam primitive. These
+// are deliberately far above what a real server needs and far below what an
+// abuser wants.
+const MAX_CAMPAIGNS_PER_GUILD = 10;
+const MAX_CAMPAIGNS_PER_MANAGER = 20;
 
 function playerCommand(builder) {
   return builder
@@ -266,6 +287,13 @@ export const commandDefs = [
     )
     .addStringOption((o) =>
       o.setName('speaker').setDescription('Label for the speakers (default "Table")').setRequired(false)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('campaign')
+        .setDescription('Which campaign this recording belongs to')
+        .setRequired(false)
+        .setAutocomplete(true)
     ),
   new SlashCommandBuilder()
     .setName('approve')
@@ -289,41 +317,70 @@ export const commandDefs = [
     .addStringOption((o) =>
       o.setName('wrong').setDescription('The mangled text to stop correcting (must match /correct exactly)').setRequired(true)
     ),
-  // Usable in DMs on purpose: naming the campaign is the owner's housekeeping,
-  // not something the table needs to watch happen. A DM has no guild to infer
-  // the campaign from, so `campaign` names one explicitly (autocompleted from
-  // the campaigns the bot has actually recorded); in a server it defaults to
-  // that server.
+  // Subcommands rather than a pile of optional flags, because a server can
+  // now hold several campaigns and "create" and "rename" are very different
+  // acts to conflate behind one `name:` option — the flat version would have
+  // made a typo in an existing campaign's name silently create a second one.
+  //
+  // Usable in DMs on purpose: campaign housekeeping is not something the table
+  // needs to watch happen. A DM has no guild to infer the campaign from, so
+  // `campaign` names one explicitly; in a server it defaults to the one you
+  // run there.
   new SlashCommandBuilder()
     .setName('campaign')
-    .setDescription('Name this campaign — used for the Obsidian folder its session notes are filed in')
+    .setDescription('Create and set up a campaign — the Obsidian folder its session notes are filed in')
     .setDMPermission(true)
-    .addStringOption((o) =>
-      o.setName('name').setDescription('e.g. "Sunless Citadel" (leave blank to see the current name)').setRequired(false)
-    )
-    .addStringOption((o) =>
-      o
-        .setName('output')
-        .setDescription('Where this campaign’s finished notes are posted')
-        .setRequired(false)
-        .addChoices(
-          { name: 'Direct message to me', value: 'dm' },
-          { name: 'A specific channel', value: 'channel' },
-          { name: 'Back to the default', value: 'default' }
+    .addSubcommand((s) =>
+      s
+        .setName('create')
+        .setDescription('Start a new campaign in this server — you become its DM')
+        .addStringOption((o) =>
+          o.setName('name').setDescription('e.g. "Sunless Citadel"').setRequired(true)
         )
     )
-    .addChannelOption((o) =>
-      o
-        .setName('channel')
-        .setDescription('Which channel (with output: A specific channel)')
-        .setRequired(false)
+    .addSubcommand((s) =>
+      s
+        .setName('list')
+        .setDescription('Show the campaigns in this server, who runs them, and where their notes go')
     )
-    .addStringOption((o) =>
-      o
-        .setName('campaign')
-        .setDescription('Which campaign (required in a DM, where there is no server to assume)')
-        .setRequired(false)
-        .setAutocomplete(true)
+    .addSubcommand((s) =>
+      s
+        .setName('rename')
+        .setDescription('Rename a campaign you run (its notes folder moves with it)')
+        .addStringOption((o) => o.setName('name').setDescription('The new name').setRequired(true))
+        .addStringOption((o) =>
+          o
+            .setName('campaign')
+            .setDescription('Which campaign (only needed if you run more than one)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('output')
+        .setDescription('Where this campaign’s finished notes are posted')
+        .addStringOption((o) =>
+          o
+            .setName('mode')
+            .setDescription('Where the notes go')
+            .setRequired(true)
+            .addChoices(
+              { name: 'Direct message to me', value: 'dm' },
+              { name: 'A specific channel', value: 'channel' },
+              { name: 'Back to the default', value: 'default' }
+            )
+        )
+        .addChannelOption((o) =>
+          o.setName('channel').setDescription('Which channel (with mode: A specific channel)').setRequired(false)
+        )
+        .addStringOption((o) =>
+          o
+            .setName('campaign')
+            .setDescription('Which campaign (only needed if you run more than one)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
     ),
   // The DM's roster. /setcharacter only ever names the person running it, in
   // the server, which leaves the DM unable to fix a player who never set one
@@ -334,10 +391,45 @@ export const commandDefs = [
   // DM-usable and autocompleted from the speakers actually recorded, so the
   // DM can set the table up without knowing a user id or making everyone run
   // a command.
+  // `add` and `remove` take a real Discord user; `character` and `forget` take
+  // an autocompleted recorded speaker. That split is deliberate. The
+  // autocomplete can only offer people the bot has heard, which is exactly
+  // nobody on a campaign that has not played yet — so enrolling the table
+  // before the first session needs a plain user picker, and correcting a
+  // misheard speaker afterwards needs the list of who was actually recorded.
   new SlashCommandBuilder()
     .setName('dm')
-    .setDescription("The DM's tools — set who plays which character")
+    .setDescription("The DM's tools — who is at the table and who plays which character")
     .setDMPermission(true)
+    .addSubcommand((s) =>
+      s
+        .setName('add')
+        .setDescription('Put someone on the roster, so they can /join and be recorded')
+        .addUserOption((o) => o.setName('player').setDescription('Who').setRequired(true))
+        .addStringOption((o) =>
+          o.setName('name').setDescription('Their character, e.g. "BenTen" (optional)').setRequired(false)
+        )
+        .addStringOption((o) =>
+          o
+            .setName('campaign')
+            .setDescription('Which campaign (only needed if you run more than one)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('remove')
+        .setDescription('Take someone off the roster — they can no longer start a recording of this campaign')
+        .addUserOption((o) => o.setName('player').setDescription('Who').setRequired(true))
+        .addStringOption((o) =>
+          o
+            .setName('campaign')
+            .setDescription('Which campaign (only needed if you run more than one)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    )
     .addSubcommand((s) =>
       s
         .setName('character')
@@ -351,7 +443,7 @@ export const commandDefs = [
         .addStringOption((o) =>
           o
             .setName('campaign')
-            .setDescription('Which campaign (required in a DM, where there is no server to assume)')
+            .setDescription('Which campaign (only needed if you run more than one)')
             .setRequired(false)
             .setAutocomplete(true)
         )
@@ -363,7 +455,7 @@ export const commandDefs = [
         .addStringOption((o) =>
           o
             .setName('campaign')
-            .setDescription('Which campaign (required in a DM)')
+            .setDescription('Which campaign (only needed if you run more than one)')
             .setRequired(false)
             .setAutocomplete(true)
         )
@@ -378,7 +470,7 @@ export const commandDefs = [
         .addStringOption((o) =>
           o
             .setName('campaign')
-            .setDescription('Which campaign (required in a DM)')
+            .setDescription('Which campaign (only needed if you run more than one)')
             .setRequired(false)
             .setAutocomplete(true)
         )
@@ -429,51 +521,82 @@ export const commandDefs = [
         }
   );
 
-// Shows the campaigns the bot has actually recorded, labelled by their set
-// name (or the channel they were recorded in), so a DM can pick one without
-// anyone having to know a guild id.
-// The campaign a player command resolved to. Set by the dispatcher, which
-// runs campaign/scope.js before the handler — so a handler can keep reading
-// one value whether it was invoked in the campaign's own server or from a
-// user install three servers away.
+// The campaign this command resolved to. Set by the dispatcher, which runs
+// campaign/resolve.js before the handler — so a handler reads one value
+// whether it was invoked in the campaign's own server, in a server holding
+// three campaigns, or from a user install with no campaign in sight.
+function campaign(interaction) {
+  return interaction.quillCampaign ?? null;
+}
+
 function campaignId(interaction) {
-  return interaction.scriberGuildId ?? interaction.guildId;
+  return interaction.quillCampaign?.id ?? null;
 }
 
-// Which campaign a DM-side command is about: the option if given, else the
-// server it was run in. Shared by /campaign and /dm, which have the same
-// problem — a DM has no guild to infer from.
-function targetGuildId(interaction) {
-  return interaction.options.getString('campaign') || interaction.guildId;
+// Every campaign option, anywhere, is the ID as the value and the readable
+// name as the label. Nothing user-visible is a snowflake, and nothing typed
+// has to be one — resolve.js accepts a typed name too, for people who fill the
+// box before the list loads.
+function campaignChoices(campaigns, typed) {
+  const wanted = String(typed || '').toLowerCase();
+  return campaigns
+    .map((c) => ({
+      name: `${campaignLabel(c)} — ${c.sessions ?? 0} session${c.sessions === 1 ? '' : 's'}`.slice(0, 100),
+      value: String(c.id),
+      searchable: `${c.name || ''} ${c.channel_name || ''}`.toLowerCase(),
+    }))
+    .filter((c) => !wanted || c.searchable.includes(wanted))
+    // Discord rejects the whole response if it carries more than 25.
+    .slice(0, 25)
+    .map(({ name, value }) => ({ name, value }));
 }
 
-async function handleCampaignAutocomplete(interaction, db) {
-  if (interaction.commandName === 'dm') return handleDmAutocomplete(interaction, db);
+// Which campaigns to offer for a given command's `campaign` option. Each list
+// is the same one its handler will accept, so the picker can never offer
+// something that is then refused.
+function campaignsToOffer(interaction, db, cfg) {
+  const name = interaction.commandName;
+  const userId = interaction.user.id;
 
-  if (interaction.commandName === 'join') {
-    const typed = String(interaction.options.getFocused() || '').toLowerCase();
-    return interaction.respond(
-      db
-        .listCampaignsForMember(interaction.user.id)
-        .filter((c) => c.guild_id === interaction.guildId)
-        .map((c) => ({ name: (c.name || 'unnamed campaign').slice(0, 100), value: String(c.id) }))
-        .filter((c) => !typed || c.name.toLowerCase().includes(typed))
-        .slice(0, 25)
-    );
+  if (name === 'join' || MEMBER_COMMANDS.has(name)) {
+    return db.listCampaignsForMember(userId).filter((c) => c.guild_id === interaction.guildId);
+  }
+
+  if (name === 'dm' || name === 'campaign' || MANAGER_ONLY.has(name)) {
+    const all = interaction.guildId ? db.listCampaignsInGuild(interaction.guildId) : db.listCampaigns();
+    return isOwner(userId, cfg) ? all : all.filter((c) => c.manager_user_id === userId);
+  }
+
+  // A player command's list is the caller's OWN campaigns, plus any in the
+  // server they are standing in. Offering every campaign the bot knows would
+  // leak their names to anyone who installed the app.
+  const here = interaction.guildId ? db.listCampaignsInGuild(interaction.guildId) : [];
+  const mine = db.listCampaignsForUser(userId);
+  const seen = new Set();
+  return [...here, ...mine].filter((c) => !seen.has(c.id) && seen.add(c.id));
+}
+
+async function handleCampaignAutocomplete(interaction, db, cfg) {
+  const focused = interaction.options.getFocused(true);
+  const typed = String(focused.value || '');
+
+  if (focused.name === 'campaign') {
+    return interaction.respond(campaignChoices(campaignsToOffer(interaction, db, cfg), typed));
   }
 
   // The session picker for /summarise, /transcribe and /export. Showing the
   // date alongside the reference is what makes it usable — nobody remembers
   // whether the one that failed was 02 or 03.
-  if (interaction.options.getFocused(true).name === 'session') {
-    const typed = String(interaction.options.getFocused() || '').toLowerCase();
-    const reachable = db.listCampaigns();
+  if (focused.name === 'session') {
+    const lower = typed.toLowerCase();
+    const reachable = isOwner(interaction.user.id, cfg)
+      ? db.listCampaigns()
+      : db.listCampaignsForUser(interaction.user.id);
     const choices = [];
 
-    for (const campaign of reachable) {
-      const name = campaign.campaign_name || campaign.channel_name;
-      for (const m of db.listRecentMeetings(campaign.guild_id, 25)) {
-        const ref = sessionRef(name, m.session_number);
+    for (const c of reachable) {
+      for (const m of db.listRecentMeetings(c.id, 25)) {
+        const ref = sessionRef(c.name || c.channel_name, m.session_number);
         if (!ref) continue;
         choices.push({
           name: `${ref} — ${(m.started_at || '').slice(0, 10)} (${m.status})`.slice(0, 100),
@@ -482,81 +605,35 @@ async function handleCampaignAutocomplete(interaction, db) {
       }
     }
 
-    return interaction.respond(
-      choices.filter((c) => !typed || c.value.toLowerCase().includes(typed)).slice(0, 25)
-    );
+    return interaction.respond(choices.filter((c) => !lower || c.value.toLowerCase().includes(lower)).slice(0, 25));
   }
 
-  // A player command's campaign list is the caller's OWN campaigns. Offering
-  // every campaign the bot knows would leak their names to anyone who
-  // installed the app, and picking one they aren't in is refused anyway.
-  if (PLAYER_COMMANDS.has(interaction.commandName)) {
-    const typed = String(interaction.options.getFocused() || '').toLowerCase();
-    return interaction.respond(
-      db
-        .listCampaignsForUser(interaction.user.id)
-        .map((c) => ({ name: c.campaign_name || c.channel_name, value: c.guild_id }))
-        .filter((c) => !typed || c.name.toLowerCase().includes(typed))
-        .slice(0, 25)
-        .map(({ name, value }) => ({ name: name.slice(0, 100), value }))
-    );
-  }
+  if (focused.name === 'player') return handlePlayerAutocomplete(interaction, db, cfg, typed.toLowerCase());
 
-  if (interaction.commandName !== 'campaign') return interaction.respond([]);
-
-  const typed = String(interaction.options.getFocused() || '').toLowerCase();
-  const choices = db
-    .listCampaigns()
-    .map((c) => ({
-      name: `${c.campaign_name || c.channel_name} — ${c.sessions} session${c.sessions === 1 ? '' : 's'}`,
-      value: c.guild_id,
-      searchable: `${c.campaign_name || ''} ${c.channel_name}`.toLowerCase(),
-    }))
-    .filter((c) => !typed || c.searchable.includes(typed))
-    // Discord rejects the whole response if it carries more than 25.
-    .slice(0, 25)
-    .map(({ name, value }) => ({ name: name.slice(0, 100), value }));
-
-  return interaction.respond(choices);
+  return interaction.respond([]);
 }
 
-// Two autocompleted options on /dm: the campaign (same list as /campaign) and
-// the player.
-//
-// The players are read from the UTTERANCES, not the characters table — the
-// characters table only has rows for people already named, and naming the
-// ones who aren't is the entire point. The value is the user id, so a Discord
-// nickname change later doesn't strand the mapping.
-async function handleDmAutocomplete(interaction, db) {
-  const focused = interaction.options.getFocused(true);
-  const typed = String(focused.value || '').toLowerCase();
-
-  if (focused.name === 'campaign') {
-    const choices = db
-      .listCampaigns()
-      .map((c) => ({
-        name: `${c.campaign_name || c.channel_name} — ${c.sessions} session${c.sessions === 1 ? '' : 's'}`,
-        value: c.guild_id,
-        searchable: `${c.campaign_name || ''} ${c.channel_name}`.toLowerCase(),
-      }))
-      .filter((c) => !typed || c.searchable.includes(typed))
-      .slice(0, 25)
-      .map(({ name, value }) => ({ name: name.slice(0, 100), value }));
-    return interaction.respond(choices);
-  }
-
-  const guildId = targetGuildId(interaction);
-  if (!guildId) return interaction.respond([]);
+// The players offered to /dm character and /dm forget are read from the
+// ROSTER, not the characters table — the characters table only has rows for
+// people already named, and naming the ones who aren't is the entire point.
+// The value is the user id, so a Discord nickname change later doesn't strand
+// the mapping.
+async function handlePlayerAutocomplete(interaction, db, cfg, typed) {
+  const resolved = resolveManagedCampaign(interaction, db, cfg);
+  if (!resolved.campaign) return interaction.respond([]);
 
   const choices = db
-    .listRoster(guildId)
-    .map((r) => ({
-      // Showing the current mapping makes the roster readable from the picker
-      // itself, which is where the DM is already looking.
-      name: r.characterName ? `${r.displayName} → ${r.characterName}` : `${r.displayName} — no character set`,
-      value: r.userId,
-      searchable: `${r.displayName} ${r.characterName || ''}`.toLowerCase(),
-    }))
+    .listRoster(resolved.campaign.id)
+    .map((r) => {
+      const who = r.displayName || `user ${r.userId}`;
+      return {
+        // Showing the current mapping makes the roster readable from the
+        // picker itself, which is where the DM is already looking.
+        name: r.characterName ? `${who} → ${r.characterName}` : `${who} — no character set`,
+        value: r.userId,
+        searchable: `${who} ${r.characterName || ''}`.toLowerCase(),
+      };
+    })
     .filter((c) => !typed || c.searchable.includes(typed))
     .slice(0, 25)
     .map(({ name, value }) => ({ name: name.slice(0, 100), value }));
@@ -565,41 +642,74 @@ async function handleDmAutocomplete(interaction, db) {
 }
 
 async function handleDm(interaction, db, cfg) {
-  // Gated to the campaign's manager before this runs — see MANAGER_ONLY.
+  // Gated to the campaign's manager, and the campaign resolved, before this
+  // runs — see MANAGER_ONLY and the dispatcher.
   const sub = interaction.options.getSubcommand();
-  const guildId = targetGuildId(interaction);
-
-  if (!guildId) {
-    const campaigns = db.listCampaigns();
-    const list = campaigns.map((c) => `• **${c.campaign_name || c.channel_name}**`).join('\n');
-    return interaction.reply({
-      content: campaigns.length
-        ? `You're in a DM, so I don't know which campaign you mean. Re-run with the \`campaign\` option:\n\n${list}`
-        : "I haven't recorded any sessions yet, so there's no table to set up.",
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  const roster = db.listRoster(guildId);
+  const target = campaign(interaction);
+  const roster = db.listRoster(target.id);
+  const label = campaignLabel(target);
 
   if (sub === 'roster') {
     if (roster.length === 0) {
       return interaction.reply({
-        content: "Nobody's been recorded in this campaign yet — run a session first and they'll show up here.",
+        content:
+          `**${label}** has nobody at the table yet. Add your players with \`/dm add\` — ` +
+          'they need to be on the roster before they can start a recording.',
         flags: MessageFlags.Ephemeral,
       });
     }
-    const lines = roster.map(
-      (r) =>
-        `• **${r.displayName}** — ${r.characterName ? `plays **${r.characterName}**` : '_no character set_'}  ·  ${r.lines} line${r.lines === 1 ? '' : 's'}`
-    );
+    const lines = roster.map((r) => {
+      const who = r.displayName ? `**${r.displayName}**` : `<@${r.userId}>`;
+      const plays = r.characterName ? `plays **${r.characterName}**` : '_no character set_';
+      const heard = r.lines ? `${r.lines} line${r.lines === 1 ? '' : 's'}` : '_not recorded yet_';
+      return `• ${who} — ${plays}  ·  ${heard}${r.enrolled ? '' : '  ·  ⚠️ not on the roster'}`;
+    });
     const unset = roster.filter((r) => !r.characterName).length;
+    const strays = roster.filter((r) => !r.enrolled).length;
     return interaction.reply({
       content:
-        `**Who's at the table**\n${lines.join('\n')}` +
+        `**Who's at the table — ${label}**\n${lines.join('\n')}` +
         (unset
           ? `\n\n_${unset} player${unset === 1 ? '' : 's'} with no character set — they'll appear under their Discord name, and a character called anything else risks being written up as an NPC. Set one with \`/dm character\`._`
+          : '') +
+        (strays
+          ? `\n_${strays} recorded speaker${strays === 1 ? '' : 's'} not on the roster — add them with \`/dm add\` if they should be able to start a session._`
           : ''),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  // add/remove take a real Discord user; character/forget take a recorded
+  // speaker by id from the autocomplete.
+  if (sub === 'add' || sub === 'remove') {
+    const user = interaction.options.getUser('player');
+
+    if (sub === 'remove') {
+      if (user.id === target.manager_user_id) {
+        return interaction.reply({
+          content: "You run this campaign, so you can't take yourself off its roster.",
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      const removed = db.removeCampaignMember(target.id, user.id);
+      return interaction.reply({
+        content: removed
+          ? `🚪 **${user.username}** is off the roster for **${label}** and can no longer start a recording of it.\n` +
+            '_Anything they already said stays in the transcripts — this is about who can record, not a retraction._'
+          : `**${user.username}** wasn't on the roster for **${label}**.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    const name = interaction.options.getString('name')?.trim();
+    const added = db.addCampaignMember(target.id, user.id, interaction.user.id);
+    if (name) db.setCharacterName(target.id, user.id, name);
+
+    return interaction.reply({
+      content:
+        `🎲 **${user.username}** is at the table for **${label}**${name ? `, playing **${name}**` : ''}.` +
+        (added ? '' : '\n_(They were already on the roster.)_') +
+        (name ? '' : '\n_No character name set — set one with `/dm character` so they aren\'t written up as an NPC._'),
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -615,31 +725,33 @@ async function handleDm(interaction, db, cfg) {
   if (!entry) {
     return interaction.reply({
       content:
-        `I have no recorded speaker matching \`${chosen}\` in this campaign. ` +
-        'Pick one from the autocomplete — the list is everyone the bot has actually heard.',
+        `I have nobody matching \`${chosen}\` at the table for **${label}**. ` +
+        'Pick one from the autocomplete, or use `/dm add` if they have never been recorded.',
       flags: MessageFlags.Ephemeral,
     });
   }
 
+  const who = entry.displayName || `<@${entry.userId}>`;
+
   if (sub === 'forget') {
-    const removed = db.forgetCharacterName(guildId, entry.userId);
+    const removed = db.forgetCharacterName(target.id, entry.userId);
     return interaction.reply({
       content: removed
-        ? `🧹 Cleared — **${entry.displayName}** will appear under their Discord name again.`
-        : `**${entry.displayName}** had no character name set.`,
+        ? `🧹 Cleared — **${who}** will appear under their Discord name again. They're still on the roster.`
+        : `**${who}** had no character name set.`,
       flags: MessageFlags.Ephemeral,
     });
   }
 
   const name = interaction.options.getString('name').trim();
   const previous = entry.characterName;
-  db.setCharacterName(guildId, entry.userId, name);
+  db.setCharacterName(target.id, entry.userId, name);
 
   // Said plainly rather than in flavour text: this is the one command whose
   // effect is easy to misread as retroactive.
   return interaction.reply({
     content:
-      `🎭 **${entry.displayName}** now plays **${name}**.` +
+      `🎭 **${who}** now plays **${name}** in **${label}**.` +
       (previous && previous !== name ? `\n_Previously **${previous}**._` : '') +
       `\n\nFrom the next recording, they'll be labelled **${name}** in transcripts. ` +
       'Sessions already recorded keep the labels they were captured with — but the summariser is told both names either way, ' +
@@ -649,106 +761,128 @@ async function handleDm(interaction, db, cfg) {
 }
 
 async function handleCampaign(interaction, db, cfg) {
-  const name = interaction.options.getString('name');
-  const chosenGuild = interaction.options.getString('campaign');
-  const guildId = chosenGuild || interaction.guildId;
+  const sub = interaction.options.getSubcommand();
+  if (sub === 'create') return handleCampaignCreate(interaction, db, cfg);
+  if (sub === 'list') return handleCampaignList(interaction, db, cfg);
 
-  // A DM has no server to stand in for "you are part of this table", so
-  // reaching a campaign from one requires already managing it.
-  if (!interaction.guildId && !isManager(interaction.user.id, db, guildId, cfg)) {
+  // rename and output both act on a campaign you run. The dispatcher does not
+  // gate /campaign — creating one has to work for someone who runs none — so
+  // these resolve and refuse for themselves.
+  const resolved = resolveManagedCampaign(interaction, db, cfg);
+  if (resolved.error) return interaction.reply({ content: resolved.error, flags: MessageFlags.Ephemeral });
+
+  return sub === 'rename'
+    ? handleCampaignRename(interaction, db, cfg, resolved.campaign)
+    : handleCampaignOutput(interaction, db, resolved.campaign);
+}
+
+async function handleCampaignCreate(interaction, db, cfg) {
+  if (!interaction.guildId) {
     return interaction.reply({
-      content: 'You can only manage a campaign you run from a DM.',
+      content: 'Run this in the server the game is played in — a campaign belongs to a Discord, and a DM has none.',
       flags: MessageFlags.Ephemeral,
     });
   }
 
-  if (!guildId) {
-    const campaigns = db.listCampaigns();
-    if (campaigns.length === 0) {
-      return interaction.reply({
-        content: "I haven't recorded any sessions yet, so there's no campaign to name.",
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-    const list = campaigns
-      .map((c) => `• **${c.campaign_name || c.channel_name}** — ${c.sessions} session(s)`)
-      .join('\n');
-    return interaction.reply({
-      content:
-        `You're in a DM, so I don't know which campaign you mean. Re-run with the \`campaign\` option:\n\n${list}`,
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  const current = db.getCampaignName(guildId);
-  const fallback = db.listCampaigns().find((c) => c.guild_id === guildId)?.channel_name;
-  const manager = db.getCampaignManager(guildId);
-
-  // Where the notes land. Managing the campaign is the requirement — this
-  // decides where a whole table's recaps show up.
-  const output = interaction.options.getString('output');
-  if (output) {
-    if (!isManager(interaction.user.id, db, guildId, cfg)) {
-      return interaction.reply({
-        content: manager
-          ? `🔒 <@${manager}> runs this campaign, so only they can change where its notes go.`
-          : "🔒 Nobody has claimed this campaign yet. Set it up with `/campaign name:...` first — that claims it.",
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-
-    const chosenChannel = interaction.options.getChannel('channel');
-    if (output === 'channel' && !chosenChannel && !interaction.channelId) {
-      return interaction.reply({
-        content: 'Tell me which channel with the `channel` option.',
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-
-    // Defaulting to the channel the command was run in is the common case —
-    // you are usually standing in the one you mean.
-    const target = output === 'channel' ? (chosenChannel?.id ?? interaction.channelId) : null;
-    db.setCampaignOutput(guildId, output === 'default' ? null : output, target);
-
-    const where =
-      output === 'dm'
-        ? `📬 Session notes will be sent to <@${interaction.user.id}> directly.`
-        : output === 'channel'
-          ? `📬 Session notes will be posted in <#${target}>.`
-          : '📬 Session notes go wherever the bot is configured to send them by default (the session’s own channel unless set otherwise).';
-    return interaction.reply({ content: where, flags: MessageFlags.Ephemeral });
-  }
-
+  const name = interaction.options.getString('name').trim();
   if (!name) {
-    const who = manager ? `Run by <@${manager}>.` : 'Nobody runs it yet — naming it claims it.';
+    return interaction.reply({ content: '⚠️ Give the campaign a name.', flags: MessageFlags.Ephemeral });
+  }
+
+  const clash = campaignNameClash(db, name);
+  if (clash) {
     return interaction.reply({
       content:
-        (current
-          ? `This campaign is called **${current}** — session notes are filed in \`${campaignFolder({ channel_name: fallback }, current)}/\`.`
-          : `This campaign has no name set, so notes are filed under \`${campaignFolder({ channel_name: fallback })}/\` (from the channel name). Set one with \`/campaign name:...\`.`) +
-        `
-${who}`,
+        `⚠️ There's already a campaign called **${campaignLabel(clash)}**${clash.guild_id === interaction.guildId ? ' in this server' : ' on this bot'}, ` +
+        `and its notes are filed in \`${campaignFolder({ channel_name: clash.name }, clash.name)}/\`. ` +
+        'Two campaigns sharing a folder would interleave their session notes, so pick a different name.',
       flags: MessageFlags.Ephemeral,
     });
   }
 
-  // Naming a campaign is what claims it. An unclaimed one goes to whoever
-  // sets it up — the person doing that is the person running the game — and
-  // a claimed one can only be renamed by them (or by the bot owner, so a
-  // campaign whose manager has left the server can still be unstuck).
-  if (manager && !isManager(interaction.user.id, db, guildId, cfg)) {
+  if (!isOwner(interaction.user.id, cfg)) {
+    if (db.countCampaignsInGuild(interaction.guildId) >= MAX_CAMPAIGNS_PER_GUILD) {
+      return interaction.reply({
+        content: `⚠️ This server already has ${MAX_CAMPAIGNS_PER_GUILD} campaigns, which is as many as I'll track for one Discord.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    if (db.countCampaignsManagedBy(interaction.user.id) >= MAX_CAMPAIGNS_PER_MANAGER) {
+      return interaction.reply({
+        content: `⚠️ You already run ${MAX_CAMPAIGNS_PER_MANAGER} campaigns, which is as many as I'll let one person hold.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+  }
+
+  const id = db.createCampaign(interaction.guildId, name, interaction.user.id);
+  const folder = campaignFolder({ channel_name: name }, name);
+
+  return interaction.reply({
+    content:
+      `📖 **${name}** exists. You run it.\n` +
+      `Session notes are filed in \`${folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and referred to as \`${sessionRef(name, 1)}\`.\n\n` +
+      '**Next:** add your players with `/dm add player:@them name:<their character>` — they need to be on the roster ' +
+      "before they can `/join`, and a character name keeps them from being written up as an NPC. " +
+      'Then `/campaign output` if you want the recaps somewhere other than the channel you record in.',
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleCampaignList(interaction, db, cfg) {
+  const campaigns = interaction.guildId
+    ? db.listCampaignsInGuild(interaction.guildId)
+    : campaignsToOffer(interaction, db, cfg);
+
+  if (campaigns.length === 0) {
     return interaction.reply({
-      content: `🔒 <@${manager}> runs this campaign, so only they can rename it.`,
+      content: interaction.guildId
+        ? "No campaigns here yet. `/campaign create name:...` starts one and makes you its DM."
+        : "You don't run or play in any campaigns yet.",
       flags: MessageFlags.Ephemeral,
     });
   }
-  const claimedBy = db.claimCampaign(guildId, interaction.user.id);
-  const justClaimed = !manager && claimedBy === interaction.user.id;
 
-  const trimmed = name.trim();
-  const previousFolder = campaignFolder({ channel_name: fallback }, current);
-  const folder = campaignFolder({ channel_name: fallback }, trimmed);
-  db.setCampaignName(guildId, trimmed);
+  const lines = campaigns.map((c) => {
+    const folder = campaignFolder({ channel_name: c.channel_name }, c.name);
+    const who = c.manager_user_id ? `<@${c.manager_user_id}>` : '_unclaimed_';
+    const where =
+      c.output_mode === 'dm'
+        ? "DM'd to the DM"
+        : c.output_mode === 'channel' && c.output_channel_id
+          ? `<#${c.output_channel_id}>`
+          : 'the default';
+    return (
+      `• **${campaignLabel(c)}** — run by ${who}\n` +
+      `  ${c.sessions} session${c.sessions === 1 ? '' : 's'} · notes in \`${folder}/\` → ${where}` +
+      (c.name ? ` · sessions read \`${refSlug(c.name)}_01\`` : '')
+    );
+  });
+
+  return interaction.reply({
+    content: `📚 **Campaigns${interaction.guildId ? ' here' : ''}**\n${lines.join('\n')}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleCampaignRename(interaction, db, cfg, target) {
+  const trimmed = interaction.options.getString('name').trim();
+  if (!trimmed) {
+    return interaction.reply({ content: '⚠️ Give the campaign a name.', flags: MessageFlags.Ephemeral });
+  }
+
+  const clash = campaignNameClash(db, trimmed, target.id);
+  if (clash) {
+    return interaction.reply({
+      content: `⚠️ **${campaignLabel(clash)}** already files its notes there. Pick a different name.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const current = target.name;
+  const previousFolder = campaignFolder({ channel_name: target.channel_name }, current);
+  const folder = campaignFolder({ channel_name: target.channel_name }, trimmed);
+  db.setCampaignName(target.id, trimmed);
 
   // Take the existing notes with us. Leaving them behind doesn't just look
   // untidy — the ledger is what tells the next session which NPCs the
@@ -772,13 +906,37 @@ ${who}`,
 
   return interaction.reply({
     content:
-      `📖 Campaign set to **${trimmed}**.\n` +
-      `Session notes are filed in \`${folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and so on.` +
-      (justClaimed ? '\n\n🎲 You run this campaign now — `/dm`, `/correct` and renaming it are yours.' : '') +
+      `📖 Campaign renamed to **${trimmed}**.\n` +
+      `Session notes are filed in \`${folder}/\`, and sessions now read \`${refSlug(trimmed)}_01\`.` +
       (current && current !== trimmed ? `\n\n_Previously **${current}**._` : '') +
       carried,
     flags: MessageFlags.Ephemeral,
   });
+}
+
+async function handleCampaignOutput(interaction, db, target) {
+  const mode = interaction.options.getString('mode');
+  const chosenChannel = interaction.options.getChannel('channel');
+
+  if (mode === 'channel' && !chosenChannel && !interaction.channelId) {
+    return interaction.reply({
+      content: 'Tell me which channel with the `channel` option.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  // Defaulting to the channel the command was run in is the common case —
+  // you are usually standing in the one you mean.
+  const channelId = mode === 'channel' ? (chosenChannel?.id ?? interaction.channelId) : null;
+  db.setCampaignOutput(target.id, mode === 'default' ? null : mode, channelId);
+
+  const where =
+    mode === 'dm'
+      ? `📬 **${campaignLabel(target)}**'s session notes will be sent to <@${interaction.user.id}> directly.`
+      : mode === 'channel'
+        ? `📬 **${campaignLabel(target)}**'s session notes will be posted in <#${channelId}>.`
+        : `📬 **${campaignLabel(target)}**'s session notes go wherever the bot is configured to send them by default (the session’s own channel unless set otherwise).`;
+  return interaction.reply({ content: where, flags: MessageFlags.Ephemeral });
 }
 
 export function registerCommandHandlers(client, db, cfg) {
@@ -793,11 +951,10 @@ export function registerCommandHandlers(client, db, cfg) {
       }
     }
 
-    // /campaign offers the recorded campaigns by name, which is the only way
-    // to pick one in a DM — there is no guild there to infer it from.
+    // Every campaign option, everywhere, is filled from here.
     if (interaction.isAutocomplete()) {
       try {
-        return await handleCampaignAutocomplete(interaction, db);
+        return await handleCampaignAutocomplete(interaction, db, cfg);
       } catch (err) {
         console.error('[autocomplete] error:', err.message);
         return;
@@ -806,28 +963,41 @@ export function registerCommandHandlers(client, db, cfg) {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // One gate for the whole command surface, so who-can-run-what is
-    // readable in one place rather than scattered through the handlers.
-    const refusal = OWNER_ONLY.has(interaction.commandName)
-      ? refuseUnlessOwner(interaction.user.id, cfg)
-      : MANAGER_ONLY.has(interaction.commandName)
-        ? refuseUnlessManager(interaction.user.id, db, targetGuildId(interaction), cfg)
-        : null;
-    if (refusal) {
-      return interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral }).catch(() => {});
+    const name = interaction.commandName;
+
+    // One gate for the whole command surface, so who-can-run-what is readable
+    // in one place rather than scattered through the handlers.
+    if (OWNER_ONLY.has(name)) {
+      const refusal = refuseUnlessOwner(interaction.user.id, cfg);
+      if (refusal) return interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
 
-    // Resolve which campaign a player command is about BEFORE the handler
-    // runs, so every one of them can read a single value regardless of where
-    // it was invoked from. This is also the membership check for a
-    // user-installed app — see campaign/scope.js.
-    if (PLAYER_COMMANDS.has(interaction.commandName)) {
-      const scope = resolveScope(interaction, db);
-      if (scope.error) {
-        return interaction.reply({ content: scope.error, flags: MessageFlags.Ephemeral }).catch(() => {});
+    // Resolve which campaign the command is about BEFORE the handler runs, so
+    // every handler reads one value regardless of where it was invoked from.
+    //
+    // The tier decides the candidate list, and for MANAGER and MEMBER commands
+    // that resolution IS the permission check: a command that resolves to a
+    // campaign you run is a command you may run. There is no separate gate to
+    // fall out of step with — see campaign/resolve.js.
+    //
+    // /campaign is exempt because `create` has to work for someone who runs
+    // nothing yet; its subcommands resolve for themselves. The owner-tier
+    // commands are exempt because they take an explicit session reference
+    // instead, which carries its own campaign.
+    const resolver = MANAGER_ONLY.has(name)
+      ? resolveManagedCampaign
+      : MEMBER_COMMANDS.has(name)
+        ? resolveMemberCampaign
+        : PLAYER_COMMANDS.has(name)
+          ? resolveReadableCampaign
+          : null;
+
+    if (resolver) {
+      const resolved = resolver(interaction, db, cfg);
+      if (resolved.error) {
+        return interaction.reply({ content: resolved.error, flags: MessageFlags.Ephemeral }).catch(() => {});
       }
-      interaction.scriberGuildId = scope.guildId;
-      interaction.scriberScope = scope;
+      interaction.quillCampaign = resolved.campaign;
     }
 
     try {
@@ -872,52 +1042,21 @@ export function registerCommandHandlers(client, db, cfg) {
   });
 }
 
-// Which campaign a recording belongs to, out of the ones the caller is at the
-// table for IN THIS SERVER.
-//
-// The membership check is the point: /join starts recording people's voices,
-// and in a server the bot was merely invited to, being able to see a voice
-// channel is not permission to record the game happening in it. The roster is
-// the bot's own — the manager builds it with /dm character — so it says who is
-// actually at this table rather than who is in this Discord.
-export function resolveJoinCampaign(interaction, db) {
-  const mine = db
-    .listCampaignsForMember(interaction.user.id)
-    .filter((c) => c.guild_id === interaction.guildId);
-
-  if (mine.length === 0) {
-    return {
-      error:
-        "🎲 You're not on the roster for a campaign in this server, so I can't start a recording for you.\n" +
-        'Whoever runs the game adds you with `/dm character` — or claims the campaign with `/campaign name:...` if nobody has yet.',
-    };
-  }
-
-  const asked = interaction.options.getString('campaign');
-  if (asked) {
-    const match = mine.find((c) => String(c.id) === asked);
-    return match ? { campaign: match } : { error: "That isn't a campaign you're on the roster for here." };
-  }
-
-  if (mine.length === 1) return { campaign: mine[0] };
-
-  const list = mine.map((c) => `• **${c.name || 'unnamed campaign'}**`).join('\n');
-  return {
-    error:
-      "You're at more than one table in this server, so I don't know which this is. " +
-      `Re-run with the \`campaign\` option:\n\n${list}`,
-  };
-}
-
 async function handleJoin(interaction, db, cfg) {
+  // The campaign is resolved and the roster checked by the dispatcher — see
+  // MEMBER_COMMANDS. That check is the point: /join starts recording people's
+  // voices, and in a server the bot was merely invited to, being able to see a
+  // voice channel is not permission to record the game happening in it.
+  const target = campaign(interaction);
   const member = interaction.member;
   const voiceChannel = member?.voice?.channel;
   if (!voiceChannel) {
     return interaction.reply({ content: pick(JOIN_NO_CHANNEL), flags: MessageFlags.Ephemeral });
   }
 
-  const { campaign, error } = resolveJoinCampaign(interaction, db);
-  if (error) return interaction.reply({ content: error, flags: MessageFlags.Ephemeral });
+  // Keyed by guild rather than campaign, and correctly so: a bot can only hold
+  // one voice connection per server, so two tables in one Discord genuinely
+  // cannot record at the same time however the bookkeeping is arranged.
   if (activeSessions.has(interaction.guildId) || startingGuilds.has(interaction.guildId)) {
     return interaction.reply({ content: pick(JOIN_ALREADY_RECORDING), flags: MessageFlags.Ephemeral });
   }
@@ -949,7 +1088,9 @@ async function handleJoin(interaction, db, cfg) {
         const discordName = m?.displayName || userId;
         // Prefer the player's set D&D character name over their Discord name,
         // so transcripts/notes read like a session recap, not a Discord log.
-        return resolveSpeakerName(db, interaction.guildId, userId, discordName);
+        // Per campaign: the same person can play in two games in one server
+        // under two different names.
+        return resolveSpeakerName(db, target.id, userId, discordName);
       },
       onUtterance: (userId, displayName, wavPath, startMs, endMs) => {
         capturedUtterances.push({ userId, displayName, wavPath, startMs, endMs });
@@ -969,7 +1110,7 @@ async function handleJoin(interaction, db, cfg) {
     // dangling "recording" meeting behind for crash-recovery to trip over.
     const meetingId = db.createMeeting({
       guildId: interaction.guildId,
-      campaignId: campaign.id,
+      campaignId: target.id,
       channelId: interaction.channelId,
       channelName: voiceChannel.name,
       startedAt: new Date().toISOString(),
@@ -987,7 +1128,15 @@ async function handleJoin(interaction, db, cfg) {
       channelName: voiceChannel.name,
       startedAtMs: Date.now(),
     });
-    await interaction.editReply(pick(JOIN_STARTED, { channel: voiceChannel.name }));
+    // Name the campaign when the server holds more than one — otherwise the
+    // table has no way to tell which game this session is being filed under,
+    // and finding out a month later is finding out too late.
+    const several = db.countCampaignsInGuild(interaction.guildId) > 1;
+    const ref = sessionRef(campaignLabel(target), db.getMeeting(meetingId)?.session_number);
+    await interaction.editReply(
+      pick(JOIN_STARTED, { channel: voiceChannel.name }) +
+        (several ? `\n_Recording **${campaignLabel(target)}**${ref ? ` — \`${ref}\`` : ''}._` : '')
+    );
   } finally {
     // Must run even if startCapture/createMeeting throws, or the guild would
     // be permanently unable to start a new recording.
@@ -1106,15 +1255,22 @@ async function handleTranscribe(interaction, db, cfg) {
 }
 
 async function handleHistory(interaction, db) {
+  const target = campaign(interaction);
   const count = interaction.options.getInteger('count') || 10;
-  const meetings = db.listRecentMeetings(campaignId(interaction), count);
+  const meetings = db.listRecentMeetings(target.id, count);
   if (meetings.length === 0) {
     return interaction.reply({ content: pick(HISTORY_EMPTY), flags: MessageFlags.Ephemeral });
   }
-  const lines = meetings.map(
-    (m) => `**#${m.id}** — ${m.channel_name} — ${(m.started_at || '').slice(0, 10)} — _${m.status}_`
-  );
-  await interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
+  // The session reference, not the meeting id: the reference is what the vault
+  // calls the file and what every other command takes.
+  const lines = meetings.map((m) => {
+    const ref = sessionRef(campaignLabel(target), m.session_number);
+    return `**${ref ?? `#${m.id}`}** — ${m.channel_name} — ${(m.started_at || '').slice(0, 10)} — _${m.status}_`;
+  });
+  await interaction.reply({
+    content: `**${campaignLabel(target)}**\n${lines.join('\n')}`,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleSummarizeNow(interaction, db, cfg) {
@@ -1178,10 +1334,13 @@ async function handleExport(interaction, db, cfg) {
 }
 
 async function handleSetCharacter(interaction, db) {
+  const target = campaign(interaction);
   const name = interaction.options.getString('name').trim();
-  db.setCharacterName(interaction.guildId, interaction.user.id, name);
+  db.setCharacterName(target.id, interaction.user.id, name);
   await interaction.reply({
-    content: pick(SETCHARACTER_CONFIRM, { name }),
+    content:
+      pick(SETCHARACTER_CONFIRM, { name }) +
+      (db.countCampaignsInGuild(interaction.guildId) > 1 ? `\n_In **${campaignLabel(target)}**._` : ''),
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -1247,6 +1406,13 @@ async function handleImport(interaction, db, cfg) {
       flags: MessageFlags.Ephemeral,
     });
   }
+  // An import creates a session, so it has to say which campaign's records it
+  // is joining. The owner reaches every campaign here, but "every campaign" is
+  // not an answer — filing an in-person game under the wrong table is exactly
+  // the mistake that is invisible until the notes are wrong.
+  const resolved = resolveManagedCampaign(interaction, db, cfg);
+  if (resolved.error) return interaction.reply({ content: resolved.error, flags: MessageFlags.Ephemeral });
+
   if (activeSessions.has(interaction.guildId)) {
     return interaction.reply({
       content: "⚠️ I'm recording right now — `/leave` first, then import.",
@@ -1270,7 +1436,8 @@ async function handleImport(interaction, db, cfg) {
     const result = await importAudio({
       db,
       cfg,
-      guildId: interaction.guildId,
+      guildId: resolved.campaign.guild_id,
+      campaignId: resolved.campaign.id,
       channelId: interaction.channelId,
       channelName: interaction.channel?.name || 'imported',
       url: source,
@@ -1321,9 +1488,12 @@ async function handleCorrect(interaction, db) {
   }
 
   // Save first so it applies to every future session, then replay it over
-  // everything already transcribed.
-  db.addCorrection(interaction.guildId, wrong, right);
-  const changed = db.rewriteUtterances(interaction.guildId, (text) =>
+  // everything already transcribed. Scoped to THIS campaign — a correction is
+  // a fact about one game's invented names, and rewriting another table's
+  // transcripts with it would be silent corruption.
+  const target = campaignId(interaction);
+  db.addCorrection(target, wrong, right);
+  const changed = db.rewriteUtterances(target, (text) =>
     applyCorrections(text, [{ wrong_text: wrong, correct_text: right }])
   );
 
@@ -1339,7 +1509,7 @@ async function handleCorrect(interaction, db) {
 }
 
 async function handleCorrections(interaction, db) {
-  const rows = db.listCorrections(interaction.guildId);
+  const rows = db.listCorrections(campaignId(interaction));
   if (rows.length === 0) {
     return interaction.reply({
       content: '📭 No corrections saved yet. Use `/correct` when whisper mangles a name.',
@@ -1355,7 +1525,7 @@ async function handleCorrections(interaction, db) {
 
 async function handleUncorrect(interaction, db) {
   const wrong = interaction.options.getString('wrong').trim();
-  const removed = db.removeCorrection(interaction.guildId, wrong);
+  const removed = db.removeCorrection(campaignId(interaction), wrong);
   if (removed === 0) {
     return interaction.reply({
       content: `⚠️ No saved correction for "${wrong}" — check \`/corrections\` for the exact text.`,
@@ -1366,7 +1536,7 @@ async function handleUncorrect(interaction, db) {
 }
 
 async function handleWhoAmI(interaction, db) {
-  const characterName = db.getCharacterName(interaction.guildId, interaction.user.id);
+  const characterName = db.getCharacterName(campaignId(interaction), interaction.user.id);
   const content = characterName
     ? pick(WHOAMI_SET, { name: characterName })
     : pick(WHOAMI_UNSET, { discordName: interaction.member?.displayName || interaction.user.username });
@@ -1374,7 +1544,8 @@ async function handleWhoAmI(interaction, db) {
 }
 
 async function handleStats(interaction, db) {
-  const stats = db.campaignStats(campaignId(interaction));
+  const target = campaign(interaction);
+  const stats = db.campaignStats(target.id);
   if (stats.totalSessions === 0) {
     return interaction.reply({ content: pick(STATS_EMPTY), flags: MessageFlags.Ephemeral });
   }
@@ -1383,23 +1554,30 @@ async function handleStats(interaction, db) {
   const header = pick(STATS_HEADER, { sessions: stats.totalSessions, hours, lines: stats.totalLines });
 
   const talkLines = stats.talkative.map((t, i) => `${i + 1}. **${t.display_name}** — ${t.lines} lines`).join('\n');
+  const longestRef = sessionRef(campaignLabel(target), stats.longestSessionNumber);
   const longest =
     stats.longestMeetingId !== null
-      ? `${(stats.longestMs / 3_600_000).toFixed(1)}h (session #${stats.longestMeetingId})`
+      ? `${(stats.longestMs / 3_600_000).toFixed(1)}h (${longestRef ?? `session #${stats.longestMeetingId}`})`
       : 'unknown';
 
-  const content = [header, '', '**Most talkative:**', talkLines, '', `**Longest session:** ${longest}`].join('\n');
+  const content = [
+    `**${campaignLabel(target)}**`,
+    header,
+    '',
+    '**Most talkative:**',
+    talkLines,
+    '',
+    `**Longest session:** ${longest}`,
+  ].join('\n');
   await interaction.reply({ content, flags: MessageFlags.Ephemeral });
 }
 
-// Both /npcs and /locations pull from whatever campaign this guild's last
-// completed session belonged to — same one-campaign-per-guild assumption
-// /recap, /ask, /history etc. already make; there's no per-command way to
-// pick a specific campaign if a guild ever ran more than one.
-async function ledgerEntries(db, cfg, guildId, filename) {
-  const meeting = db.getLastCompletedMeeting(guildId);
-  if (!meeting) return null;
-  const folder = campaignFolder(meeting, db.getCampaignName(guildId));
+// The ledger of the campaign this command resolved to. Reads the folder from
+// the campaign itself rather than from its last session, so a campaign whose
+// notes exist but whose sessions were all deleted still answers.
+async function ledgerEntries(db, cfg, campaignRow, filename) {
+  if (!campaignRow) return null;
+  const folder = campaignFolder({ channel_name: campaignRow.channel_name }, campaignRow.name);
   const raw = await readLedgerFile(cfg, folder, filename);
   return (raw || '').split('\n').filter((l) => l.trim().startsWith('-'));
 }
@@ -1416,12 +1594,12 @@ function ledgerReply(entries, emptyPick, headerPick) {
 }
 
 async function handleNpcs(interaction, db, cfg) {
-  const entries = await ledgerEntries(db, cfg, campaignId(interaction), 'NPCs.md');
+  const entries = await ledgerEntries(db, cfg, campaign(interaction), 'NPCs.md');
   await interaction.reply(ledgerReply(entries, NPCS_EMPTY, NPCS_HEADER));
 }
 
 async function handleLocations(interaction, db, cfg) {
-  const entries = await ledgerEntries(db, cfg, campaignId(interaction), 'Locations.md');
+  const entries = await ledgerEntries(db, cfg, campaign(interaction), 'Locations.md');
   await interaction.reply(ledgerReply(entries, LOCATIONS_EMPTY, LOCATIONS_HEADER));
 }
 

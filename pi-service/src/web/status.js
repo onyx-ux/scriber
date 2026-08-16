@@ -67,6 +67,31 @@ export function buildStatus({
 
   const nextWindow = nextAutoWindowStart(new Date(now), cfg);
 
+  // One row per campaign, which is why this is here at all: the "Servers" card
+  // answers "is the bot in this Discord", and with several tables in one
+  // Discord that stopped being the same question as "what is it recording".
+  //
+  // No user ids and no channel ids — the dashboard can be exposed to a URL,
+  // and who runs which game is not something to publish. Only whether it is
+  // claimed at all, which is what an owner needs to spot a stranded campaign.
+  const campaigns = db.campaignOverview().map((c) => ({
+    id: c.id,
+    name: c.name,
+    channel: c.channel_name,
+    guildId: c.guild_id,
+    guildName: guilds.find((g) => g.id === c.guild_id)?.name ?? null,
+    sessions: c.sessions,
+    completed: c.completed,
+    members: c.members,
+    named: c.named,
+    lines: c.lines,
+    hours: c.total_ms ? c.total_ms / 3_600_000 : 0,
+    lastSessionAt: c.last_session_at,
+    claimed: Boolean(c.manager_user_id),
+    output: c.output_mode ?? 'default',
+    recording: activeSessions.has(c.guild_id),
+  }));
+
   return {
     generatedAt: new Date(now).toISOString(),
     bot: {
@@ -78,7 +103,19 @@ export function buildStatus({
     servers: guilds.map((g) => ({
       ...g,
       recording: activeSessions.has(g.id),
+      campaigns: campaigns.filter((c) => c.guildId === g.id).length,
     })),
+    campaigns,
+    totals: {
+      campaigns: campaigns.length,
+      claimed: campaigns.filter((c) => c.claimed).length,
+      players: new Set(
+        db.raw.prepare('SELECT DISTINCT user_id FROM campaign_members').all().map((r) => r.user_id)
+      ).size,
+      sessions: campaigns.reduce((n, c) => n + c.sessions, 0),
+      lines: campaigns.reduce((n, c) => n + c.lines, 0),
+      hours: campaigns.reduce((n, c) => n + c.hours, 0),
+    },
     recording,
     working: {
       transcribing,

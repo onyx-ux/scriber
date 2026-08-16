@@ -2,7 +2,7 @@
 // Builds one Obsidian note per place for a campaign, read from the FULL
 // session transcripts. The counterpart to build-npc-notes.mjs.
 //
-//   node scripts/build-location-notes.mjs <guildId> [--write] [--model <name>] [--cache <file>]
+//   node scripts/build-location-notes.mjs <campaign|guildId> [--write] [--model <name>] [--cache <file>]
 import { writeFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -21,6 +21,7 @@ import {
   reconcileAliases,
   renderLocationNote,
 } from '../src/campaign/location-extract.js';
+import { pickCampaign } from './lib/pick-campaign.mjs';
 
 const args = process.argv.slice(2);
 const guildId = args.find((a) => !a.startsWith('--'));
@@ -35,24 +36,30 @@ const model = flag('--model', 'gemini-3.6-flash');
 const cachePath = flag('--cache');
 
 if (!guildId) {
-  console.error('usage: node scripts/build-location-notes.mjs <guildId> [--write] [--model <name>] [--cache <file>]');
+  console.error('usage: node scripts/build-location-notes.mjs <campaign|guildId> [--write] [--model <name>] [--cache <file>]');
   process.exit(1);
 }
 
 const db = openDb(join(config.dataDir, 'db.sqlite'));
+
+// The argument used to be a guild id, back when a guild was a campaign.
+// It still may be — pickCampaign takes an id, a guild or a name, and
+// refuses to guess when a guild holds several.
+const campaign = pickCampaign(db, guildId);
+const campaignId = campaign.id;
 const cfg = { ...config, summaryProvider: 'gemini', geminiModel: model };
 
 const meetings = db
-  .listCompletedMeetings(guildId)
+  .listCompletedMeetings(campaignId)
   .slice()
   .sort((a, b) => (a.session_number ?? a.id) - (b.session_number ?? b.id));
 
 if (meetings.length === 0) {
-  console.error(`no completed sessions for guild ${guildId}`);
+  console.error(`no completed sessions for ${campaign.name ?? guildId}`);
   process.exit(1);
 }
 
-const campaignName = db.getCampaignName(guildId);
+const campaignName = db.getCampaignName(campaignId);
 const folder = campaignFolder(meetings[0], campaignName);
 console.log(`campaign : ${campaignName || meetings[0].channel_name} -> ${folder}/`);
 console.log(`model    : ${model}`);

@@ -140,17 +140,21 @@ function stemsMatch(word, term) {
   return word === head || (head.length >= 4 && word.length >= 4 && (word.startsWith(head) || head.startsWith(word)));
 }
 
-// Gathers this campaign's vocabulary. Guild-scoped: two campaigns on one bot
-// must not bleed names into each other's transcripts.
+// Gathers this campaign's vocabulary. Campaign-scoped, not server-scoped: two
+// tables in one Discord must not bleed names into each other's transcripts,
+// and biasing whisper toward the wrong campaign's proper nouns is worse than
+// no prompt at all — it invents the other game's NPCs into this one.
 export async function campaignPrompt(db, cfg, meeting) {
   if (!cfg.whisperPrompt) return '';
 
   try {
-    const folder = campaignFolder(meeting, db.getCampaignName(meeting.guild_id));
+    const campaignId = meeting?.campaign_id;
+    if (!campaignId) return '';
+    const folder = campaignFolder(meeting, db.getCampaignName(campaignId));
     const { npcs, locations } = await readKnownEntityNames(cfg, folder);
     return buildWhisperPrompt({
-      corrections: db.listCorrections(meeting.guild_id),
-      characters: db.listCharacters(meeting.guild_id),
+      corrections: db.listCorrections(campaignId),
+      characters: db.listCharacters(campaignId),
       npcs,
       locations,
     });

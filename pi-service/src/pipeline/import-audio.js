@@ -93,6 +93,7 @@ export async function importAudio({
   db,
   cfg,
   guildId,
+  campaignId,
   channelId,
   channelName,
   url,
@@ -118,7 +119,7 @@ export async function importAudio({
     throw new Error('Whisper found no speech in that recording.');
   }
 
-  const corrections = db.listCorrections(guildId);
+  const corrections = campaignId ? db.listCorrections(campaignId) : [];
   const utterances = segmentsToUtterances(segments, speakerLabel).map((u) => ({
     ...u,
     text: applyCorrections(u.text, corrections),
@@ -131,6 +132,7 @@ export async function importAudio({
 
   const meetingId = db.createMeeting({
     guildId,
+    campaignId,
     channelId,
     channelName,
     startedAt,

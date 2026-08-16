@@ -34,7 +34,7 @@ const missing = async (path) => {
 
 test('a legacy ledger folder moves under its campaign', async (t) => {
   const { dir, cfg, db } = await vault([
-    { guild_id: '1341529060836380703', campaign_name: 'Cipher', channel_name: '🎲Session' },
+    { guild_id: '1341529060836380703', name: 'Cipher', channel_name: '🎲Session' },
   ]);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
@@ -60,7 +60,7 @@ test('a legacy ledger folder moves under its campaign', async (t) => {
 // channel — the same rule the session notes use, so a campaign is one folder.
 test('an unnamed campaign migrates to its channel-name folder', async (t) => {
   const { dir, cfg, db } = await vault([
-    { guild_id: '175407579835531264', campaign_name: null, channel_name: 'Crack Animal Zoo' },
+    { guild_id: '175407579835531264', name: null, channel_name: 'Crack Animal Zoo' },
   ]);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
@@ -71,7 +71,7 @@ test('an unnamed campaign migrates to its channel-name folder', async (t) => {
 });
 
 test('running it twice is a no-op, not a second move', async (t) => {
-  const { dir, cfg, db } = await vault([{ guild_id: 'G', campaign_name: 'Cipher', channel_name: 'Session' }]);
+  const { dir, cfg, db } = await vault([{ guild_id: 'G', name: 'Cipher', channel_name: 'Session' }]);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   await legacyLedger(dir, 'G-session', { 'NPCs.md': '# NPCs\n\n- Bob\n' });
@@ -82,7 +82,7 @@ test('running it twice is a no-op, not a second move', async (t) => {
 // Overwriting is the one outcome worth avoiding outright: the destination is
 // the newer copy, and the ledger is a file you edit by hand.
 test('a clash leaves both copies alone rather than overwriting', async (t) => {
-  const { dir, cfg, db } = await vault([{ guild_id: 'G', campaign_name: 'Cipher', channel_name: 'Session' }]);
+  const { dir, cfg, db } = await vault([{ guild_id: 'G', name: 'Cipher', channel_name: 'Session' }]);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   await legacyLedger(dir, 'G-session', { 'NPCs.md': 'old\n' });
@@ -161,7 +161,7 @@ test('renaming when nothing was ever exported does nothing', async (t) => {
 // A dry run has to be able to answer "what would this do" without doing it —
 // it is how the real vault gets checked before the real move.
 test('a dry run reports the plan and touches nothing', async (t) => {
-  const { dir, cfg, db } = await vault([{ guild_id: 'G', campaign_name: 'Cipher', channel_name: 'Session' }]);
+  const { dir, cfg, db } = await vault([{ guild_id: 'G', name: 'Cipher', channel_name: 'Session' }]);
   t.after(() => rm(dir, { recursive: true, force: true }));
 
   await legacyLedger(dir, 'G-session', { 'NPCs.md': '- Bob\n' });

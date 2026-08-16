@@ -48,7 +48,7 @@ export function resolveSessionRef(ref, reachable, db) {
   if (bare) {
     const meeting = db.getMeeting(Number(bare[1]));
     if (!meeting) return { error: `There's no session #${bare[1]}.` };
-    const campaign = reachable.find((c) => c.guild_id === meeting.guild_id);
+    const campaign = reachable.find((c) => c.id === meeting.campaign_id);
     if (!campaign) {
       return { error: `Session #${bare[1]} belongs to a campaign you're not part of.` };
     }
@@ -64,20 +64,18 @@ export function resolveSessionRef(ref, reachable, db) {
     };
   }
 
-  const campaign = reachable.find(
-    (c) => refSlug(c.campaign_name || c.channel_name).toLowerCase() === parsed.slug
-  );
+  const campaign = reachable.find((c) => refSlug(c.name || c.channel_name).toLowerCase() === parsed.slug);
   if (!campaign) {
     return { error: `\`${ref}\` isn't a campaign you're part of.` };
   }
 
   const meeting = db
-    .listCompletedMeetings(campaign.guild_id)
-    .concat(db.listRecentMeetings(campaign.guild_id, 200))
+    .listCompletedMeetings(campaign.id)
+    .concat(db.listRecentMeetings(campaign.id, 200))
     .find((m) => m.session_number === parsed.sessionNumber);
 
   if (!meeting) {
-    return { error: `${campaign.campaign_name || campaign.channel_name} has no session ${parsed.sessionNumber}.` };
+    return { error: `${campaign.name || campaign.channel_name} has no session ${parsed.sessionNumber}.` };
   }
   return { meeting, campaign };
 }

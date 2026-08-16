@@ -94,7 +94,7 @@ export async function planLedgerMigration({ db, cfg }) {
 
     const folder = campaignFolder(
       { guild_id: campaign.guild_id, channel_name: campaign.channel_name },
-      campaign.campaign_name
+      campaign.name
     );
     plan.push({ from: join(legacyRoot, entry.name), to: campaignDirInfo(cfg, folder).localDir, folder });
   }

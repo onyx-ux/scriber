@@ -41,8 +41,8 @@ function estTokens(s) {
 // gives the model the through-line) plus transcript lines matching the
 // question's distinctive words. Trimmed to fit the context window, dropping
 // excerpts first since the recaps are the higher-value signal per token.
-export function gatherContext(db, guildId, question, cfg) {
-  const summaries = db.listCompletedMeetings(guildId).map((m) => {
+export function gatherContext(db, campaignId, question, cfg) {
+  const summaries = db.listCompletedMeetings(campaignId).map((m) => {
     let tldr = '';
     try {
       tldr = JSON.parse(m.summary_json || '{}').tldr || '';
@@ -55,7 +55,7 @@ export function gatherContext(db, guildId, question, cfg) {
   const keywords = extractKeywords(question);
   const byKey = new Map();
   for (const word of keywords) {
-    for (const row of db.searchUtterances(guildId, word, 12)) {
+    for (const row of db.searchUtterances(campaignId, word, 12)) {
       const key = `${row.meeting_id}:${row.start_ms}:${row.text}`;
       if (byKey.has(key)) continue;
       const totalSec = Math.floor(row.start_ms / 1000);

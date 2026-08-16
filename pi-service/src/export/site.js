@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { sessionNotePath, sessionLabel } from './naming.js';
+import { sessionNotePath, sessionLabel, campaignFolder } from './naming.js';
 
 // A single self-contained HTML dashboard for the whole campaign, written
 // alongside the markdown exports so it syncs to Drive/Obsidian like anything
@@ -248,8 +248,8 @@ export function renderCampaignSite(sessions, campaignName = null) {
 </html>`;
 }
 
-export async function exportCampaignSite(db, guildId, cfg) {
-  const meetings = db.listCompletedMeetings(guildId);
+export async function exportCampaignSite(db, campaignId, cfg) {
+  const meetings = db.listCompletedMeetings(campaignId);
   const sessions = meetings.map((m) => {
     let notes = {};
     try {
@@ -270,8 +270,16 @@ export async function exportCampaignSite(db, guildId, cfg) {
     };
   });
 
-  await mkdir(cfg.obsidianExportDir, { recursive: true });
-  const path = join(cfg.obsidianExportDir, 'campaign-archive.html');
-  await writeFile(path, renderCampaignSite(sessions, db.getCampaignName(guildId)), 'utf8');
+  // Inside the campaign's own folder, not the export root. It used to be one
+  // "campaign-archive.html" at the top level, which was fine while a guild
+  // meant a campaign: the moment a second table exists, each regeneration
+  // overwrites the other's archive with its own sessions.
+  const campaign = db.getCampaign(campaignId);
+  const folder = campaignFolder({ channel_name: campaign?.channel_name, guild_id: campaign?.guild_id }, campaign?.name);
+  const dir = join(cfg.obsidianExportDir, folder);
+
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, 'campaign-archive.html');
+  await writeFile(path, renderCampaignSite(sessions, campaign?.name), 'utf8');
   return path;
 }

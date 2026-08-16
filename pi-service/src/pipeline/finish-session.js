@@ -55,8 +55,8 @@ export async function finishSession(
   db.setMeetingStatus(meetingId, 'transcribing');
 
   // Bias whisper toward this campaign's proper nouns before transcribing
-  // anything — see stt/vocabulary.js. Guild-scoped, so campaigns sharing a
-  // bot don't leak names into each other.
+  // anything — see stt/vocabulary.js. Campaign-scoped, so tables sharing a
+  // bot (or a server) don't leak names into each other.
   const prompt = await campaignPrompt(db, cfg, db.getMeeting(meetingId));
   if (prompt) console.log(`[whisper] meeting ${meetingId}: vocabulary prompt (${prompt.length} chars)`);
 
@@ -89,7 +89,7 @@ export async function finishSession(
   // whisper mangles the same invented names identically every session, so
   // correcting one once should fix it forever, not just retroactively.
   const meeting = db.getMeeting(meetingId);
-  const corrections = meeting ? db.listCorrections(meeting.guild_id) : [];
+  const corrections = meeting?.campaign_id ? db.listCorrections(meeting.campaign_id) : [];
   if (corrections.length > 0) {
     for (const u of utterances) {
       u.text = applyCorrections(u.text, corrections);

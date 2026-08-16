@@ -22,9 +22,9 @@ export function isOwner(userId, cfg) {
   return Boolean(cfg.ownerUserId) && userId === cfg.ownerUserId;
 }
 
-export function isManager(userId, db, guildId, cfg) {
+export function isManager(userId, db, campaignId, cfg) {
   if (isOwner(userId, cfg)) return true;
-  const manager = guildId ? db.getCampaignManager(guildId) : null;
+  const manager = campaignId ? db.getCampaignManager(campaignId) : null;
   return Boolean(manager) && manager === userId;
 }
 
@@ -37,11 +37,11 @@ export function refuseUnlessOwner(userId, cfg) {
   );
 }
 
-export function refuseUnlessManager(userId, db, guildId, cfg) {
-  if (isManager(userId, db, guildId, cfg)) return null;
+export function refuseUnlessManager(userId, db, campaignId, cfg) {
+  if (isManager(userId, db, campaignId, cfg)) return null;
 
-  const manager = guildId ? db.getCampaignManager(guildId) : null;
+  const manager = campaignId ? db.getCampaignManager(campaignId) : null;
   return manager
     ? `🔒 <@${manager}> runs this campaign, so only they can change its records.`
-    : "🔒 Nobody has claimed this campaign yet. Whoever runs the game should set it up with `/campaign name:...` — that claims it.";
+    : "🔒 Nobody has claimed this campaign yet. Whoever runs the game should set it up with `/campaign create` — that claims it.";
 }

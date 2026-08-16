@@ -170,6 +170,58 @@ test('paused workers are visible', async (t) => {
   assert.equal(s.health.summarisePaused, false);
 });
 
+// --- the owner's overview ---
+
+test('every campaign is reported, one row each, not one per server', async (t) => {
+  const db = await freshDb(t);
+  const cipher = db.createCampaign('g1', 'Cipher', 'dm-a');
+  const strahd = db.createCampaign('g1', 'Curse of Strahd', 'dm-b');
+  db.addCampaignMember(cipher, 'player-1', 'dm-a');
+  db.setCharacterName(cipher, 'player-1', 'BenTen');
+
+  const id = db.createMeeting({
+    guildId: 'g1', campaignId: cipher, channelId: 'c', channelName: 'Voice',
+    startedAt: '2026-08-01T10:00:00Z', audioDir: '/tmp',
+  });
+  db.finalizeTranscription(id, [{ userId: 'player-1', displayName: 'Brett', text: 'hi', startMs: 0, endMs: 1 }]);
+  db.endMeeting(id, '2026-08-01T13:00:00Z');
+
+  const client = { user: { tag: 'Quill#0233' }, guilds: { cache: new Map([['g1', { id: 'g1', name: 'The Table' }]]) } };
+  const s = buildStatus({ db, cfg, client });
+
+  assert.equal(s.campaigns.length, 2);
+  const one = s.campaigns.find((c) => c.id === cipher);
+  assert.equal(one.name, 'Cipher');
+  assert.equal(one.guildName, 'The Table');
+  assert.equal(one.sessions, 1);
+  assert.equal(one.members, 2, 'the DM and the player');
+  assert.equal(one.named, 1);
+  assert.equal(one.hours, 3);
+  assert.equal(s.campaigns.find((c) => c.id === strahd).sessions, 0, 'a campaign with no sessions still appears');
+
+  assert.equal(s.servers[0].campaigns, 2, 'and the server says how many it holds');
+  assert.equal(s.totals.campaigns, 2);
+  assert.equal(s.totals.players, 3, 'two DMs and a player, counted once each');
+});
+
+test('an unclaimed campaign is flagged, since nobody can run its commands', async (t) => {
+  const db = await freshDb(t);
+  db.raw.prepare(`INSERT INTO campaigns (guild_id, name) VALUES ('g1', 'Stranded')`).run();
+
+  const [c] = buildStatus({ db, cfg }).campaigns;
+  assert.equal(c.claimed, false);
+});
+
+// This is served unauthenticated on the LAN by default, and can be exposed to
+// a URL — so who runs which game must not be in it.
+test('the overview carries no user ids', async (t) => {
+  const db = await freshDb(t);
+  db.createCampaign('g1', 'Cipher', 'a-real-discord-snowflake');
+
+  const json = JSON.stringify(buildStatus({ db, cfg }).campaigns);
+  assert.ok(!json.includes('a-real-discord-snowflake'), 'the manager is reported as claimed/unclaimed, not by id');
+});
+
 // This is served unauthenticated on the LAN by default.
 test('the snapshot contains no secrets', async (t) => {
   const db = await freshDb(t);

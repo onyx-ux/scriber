@@ -173,20 +173,57 @@ test('searchUtterances is case-insensitive and neutralises LIKE wildcards', asyn
   const id = seedMeeting(db);
   db.finalizeTranscription(id, ROWS);
 
-  assert.equal(db.searchUtterances('G1', 'marrowgate', 5).length, 1);
-  assert.equal(db.searchUtterances('G1', 'MARROWGATE', 5).length, 1);
-  assert.equal(db.searchUtterances('G1', '%', 5).length, 0, 'a bare % must not match everything');
-  assert.equal(db.searchUtterances('G1', '_', 5).length, 0);
-  assert.equal(db.searchUtterances('OTHER_GUILD', 'marrowgate', 5).length, 0, 'campaigns must not leak across guilds');
+  const mine = db.defaultCampaignId('G1');
+  assert.equal(db.searchUtterances(mine, 'marrowgate', 5).length, 1);
+  assert.equal(db.searchUtterances(mine, 'MARROWGATE', 5).length, 1);
+  assert.equal(db.searchUtterances(mine, '%', 5).length, 0, 'a bare % must not match everything');
+  assert.equal(db.searchUtterances(mine, '_', 5).length, 0);
+  assert.equal(
+    db.searchUtterances(db.defaultCampaignId('OTHER_GUILD'), 'marrowgate', 5).length,
+    0,
+    'campaigns must not leak across guilds'
+  );
 });
 
-test('character names are per-guild and upsert cleanly', async (t) => {
+test('search does not leak between two campaigns in one server', async (t) => {
   const db = await freshDb(t);
-  db.setCharacterName('G1', 'u1', 'Thalric');
-  db.setCharacterName('G1', 'u1', 'Thalric the Second');
+  const first = db.createCampaign('G', 'Cipher', 'dm-a');
+  const second = db.createCampaign('G', 'Strahd', 'dm-b');
+  const id = db.createMeeting({
+    guildId: 'G',
+    campaignId: first,
+    channelId: 'C',
+    channelName: 'Cipher',
+    startedAt: 'x',
+    audioDir: '/tmp',
+  });
+  db.finalizeTranscription(id, ROWS);
 
-  assert.equal(db.getCharacterName('G1', 'u1'), 'Thalric the Second');
-  assert.equal(db.getCharacterName('G2', 'u1'), null);
+  assert.equal(db.searchUtterances(first, 'marrowgate', 5).length, 1);
+  assert.equal(db.searchUtterances(second, 'marrowgate', 5).length, 0, 'the other table in the same Discord sees nothing');
+});
+
+test('character names are per-campaign and upsert cleanly', async (t) => {
+  const db = await freshDb(t);
+  const a = db.defaultCampaignId('G1');
+  const b = db.defaultCampaignId('G2');
+  db.setCharacterName(a, 'u1', 'Thalric');
+  db.setCharacterName(a, 'u1', 'Thalric the Second');
+
+  assert.equal(db.getCharacterName(a, 'u1'), 'Thalric the Second');
+  assert.equal(db.getCharacterName(b, 'u1'), null);
+});
+
+test('one person can play different characters in two campaigns in one server', async (t) => {
+  const db = await freshDb(t);
+  const first = db.createCampaign('G', 'Cipher', 'dm-a');
+  const second = db.createCampaign('G', 'Strahd', 'dm-b');
+
+  db.setCharacterName(first, 'u1', 'Thalric');
+  db.setCharacterName(second, 'u1', 'Ireena');
+
+  assert.equal(db.getCharacterName(first, 'u1'), 'Thalric');
+  assert.equal(db.getCharacterName(second, 'u1'), 'Ireena');
 });
 
 test('campaignStats totals only completed sessions, ranks talkers, and finds the longest', async (t) => {
@@ -212,7 +249,7 @@ test('campaignStats totals only completed sessions, ranks talkers, and finds the
   const id3 = db.createMeeting({ guildId: 'G1', channelId: 'C1', channelName: 'Cipher', startedAt: '2026-07-15T10:00:00Z', audioDir: '/tmp' });
   db.finalizeTranscription(id3, [{ userId: 'u1', displayName: 'Koru', startMs: 0, endMs: 1000, text: 'e' }]);
 
-  const stats = db.campaignStats('G1');
+  const stats = db.campaignStats(db.defaultCampaignId('G1'));
   assert.equal(stats.totalSessions, 2);
   assert.equal(stats.totalLines, 4, 'only lines from the 2 completed sessions');
   assert.equal(stats.totalMs, 60 * 60_000 + 3 * 60 * 60_000);
@@ -220,12 +257,13 @@ test('campaignStats totals only completed sessions, ranks talkers, and finds the
   assert.equal(stats.longestMs, 3 * 60 * 60_000);
   assert.deepEqual(stats.talkative[0], { display_name: 'Koru', lines: 3 });
 
-  assert.deepEqual(db.campaignStats('OTHER_GUILD'), {
+  assert.deepEqual(db.campaignStats(db.defaultCampaignId('OTHER_GUILD')), {
     totalSessions: 0,
     totalMs: 0,
     totalLines: 0,
     talkative: [],
     longestMeetingId: null,
+    longestSessionNumber: null,
     longestMs: 0,
   });
 });

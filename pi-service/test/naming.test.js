@@ -218,23 +218,25 @@ test('numbering continues across the migration on an existing campaign', async (
 test('naming a campaign does not disturb its numbering', async (t) => {
   const db = await freshDb(t);
   make(db, 'G1');
-  db.setCampaignName('G1', 'Cipher');
+  db.setCampaignName(db.defaultCampaignId('G1'), 'Cipher');
 
   assert.equal(db.getMeeting(make(db, 'G1')).session_number, 2, 'setting a name must not reset the counter');
-  assert.equal(db.getCampaignName('G1'), 'Cipher');
+  assert.equal(db.getCampaignName(db.defaultCampaignId('G1')), 'Cipher');
 });
 
-test('campaign names are stored per guild', async (t) => {
+test('campaign names are stored per campaign', async (t) => {
   const db = await freshDb(t);
   make(db, 'G1');
   make(db, 'G2');
+  const a = db.defaultCampaignId('G1');
+  const b = db.defaultCampaignId('G2');
 
-  db.setCampaignName('G1', 'Cipher');
-  assert.equal(db.getCampaignName('G1'), 'Cipher');
-  assert.equal(db.getCampaignName('G2'), null);
+  db.setCampaignName(a, 'Cipher');
+  assert.equal(db.getCampaignName(a), 'Cipher');
+  assert.equal(db.getCampaignName(b), null);
 
-  db.setCampaignName('G1', 'Sunless Citadel');
-  assert.equal(db.getCampaignName('G1'), 'Sunless Citadel', 'renaming replaces rather than duplicating');
+  db.setCampaignName(a, 'Sunless Citadel');
+  assert.equal(db.getCampaignName(a), 'Sunless Citadel', 'renaming replaces rather than duplicating');
 });
 
 test('campaigns are listable for the DM picker', async (t) => {
@@ -242,15 +244,39 @@ test('campaigns are listable for the DM picker', async (t) => {
   make(db, 'G1');
   make(db, 'G1');
   make(db, 'G2');
-  db.setCampaignName('G1', 'Cipher');
+  db.setCampaignName(db.defaultCampaignId('G1'), 'Cipher');
 
   const rows = db.listCampaigns();
   assert.equal(rows.length, 2);
 
   const g1 = rows.find((r) => r.guild_id === 'G1');
-  assert.equal(g1.campaign_name, 'Cipher');
+  assert.equal(g1.name, 'Cipher');
   assert.equal(g1.sessions, 2);
-  assert.equal(rows.find((r) => r.guild_id === 'G2').campaign_name, null);
+  assert.equal(rows.find((r) => r.guild_id === 'G2').name, null);
+});
+
+test('a campaign with no sessions is still listable, so it can be set up', async (t) => {
+  const db = await freshDb(t);
+  const id = db.createCampaign('G', 'Brand New', 'dm');
+
+  const row = db.listCampaigns().find((c) => c.id === id);
+  assert.equal(row.name, 'Brand New');
+  assert.equal(row.sessions, 0, 'no sessions yet');
+  assert.equal(row.channel_name, null, 'and nothing to fall back to');
+});
+
+test('each campaign in one server numbers its own sessions', async (t) => {
+  const db = await freshDb(t);
+  const first = db.createCampaign('G', 'Cipher', 'dm-a');
+  const second = db.createCampaign('G', 'Strahd', 'dm-b');
+
+  const one = db.createMeeting({ guildId: 'G', campaignId: first, channelId: 'C', channelName: 'a', startedAt: 'x', audioDir: '/a' });
+  const two = db.createMeeting({ guildId: 'G', campaignId: second, channelId: 'C', channelName: 'b', startedAt: 'x', audioDir: '/a' });
+  const three = db.createMeeting({ guildId: 'G', campaignId: first, channelId: 'C', channelName: 'a', startedAt: 'x', audioDir: '/a' });
+
+  assert.equal(db.getMeeting(one).session_number, 1);
+  assert.equal(db.getMeeting(two).session_number, 1, "the other table's first night is its session 1, not its session 2");
+  assert.equal(db.getMeeting(three).session_number, 2);
 });
 
 // --- Drive destination mirrors the campaign folder ---

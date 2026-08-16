@@ -131,7 +131,7 @@ export async function rebuildCapturedUtterances(db, meeting, cfg, discordClient)
       const member = await guild.members.fetch(userId).catch(() => null);
       if (member) discordName = member.displayName;
     }
-    const displayName = resolveSpeakerName(db, meeting.guild_id, userId, discordName);
+    const displayName = resolveSpeakerName(db, meeting.campaign_id, userId, discordName);
 
     for (const file of files) {
       if (!file.endsWith('.wav')) continue;

@@ -74,14 +74,26 @@ async function freshDb(t) {
 
 test('corrections are stored per campaign and upsert on repeat', async (t) => {
   const db = await freshDb(t);
-  db.addCorrection('G1', 'Vecks', 'Vex');
-  db.addCorrection('G1', 'Vecks', 'Vexx');
-  db.addCorrection('G2', 'Vecks', 'Other');
+  const a = db.defaultCampaignId('G1');
+  const b = db.defaultCampaignId('G2');
+  db.addCorrection(a, 'Vecks', 'Vex');
+  db.addCorrection(a, 'Vecks', 'Vexx');
+  db.addCorrection(b, 'Vecks', 'Other');
 
-  const g1 = db.listCorrections('G1');
-  assert.equal(g1.length, 1, 'correcting the same term twice updates rather than duplicates');
-  assert.equal(g1[0].correct_text, 'Vexx');
-  assert.equal(db.listCorrections('G2')[0].correct_text, 'Other', 'campaigns keep separate corrections');
+  const first = db.listCorrections(a);
+  assert.equal(first.length, 1, 'correcting the same term twice updates rather than duplicates');
+  assert.equal(first[0].correct_text, 'Vexx');
+  assert.equal(db.listCorrections(b)[0].correct_text, 'Other', 'campaigns keep separate corrections');
+});
+
+test('two campaigns in ONE server keep separate corrections', async (t) => {
+  const db = await freshDb(t);
+  const first = db.createCampaign('G', 'Cipher', 'dm-a');
+  const second = db.createCampaign('G', 'Strahd', 'dm-b');
+
+  db.addCorrection(first, 'Vecks', 'Vex');
+  assert.deepEqual(db.listCorrections(second), [], 'the other table at the same Discord is unaffected');
+  assert.equal(db.listCorrections(first)[0].correct_text, 'Vex');
 });
 
 test('rewriteUtterances fixes past transcripts and reports how many changed', async (t) => {
@@ -98,7 +110,7 @@ test('rewriteUtterances fixes past transcripts and reports how many changed', as
     { userId: 'u1', displayName: 'Koru', startMs: 1, endMs: 2, text: 'nothing to change here' },
   ]);
 
-  const changed = db.rewriteUtterances('G1', (text) => applyCorrections(text, fix));
+  const changed = db.rewriteUtterances(db.defaultCampaignId('G1'), (text) => applyCorrections(text, fix));
   assert.equal(changed, 1, 'only lines that actually differ are counted');
 
   const texts = db.listUtterances(id).map((u) => u.text);
@@ -112,19 +124,34 @@ test('rewriteUtterances never touches another campaign', async (t) => {
   db.finalizeTranscription(mine, [{ userId: 'u', displayName: 'd', startMs: 0, endMs: 1, text: 'Vecks' }]);
   db.finalizeTranscription(theirs, [{ userId: 'u', displayName: 'd', startMs: 0, endMs: 1, text: 'Vecks' }]);
 
-  db.rewriteUtterances('G1', (text) => applyCorrections(text, fix));
+  db.rewriteUtterances(db.defaultCampaignId('G1'), (text) => applyCorrections(text, fix));
   assert.equal(db.listUtterances(mine)[0].text, 'Vex');
   assert.equal(db.listUtterances(theirs)[0].text, 'Vecks', 'another guild is untouched');
 });
 
+test('rewriteUtterances never touches the other campaign in the same server', async (t) => {
+  const db = await freshDb(t);
+  const first = db.createCampaign('G', 'Cipher', 'dm-a');
+  const second = db.createCampaign('G', 'Strahd', 'dm-b');
+  const mine = db.createMeeting({ guildId: 'G', campaignId: first, channelId: 'C', channelName: 'A', startedAt: 'x', audioDir: '/a' });
+  const theirs = db.createMeeting({ guildId: 'G', campaignId: second, channelId: 'C', channelName: 'B', startedAt: 'x', audioDir: '/a' });
+  db.finalizeTranscription(mine, [{ userId: 'u', displayName: 'd', startMs: 0, endMs: 1, text: 'Vecks' }]);
+  db.finalizeTranscription(theirs, [{ userId: 'u', displayName: 'd', startMs: 0, endMs: 1, text: 'Vecks' }]);
+
+  db.rewriteUtterances(first, (text) => applyCorrections(text, fix));
+  assert.equal(db.listUtterances(mine)[0].text, 'Vex');
+  assert.equal(db.listUtterances(theirs)[0].text, 'Vecks', 'the other table in the same Discord is untouched');
+});
+
 test('removeCorrection deletes only the named term', async (t) => {
   const db = await freshDb(t);
-  db.addCorrection('G1', 'Vecks', 'Vex');
-  db.addCorrection('G1', 'Rusti', 'Rusty');
+  const c = db.defaultCampaignId('G1');
+  db.addCorrection(c, 'Vecks', 'Vex');
+  db.addCorrection(c, 'Rusti', 'Rusty');
 
-  assert.equal(db.removeCorrection('G1', 'Vecks'), 1);
+  assert.equal(db.removeCorrection(c, 'Vecks'), 1);
   assert.deepEqual(
-    db.listCorrections('G1').map((c) => c.wrong_text),
+    db.listCorrections(c).map((x) => x.wrong_text),
     ['Rusti']
   );
 });
