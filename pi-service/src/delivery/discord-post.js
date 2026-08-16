@@ -62,24 +62,49 @@ export function buildSessionBody(notes) {
   return sections.join('\n\n');
 }
 
-// Where a finished session's notes go.
+// Where a finished session's notes go, in order of precedence:
 //
-// The default is the server channel the session happened in, which is right
-// when the whole table wants the recap. Setting NOTES_TO_OWNER_DM sends them
-// to one person's DMs instead, so the bot can be used across several servers
-// without each one needing a notes channel set up — the notes follow the
-// owner rather than the guild.
+//   1. what `/campaign output` set for THIS campaign
+//   2. NOTES_TO_OWNER_DM / NOTES_CHANNEL_ID, the bot-wide default
+//   3. the channel the session was recorded in
 //
-// Falls back to the channel rather than failing: a DM can be refused by the
-// recipient's privacy settings (Discord returns 50007, "cannot send messages
-// to this user"), and losing a session's notes over that would be far worse
-// than posting them where they would have gone anyway.
-async function resolveDestination(discordClient, meeting, cfg) {
-  if (cfg.notesToOwnerDm && cfg.ownerUserId) {
-    const owner = await discordClient.users.fetch(cfg.ownerUserId).catch(() => null);
-    const dm = owner ? await owner.createDM().catch(() => null) : null;
+// Every step falls back to the next rather than failing. A DM can be refused
+// by the recipient's privacy settings (Discord returns 50007, "cannot send
+// messages to this user") and a chosen channel can be deleted — losing a
+// session's notes over either would be far worse than posting them where they
+// would have gone anyway.
+//
+// The CAMPAIGN's own choice wins over the bot-wide setting, because
+// NOTES_TO_OWNER_DM is one setting for every table the bot serves — a
+// campaign wanting its recaps in #session-notes and another wanting them DM'd
+// cannot both be expressed that way. `/campaign output` sets it, and a
+// campaign that has never set one falls through to the env defaults exactly
+// as before.
+//
+// A campaign's DM goes to its MANAGER, not the bot owner: it is their game.
+async function resolveDestination(discordClient, meeting, cfg, db) {
+  const openDm = async (userId, why) => {
+    const user = userId ? await discordClient.users.fetch(userId).catch(() => null) : null;
+    const dm = user ? await user.createDM().catch(() => null) : null;
     if (dm) return { channel: dm, viaDm: true };
-    console.warn(`[delivery] could not open a DM with ${cfg.ownerUserId} — falling back to the session channel`);
+    console.warn(`[delivery] could not open a DM with ${userId} (${why}) — falling back to the session channel`);
+    return null;
+  };
+
+  const chosen = db?.getOutputForMeeting?.(meeting.id) ?? null;
+
+  if (chosen?.mode === 'dm') {
+    const dm = await openDm(chosen.managerUserId, 'campaign set to DM');
+    if (dm) return dm;
+  } else if (chosen?.mode === 'channel' && chosen.channelId) {
+    const channel = await discordClient.channels.fetch(chosen.channelId).catch(() => null);
+    if (channel) return { channel, viaDm: false, channelId: chosen.channelId };
+    console.warn(`[delivery] campaign channel ${chosen.channelId} is gone — falling back`);
+  }
+
+  if (!chosen?.mode && cfg.notesToOwnerDm && cfg.ownerUserId) {
+    const dm = await openDm(cfg.ownerUserId, 'NOTES_TO_OWNER_DM');
+    if (dm) return dm;
   }
 
   const channelId = cfg.notesChannelId || meeting.channel_id;
@@ -87,8 +112,8 @@ async function resolveDestination(discordClient, meeting, cfg) {
   return { channel, viaDm: false, channelId };
 }
 
-export async function postSessionNotes({ discordClient, meeting, notes, mdPath, cfg }) {
-  const { channel, viaDm, channelId } = await resolveDestination(discordClient, meeting, cfg);
+export async function postSessionNotes({ discordClient, meeting, notes, mdPath, cfg, db }) {
+  const { channel, viaDm, channelId } = await resolveDestination(discordClient, meeting, cfg, db);
   if (!channel) {
     console.error(`[delivery] could not fetch channel ${channelId}, notes not posted`);
     return;

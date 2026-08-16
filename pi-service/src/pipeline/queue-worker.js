@@ -195,7 +195,7 @@ export async function tick(db, discordClient, cfg) {
     await progress?.remove();
     progress = null;
 
-    await postSessionNotes({ discordClient, meeting, notes: displayNotes, mdPath, cfg });
+    await postSessionNotes({ discordClient, meeting, notes: displayNotes, mdPath, cfg, db });
 
     // Ledger update uses the unfiltered notes so it stays authoritative.
     await updateCampaignLedger({ meeting, notes, cfg, folder });

@@ -30,7 +30,8 @@ import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
 import { readLedgerFile } from '../campaign/ledger.js';
 import { resolveScope } from '../campaign/scope.js';
-import { refuseUnlessOwner, refuseUnlessManager, isManager } from '../campaign/permissions.js';
+import { refuseUnlessOwner, refuseUnlessManager, isManager, isOwner } from '../campaign/permissions.js';
+import { resolveSessionRef, sessionRef } from '../campaign/session-ref.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import { exportCampaignSite } from '../export/site.js';
 import {
@@ -157,7 +158,9 @@ export const commandDefs = [
   new SlashCommandBuilder()
     .setName('summarise')
     .setDescription('Retry summarisation now for a meeting (useful right after turning your PC on)')
-    .addIntegerOption((o) => o.setName('meeting_id').setDescription('Meeting ID').setRequired(true))
+    .addStringOption((o) =>
+      o.setName('session').setDescription('e.g. Cipher_02').setRequired(true).setAutocomplete(true)
+    )
     .addStringOption((o) =>
       o
         .setName('provider')
@@ -171,7 +174,9 @@ export const commandDefs = [
   new SlashCommandBuilder()
     .setName('transcribe')
     .setDescription('Control when a recorded session may use the PC to transcribe')
-    .addIntegerOption((o) => o.setName('meeting_id').setDescription('Meeting ID').setRequired(true))
+    .addStringOption((o) =>
+      o.setName('session').setDescription('e.g. Cipher_02').setRequired(true).setAutocomplete(true)
+    )
     .addStringOption((o) =>
       o
         .setName('when')
@@ -185,8 +190,10 @@ export const commandDefs = [
     ),
   new SlashCommandBuilder()
     .setName('export')
-    .setDescription('Get the raw audio + transcript for a meeting')
-    .addIntegerOption((o) => o.setName('meeting_id').setDescription('Meeting ID').setRequired(true)),
+    .setDescription('Get the raw audio + transcript for a session')
+    .addStringOption((o) =>
+      o.setName('session').setDescription('e.g. Cipher_02').setRequired(true).setAutocomplete(true)
+    ),
   new SlashCommandBuilder()
     .setName('setcharacter')
     .setDescription('Map your Discord account to your D&D character name for transcripts/notes')
@@ -280,6 +287,23 @@ export const commandDefs = [
     .setDMPermission(true)
     .addStringOption((o) =>
       o.setName('name').setDescription('e.g. "Sunless Citadel" (leave blank to see the current name)').setRequired(false)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('output')
+        .setDescription('Where this campaign’s finished notes are posted')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Direct message to me', value: 'dm' },
+          { name: 'A specific channel', value: 'channel' },
+          { name: 'Back to the default', value: 'default' }
+        )
+    )
+    .addChannelOption((o) =>
+      o
+        .setName('channel')
+        .setDescription('Which channel (with output: A specific channel)')
+        .setRequired(false)
     )
     .addStringOption((o) =>
       o
@@ -412,6 +436,31 @@ function targetGuildId(interaction) {
 
 async function handleCampaignAutocomplete(interaction, db) {
   if (interaction.commandName === 'dm') return handleDmAutocomplete(interaction, db);
+
+  // The session picker for /summarise, /transcribe and /export. Showing the
+  // date alongside the reference is what makes it usable — nobody remembers
+  // whether the one that failed was 02 or 03.
+  if (interaction.options.getFocused(true).name === 'session') {
+    const typed = String(interaction.options.getFocused() || '').toLowerCase();
+    const reachable = db.listCampaigns();
+    const choices = [];
+
+    for (const campaign of reachable) {
+      const name = campaign.campaign_name || campaign.channel_name;
+      for (const m of db.listRecentMeetings(campaign.guild_id, 25)) {
+        const ref = sessionRef(name, m.session_number);
+        if (!ref) continue;
+        choices.push({
+          name: `${ref} — ${(m.started_at || '').slice(0, 10)} (${m.status})`.slice(0, 100),
+          value: ref,
+        });
+      }
+    }
+
+    return interaction.respond(
+      choices.filter((c) => !typed || c.value.toLowerCase().includes(typed)).slice(0, 25)
+    );
+  }
 
   // A player command's campaign list is the caller's OWN campaigns. Offering
   // every campaign the bot knows would leak their names to anyone who
@@ -609,6 +658,41 @@ async function handleCampaign(interaction, db, cfg) {
   const current = db.getCampaignName(guildId);
   const fallback = db.listCampaigns().find((c) => c.guild_id === guildId)?.channel_name;
   const manager = db.getCampaignManager(guildId);
+
+  // Where the notes land. Managing the campaign is the requirement — this
+  // decides where a whole table's recaps show up.
+  const output = interaction.options.getString('output');
+  if (output) {
+    if (!isManager(interaction.user.id, db, guildId, cfg)) {
+      return interaction.reply({
+        content: manager
+          ? `🔒 <@${manager}> runs this campaign, so only they can change where its notes go.`
+          : "🔒 Nobody has claimed this campaign yet. Set it up with `/campaign name:...` first — that claims it.",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    const chosenChannel = interaction.options.getChannel('channel');
+    if (output === 'channel' && !chosenChannel && !interaction.channelId) {
+      return interaction.reply({
+        content: 'Tell me which channel with the `channel` option.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    // Defaulting to the channel the command was run in is the common case —
+    // you are usually standing in the one you mean.
+    const target = output === 'channel' ? (chosenChannel?.id ?? interaction.channelId) : null;
+    db.setCampaignOutput(guildId, output === 'default' ? null : output, target);
+
+    const where =
+      output === 'dm'
+        ? `📬 Session notes will be sent to <@${interaction.user.id}> directly.`
+        : output === 'channel'
+          ? `📬 Session notes will be posted in <#${target}>.`
+          : '📬 Session notes go wherever the bot is configured to send them by default (the session’s own channel unless set otherwise).';
+    return interaction.reply({ content: where, flags: MessageFlags.Ephemeral });
+  }
 
   if (!name) {
     const who = manager ? `Run by <@${manager}>.` : 'Nobody runs it yet — naming it claims it.';
@@ -923,8 +1007,24 @@ async function applyTranscribeAction(db, cfg, jobId, action) {
   return { ok: true, message: "▶️ Approved — it'll start within a minute, as soon as the PC answers." };
 }
 
+// A typed reference ("Cipher_02") resolved against the campaigns this caller
+// may look at. The membership filter is the point: a bare meeting id named no
+// campaign, so there was nothing to check and /export 16 returned whatever
+// session 16 happened to be, on anyone's server.
+//
+// The owner reaches every campaign, since these are all owner-tier commands
+// and unsticking someone else's stuck session is the job.
+function resolveSession(interaction, db, cfg) {
+  const reachable = isOwner(interaction.user.id, cfg)
+    ? db.listCampaigns()
+    : db.listCampaignsForUser(interaction.user.id);
+  return resolveSessionRef(interaction.options.getString('session'), reachable, db);
+}
+
 async function handleTranscribe(interaction, db, cfg) {
-  const meetingId = interaction.options.getInteger('meeting_id');
+  const { meeting, error } = resolveSession(interaction, db, cfg);
+  if (error) return interaction.reply({ content: error, flags: MessageFlags.Ephemeral });
+  const meetingId = meeting.id;
   const when = interaction.options.getString('when') || 'now';
 
   const job = db.getTranscribeJobForMeeting(meetingId);
@@ -952,10 +1052,10 @@ async function handleHistory(interaction, db) {
 }
 
 async function handleSummarizeNow(interaction, db, cfg) {
-  const meetingId = interaction.options.getInteger('meeting_id');
+  const { meeting, error } = resolveSession(interaction, db, cfg);
+  if (error) return interaction.reply({ content: error, flags: MessageFlags.Ephemeral });
+  const meetingId = meeting.id;
   const provider = interaction.options.getString('provider');
-  const meeting = db.getMeeting(meetingId);
-  if (!meeting) return interaction.reply({ content: 'No such meeting.', flags: MessageFlags.Ephemeral });
 
   // Check the provider actually being used, not the configured default, so
   // asking for one that is set up isn't refused because the other isn't.
@@ -990,9 +1090,9 @@ function providerUnusableReason(cfg, requested) {
 }
 
 async function handleExport(interaction, db, cfg) {
-  const meetingId = interaction.options.getInteger('meeting_id');
-  const meeting = db.getMeeting(meetingId);
-  if (!meeting) return interaction.reply({ content: 'No such meeting.', flags: MessageFlags.Ephemeral });
+  const { meeting, error } = resolveSession(interaction, db, cfg);
+  if (error) return interaction.reply({ content: error, flags: MessageFlags.Ephemeral });
+  const meetingId = meeting.id;
 
   const utterances = db.listUtterances(meetingId);
   const transcriptText = buildTranscriptText(utterances);

@@ -268,3 +268,69 @@ test('a removed member is no longer offered the campaign', async (t) => {
   assert.equal(db.removeCampaignMember(id, PLAYER), 1);
   assert.deepEqual(db.listCampaignsForMember(PLAYER), []);
 });
+
+// --- where a campaign's notes go ---
+
+// NOTES_TO_OWNER_DM is one setting for every table the bot serves. A campaign
+// wanting its recaps in #session-notes and another wanting them DM'd cannot
+// both be expressed that way, so the choice belongs on the campaign.
+test('a campaign chooses its own output, and it survives a rename', async (t) => {
+  const db = await tmpDb(t);
+  db.claimCampaign('G', DM);
+  const meeting = db.createMeeting({
+    guildId: 'G', channelId: 'C', channelName: 'x', startedAt: 'now', audioDir: '/t',
+  });
+
+  assert.equal(db.getOutputForMeeting(meeting).mode, null, 'starts on the bot default');
+
+  db.setCampaignOutput('G', 'channel', 'CHAN-123');
+  assert.deepEqual(
+    (({ mode, channelId, managerUserId }) => ({ mode, channelId, managerUserId }))(db.getOutputForMeeting(meeting)),
+    { mode: 'channel', channelId: 'CHAN-123', managerUserId: DM }
+  );
+
+  db.setCampaignName('G', 'Renamed');
+  assert.equal(db.getOutputForMeeting(meeting).mode, 'channel', 'renaming does not reset it');
+});
+
+// A campaign's DM goes to its MANAGER, not the bot owner — it is their game.
+test('DM output carries the manager, so delivery knows who to write to', async (t) => {
+  const db = await tmpDb(t);
+  db.claimCampaign('G', DM);
+  const meeting = db.createMeeting({
+    guildId: 'G', channelId: 'C', channelName: 'x', startedAt: 'now', audioDir: '/t',
+  });
+
+  db.setCampaignOutput('G', 'dm');
+  const out = db.getOutputForMeeting(meeting);
+  assert.equal(out.mode, 'dm');
+  assert.equal(out.managerUserId, DM);
+  assert.equal(out.channelId, null);
+});
+
+test('clearing the choice falls back to the bot default', async (t) => {
+  const db = await tmpDb(t);
+  db.claimCampaign('G', DM);
+  const meeting = db.createMeeting({
+    guildId: 'G', channelId: 'C', channelName: 'x', startedAt: 'now', audioDir: '/t',
+  });
+
+  db.setCampaignOutput('G', 'dm');
+  db.setCampaignOutput('G', null);
+  assert.equal(db.getOutputForMeeting(meeting).mode, null);
+});
+
+test('two campaigns in one server can send their notes to different places', async (t) => {
+  const db = await tmpDb(t);
+  const a = db.createCampaign('G', 'Cipher', DM);
+  const b = db.createCampaign('G', 'Second Game', PLAYER);
+  const inA = db.createMeeting({ guildId: 'G', campaignId: a, channelId: 'C', channelName: 'x', startedAt: 'n', audioDir: '/t' });
+  const inB = db.createMeeting({ guildId: 'G', campaignId: b, channelId: 'C', channelName: 'x', startedAt: 'n', audioDir: '/t' });
+
+  db.raw.prepare('UPDATE campaigns SET output_mode = ?, output_channel_id = ? WHERE id = ?').run('channel', 'A-CHAN', a);
+  db.raw.prepare('UPDATE campaigns SET output_mode = ? WHERE id = ?').run('dm', b);
+
+  assert.equal(db.getOutputForMeeting(inA).channelId, 'A-CHAN');
+  assert.equal(db.getOutputForMeeting(inB).mode, 'dm');
+  assert.equal(db.getOutputForMeeting(inB).managerUserId, PLAYER);
+});

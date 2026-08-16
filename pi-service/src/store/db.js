@@ -217,6 +217,18 @@ function migrate(db) {
     console.log(`[db] migrated: added meetings.campaign_id (${filled} session(s) assigned)`);
   }
 
+  // Where a campaign's finished notes go, chosen by whoever runs it.
+  //
+  // NOTES_TO_OWNER_DM / NOTES_CHANNEL_ID set this for the whole bot, which is
+  // one setting for every table it serves. A campaign that wants its recaps
+  // in #session-notes and another that wants them DM'd to its DM cannot both
+  // be expressed that way, so the choice belongs on the campaign.
+  if (!campaignColumns.includes('output_mode')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN output_mode TEXT`);
+    db.exec(`ALTER TABLE campaigns ADD COLUMN output_channel_id TEXT`);
+    console.log('[db] migrated: added campaigns.output_mode / output_channel_id');
+  }
+
   // Who is at the table. Membership is what /join checks, so that a stranger
   // in a public server cannot start a recording of somebody else's game.
   //
@@ -350,6 +362,30 @@ function wrap(db) {
       db.prepare(`UPDATE campaigns SET manager_user_id = ?, updated_at = datetime('now') WHERE id = ?`).run(
         userId,
         defaultCampaignId(guildId)
+      );
+    },
+
+    // mode is 'dm' (to the campaign's manager) or 'channel'. A null mode
+    // means "whatever the bot is configured to do", which is where every
+    // campaign starts.
+    setCampaignOutput(guildId, mode, channelId = null) {
+      db.prepare(
+        `UPDATE campaigns SET output_mode = ?, output_channel_id = ?, updated_at = datetime('now') WHERE id = ?`
+      ).run(mode, channelId, defaultCampaignId(guildId));
+    },
+
+    // Looked up from a MEETING, because that is what the delivery code has in
+    // hand when a session finishes.
+    getOutputForMeeting(meetingId) {
+      return (
+        db
+          .prepare(
+            `SELECT c.output_mode AS mode, c.output_channel_id AS channelId, c.manager_user_id AS managerUserId
+               FROM meetings m
+               JOIN campaigns c ON c.id = m.campaign_id
+              WHERE m.id = ?`
+          )
+          .get(meetingId) ?? null
       );
     },
 

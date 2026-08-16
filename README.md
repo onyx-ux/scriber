@@ -212,6 +212,27 @@ whole stack on one machine for debugging.)*
 - `/transcribe meeting_id:<id> [when:<now|later|pi>]` — control when a queued session transcribes: `now` runs it on the PC as soon as the whisper server answers, `later` pushes it back a day, `pi` transcribes it locally on the Pi instead (slower, no GPU needed). Same three actions as the DM buttons
 - `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
+### Referring to a session
+
+Commands take `Cipher_02` — the campaign, then the session number — matching
+what the vault calls the file.
+
+It used to be the meeting's row id, a single integer counting every session on
+every server the bot serves. That read as nonsense (a table's second night was
+"#16") and, because it named no campaign, `/export 16` from any server returned
+another table's full transcript: there was nothing in the identifier to check
+against. A reference that carries its own campaign is refused when it isn't
+one you're part of.
+
+Old ids still work — every message the bot has posted quotes one and those are
+in people's scrollback — but only within campaigns you can already reach.
+
+`/campaign output:` sets where a campaign's finished notes go: a direct
+message to whoever runs it, or a specific channel. `NOTES_TO_OWNER_DM` and
+`NOTES_CHANNEL_ID` remain the bot-wide default for campaigns that have not
+chosen, but they are one setting for every table the bot serves — two
+campaigns wanting different destinations cannot both be expressed that way.
+
 ### Who can run what
 
 Three tiers, and none of them is a Discord permission.
