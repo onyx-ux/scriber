@@ -207,7 +207,7 @@ whole stack on one machine for debugging.)*
 ## Commands
 
 - `/join` — start recording the voice channel you're in
-- `/leave` — stop recording and queue the session for transcription (see [Scheduling transcription](#scheduling-transcription) — it does not seize the GPU on the spot)
+- `/leave [campaign:<name>]` — stop recording and queue the session for transcription (see [Scheduling transcription](#scheduling-transcription) — it does not seize the GPU on the spot)
 - `/history [count]` — list recent sessions
 - `/transcribe meeting_id:<id> [when:<now|later|pi>]` — control when a queued session transcribes: `now` runs it on the PC as soon as the whisper server answers, `later` pushes it back a day, `pi` transcribes it locally on the Pi instead (slower, no GPU needed). Same three actions as the DM buttons
 - `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
@@ -227,6 +227,26 @@ heard was enrolled when this landed.
 `/join campaign:` picks between tables when you're at more than one in the
 same server. With one, which is the normal case, the option never has to be
 touched.
+
+### Stopping one
+
+`/leave` also takes a `campaign:`, and in a server holding more than one table
+it **insists** on it. That option is doing something different from every other
+one: there is only ever one recording to stop, so it names the session rather
+than finding it.
+
+It is there because stopping cannot be taken back. `/join` afterwards opens a
+*new* session with a new number, so a `/leave` fired at the wrong table splits
+that game's evening in two and no command puts it back together. The condition
+is the same one `/join` announces the campaign on — if `/join` told you which
+game it was recording, `/leave` asks you to say it back. The picker offers
+exactly one entry, the campaign actually being recorded, so it can never offer
+a table that would then be refused.
+
+Stopping also belongs to the table being recorded: anyone on that campaign's
+roster can do it, plus the bot owner, so a session whose players have all left
+can still be ended. The other group's DM cannot end this one's session
+mid-scene.
 
 ### Several campaigns in one server
 
@@ -293,6 +313,12 @@ Three tiers, and none of them is a Discord permission.
 | **Campaign manager** | `/dm` `/correct` `/uncorrect` `/corrections` `/status` | whoever created the campaign |
 | **Bot owner** | `/approve` `/transcribe` `/summarise` `/pause` `/resume` `/import` `/export` `/pending` | `OWNER_USER_ID` only |
 
+"Anyone in the server" is the tier, not the whole check: the four commands that
+touch a live recording or a player's own record — `/join`, `/leave`,
+`/setcharacter`, `/whoami` — additionally need you on that campaign's roster,
+since being able to see a voice channel is not permission to record the game in
+it, or to end someone else's session.
+
 **Creating a campaign claims it.** Whoever runs `/campaign create` becomes its
 manager, and from then on only they can rename it, set the roster, or correct
 its transcripts. Manage Server was the obvious gate and is the wrong one: the
@@ -337,7 +363,7 @@ Anyone on Discord can add a user-installed app to their own account, so
 a stranger could install Quill and read another table's transcripts by
 naming their campaign. Outside a campaign's own server, the only campaigns
 reachable are the ones the CALLER has actually spoken in
-(`campaign/scope.js`). Inside the campaign's server nothing changes: being in
+(`campaign/resolve.js`). Inside the campaign's server nothing changes: being in
 the server is the permission, exactly as before.
 
 A player in more than one campaign gets asked which, via an autocompleted

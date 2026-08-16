@@ -36,6 +36,7 @@ import {
   campaignLabel,
   campaignNameClash,
   nameIsUsable,
+  findCampaign,
 } from '../campaign/resolve.js';
 import { refuseUnlessOwner, isOwner } from '../campaign/permissions.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
@@ -205,7 +206,20 @@ export const commandDefs = [
         .setRequired(false)
         .setAutocomplete(true)
     ),
-  new SlashCommandBuilder().setName('leave').setDescription('Stop recording, transcribe, and queue the summary'),
+  // The campaign option here names the session rather than finding it — see
+  // handleLeave. A bot holds one voice connection per Discord, so there is
+  // only ever one recording to stop; being made to say which one is what stops
+  // a /leave meant for the game next door.
+  new SlashCommandBuilder()
+    .setName('leave')
+    .setDescription('Stop recording, transcribe, and queue the summary')
+    .addStringOption((o) =>
+      o
+        .setName('campaign')
+        .setDescription("Which campaign you're ending (needed when the server holds more than one)")
+        .setRequired(false)
+        .setAutocomplete(true)
+    ),
   playerCommand(
     new SlashCommandBuilder()
       .setName('history')
@@ -583,6 +597,17 @@ function campaignsToOffer(interaction, db, cfg) {
 
   if (name === 'join' || MEMBER_COMMANDS.has(name)) {
     return db.listCampaignsForMember(userId).filter((c) => c.guild_id === interaction.guildId);
+  }
+
+  // /leave can only stop what is actually being recorded, so that one campaign
+  // is the entire list — offering the caller's other tables would be offering
+  // a choice that is then refused. It also means the picker names the live
+  // session before you commit to ending it, which is the point of asking.
+  if (name === 'leave') {
+    const live = activeSessions.get(interaction.guildId);
+    const meeting = live ? db.getMeeting(live.meetingId) : null;
+    const which = meeting?.campaign_id ? db.getCampaign(meeting.campaign_id) : null;
+    return which ? [which] : [];
   }
 
   if (name === 'dm' || name === 'campaign' || MANAGER_ONLY.has(name)) {
@@ -1271,11 +1296,54 @@ async function handleLeave(interaction, db, cfg) {
     db.isCampaignMember(recording.campaign_id, interaction.user.id);
 
   if (!mayStop) {
-    const which = db.getCampaign(recording.campaign_id);
+    const theirs = db.getCampaign(recording.campaign_id);
     return interaction.reply({
-      content: `🎲 I'm recording **${campaignLabel(which)}** right now, and you're not at that table — someone who is can stop it.`,
+      content: `🎲 I'm recording **${campaignLabel(theirs)}** right now, and you're not at that table — someone who is can stop it.`,
       flags: MessageFlags.Ephemeral,
     });
+  }
+
+  // And you have to say which table you are ending.
+  //
+  // Unlike every other campaign option, this one does not RESOLVE anything —
+  // there is only ever one session to stop, so the name is a confirmation
+  // rather than a lookup. It earns its place because stopping cannot be taken
+  // back: /join afterwards opens a NEW session with a new number, so a /leave
+  // fired at the wrong table splits that game's evening in two and there is no
+  // command that puts it back together.
+  //
+  // Demanded on exactly the condition /join announces the campaign on: if
+  // /join told you which game it was recording, /leave asks you to say it
+  // back. One table in the server and there is nothing to get wrong, so it
+  // stays out of the way.
+  const which = recording?.campaign_id ? db.getCampaign(recording.campaign_id) : null;
+  const asked = interaction.options.getString('campaign');
+
+  if (which) {
+    // The picker sends the id, so echoing what they asked for verbatim would
+    // answer a name with a number. Resolve it back to a name when we can.
+    const named = asked ? findCampaign(db.listCampaignsInGuild(interaction.guildId), asked) : null;
+    const wanted = named ? campaignLabel(named) : asked;
+
+    if (asked && !findCampaign([which], asked)) {
+      return interaction.reply({
+        content:
+          `🎲 I'm not recording **${wanted}** — this session belongs to **${campaignLabel(which)}**.\n` +
+          `\`/leave campaign:${campaignLabel(which)}\` ends it. Nothing has been stopped.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    if (!asked && db.countCampaignsInGuild(interaction.guildId) > 1) {
+      return interaction.reply({
+        content:
+          `🎲 There's more than one table in this server, so tell me which one you're ending — I'm recording ` +
+          `**${campaignLabel(which)}** right now.\n` +
+          `Re-run as \`/leave campaign:${campaignLabel(which)}\`. This can't be undone: \`/join\` afterwards starts ` +
+          'a new session rather than resuming this one.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
   }
 
   activeSessions.delete(interaction.guildId);

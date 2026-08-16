@@ -434,8 +434,8 @@ test('/corrections lists only this campaign', async (t) => {
 // guild — which meant anyone in the server could end the session. Near enough
 // while a server meant a campaign; with two tables the other group's DM could
 // end this one's mid-scene, and it cannot be resumed.
-async function recording(t) {
-  const h = await twoTables(t);
+async function recording(t, { setup = twoTables } = {}) {
+  const h = await setup(t);
   const meetingId = h.db.createMeeting({
     guildId: GUILD,
     campaignId: h.cipher.id,
@@ -455,6 +455,16 @@ async function recording(t) {
   return { ...h, meetingId };
 }
 
+// One table, so nothing to disambiguate — used for the case where /leave is
+// still allowed to be a bare /leave.
+async function oneTable(t) {
+  const h = await harness(t);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: 'Cipher' } }));
+  const [cipher] = h.db.listCampaignsInGuild(GUILD);
+  await invite(h, DM_A, cipher.id, PLAYER_A, 'BenTen');
+  return { ...h, cipher };
+}
+
 test("the other table's DM cannot stop this table's recording", async (t) => {
   const { dispatch } = await recording(t);
   const said = await run(dispatch, command('leave', { user: DM_B }));
@@ -463,16 +473,77 @@ test("the other table's DM cannot stop this table's recording", async (t) => {
   assert.equal(activeSessions.has(GUILD), true, 'and the session is still running');
 });
 
-test('a player at the table can stop it', async (t) => {
-  const { dispatch } = await recording(t);
-  await run(dispatch, command('leave', { user: PLAYER_A }));
+test('a player at the table can stop it, by naming it', async (t) => {
+  const { dispatch, cipher } = await recording(t);
+  await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: cipher.id } }));
   assert.equal(activeSessions.has(GUILD), false);
 });
 
 test('the bot owner can stop it, so a session cannot be stranded', async (t) => {
-  const { dispatch } = await recording(t);
-  await run(dispatch, command('leave', { user: OWNER }));
+  const { dispatch, cipher } = await recording(t);
+  await run(dispatch, command('leave', { user: OWNER, options: { campaign: cipher.id } }));
   assert.equal(activeSessions.has(GUILD), false);
+});
+
+// --- and you have to say which table you are ending ---
+//
+// /leave cannot resolve a campaign — there is only ever one session to stop —
+// so the option is a confirmation rather than a lookup. It earns its place
+// because stopping is irreversible: /join afterwards opens a NEW session with
+// a new number, so a /leave fired at the wrong table splits that game's
+// evening in two and nothing puts it back together.
+
+test('a bare /leave in a server with two tables refuses, and says which is recording', async (t) => {
+  const { dispatch } = await recording(t);
+  const said = await run(dispatch, command('leave', { user: PLAYER_A }));
+
+  assert.match(said, /more than one table/);
+  assert.match(said, /Cipher/, 'and answers its own question, or it cannot be acted on');
+  assert.equal(activeSessions.has(GUILD), true, 'nothing is stopped by being asked');
+});
+
+test('naming the other table stops nothing', async (t) => {
+  const { dispatch, strahd } = await recording(t);
+  const said = await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: strahd.id } }));
+
+  assert.match(said, /not recording \*\*Strahd\*\*/, 'the id they picked is answered with a name');
+  assert.match(said, /belongs to \*\*Cipher\*\*/);
+  assert.equal(activeSessions.has(GUILD), true, "the other game's session keeps running");
+});
+
+test('a name typed by hand is accepted, not just the picker value', async (t) => {
+  const { dispatch } = await recording(t);
+  await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: 'cipher' } }));
+  assert.equal(activeSessions.has(GUILD), false, 'people fill the box before the list loads');
+});
+
+test('one table in the server means /leave still needs no argument', async (t) => {
+  const { dispatch } = await recording(t, { setup: oneTable });
+  await run(dispatch, command('leave', { user: PLAYER_A }));
+  assert.equal(activeSessions.has(GUILD), false, 'there is nothing to get wrong, so nothing to ask');
+});
+
+test("the picker offers only the campaign that's actually recording", async (t) => {
+  const { dispatch } = await recording(t);
+  const choices = await run(dispatch, autocomplete('leave', { user: PLAYER_A }));
+
+  assert.equal(choices.length, 1, 'offering a table that would then be refused is worse than offering none');
+  assert.match(choices[0].name, /Cipher/);
+});
+
+test('the picker is empty when nothing is being recorded', async (t) => {
+  const { dispatch } = await twoTables(t);
+  assert.deepEqual(await run(dispatch, autocomplete('leave', { user: PLAYER_A })), []);
+});
+
+// The membership gate answers first: someone who is not at the table learns
+// which campaign is recording and no more, whether or not they named one.
+test('not being at the table is answered before which table you named', async (t) => {
+  const { dispatch, strahd } = await recording(t);
+  const said = await run(dispatch, command('leave', { user: DM_B, options: { campaign: strahd.id } }));
+
+  assert.match(said, /you're not at that table/);
+  assert.equal(activeSessions.has(GUILD), true);
 });
 
 // --- the gate ---
