@@ -816,7 +816,13 @@ passes straight through, anything else is asked for the username and password
 in `dashboard/config/.htpasswd`. Either is enough — without `satisfy any` the
 two would be ANDed and the house would be asked for a password as well.
 
-    docker run --rm httpd:alpine htpasswd -nbB matt 'REDACTED-SEE-README'       > dashboard/config/.htpasswd
+    docker run --rm httpd:alpine htpasswd -nbB matt 'CHOOSE-A-LONG-ONE' > dashboard/config/.htpasswd
+
+**Run it — don't write the file by hand.** The file wants
+`user:$2y$05$<53 more characters>`; a line with the password in it instead of a
+hash is a password stored in the clear. And a password copied out of this
+README is a password every reader of this README already has: `-nbB` is what
+turns one into the other.
 
 Both `.htpasswd` and `dashboard/.env` are gitignored.
 
