@@ -40,6 +40,17 @@ import {
 import { refuseUnlessOwner, isOwner } from '../campaign/permissions.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
+import {
+  CONSENT_PREFIX,
+  parseConsentButton,
+  buildInviteDm,
+  inviteExpiry,
+  discordTime,
+  acceptedMessage,
+  declinedMessage,
+  expiredMessage,
+  describeUnrecorded,
+} from '../campaign/consent.js';
 import { exportCampaignSite } from '../export/site.js';
 import {
   notifyApprovalNeeded,
@@ -380,6 +391,23 @@ export const commandDefs = [
     )
     .addSubcommand((s) =>
       s
+        .setName('invite')
+        .setDescription('Ask someone to join the campaign — they choose whether to be recorded')
+        .addUserOption((o) => o.setName('player').setDescription('Who to invite').setRequired(true))
+        .addStringOption((o) =>
+          o.setName('name').setDescription('Their character, e.g. "BenTen" (optional)').setRequired(false)
+        )
+        .addStringOption(campaignOption)
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('remove')
+        .setDescription('Take someone off the campaign — they can no longer be recorded in it')
+        .addUserOption((o) => o.setName('player').setDescription('Who to remove').setRequired(true))
+        .addStringOption(campaignOption)
+    )
+    .addSubcommand((s) =>
+      s
         .setName('output')
         .setDescription('Where this campaign’s finished notes are posted')
         .addStringOption((o) =>
@@ -423,35 +451,6 @@ export const commandDefs = [
     .setName('dm')
     .setDescription("The DM's tools — who is at the table and who plays which character")
     .setDMPermission(true)
-    .addSubcommand((s) =>
-      s
-        .setName('add')
-        .setDescription('Put someone on the roster, so they can /join and be recorded')
-        .addUserOption((o) => o.setName('player').setDescription('Who').setRequired(true))
-        .addStringOption((o) =>
-          o.setName('name').setDescription('Their character, e.g. "BenTen" (optional)').setRequired(false)
-        )
-        .addStringOption((o) =>
-          o
-            .setName('campaign')
-            .setDescription('Which campaign (only needed if you run more than one)')
-            .setRequired(false)
-            .setAutocomplete(true)
-        )
-    )
-    .addSubcommand((s) =>
-      s
-        .setName('remove')
-        .setDescription('Take someone off the roster — they can no longer start a recording of this campaign')
-        .addUserOption((o) => o.setName('player').setDescription('Who').setRequired(true))
-        .addStringOption((o) =>
-          o
-            .setName('campaign')
-            .setDescription('Which campaign (only needed if you run more than one)')
-            .setRequired(false)
-            .setAutocomplete(true)
-        )
-    )
     .addSubcommand((s) =>
       s
         .setName('character')
@@ -703,41 +702,6 @@ async function handleDm(interaction, db, cfg) {
     });
   }
 
-  // add/remove take a real Discord user; character/forget take a recorded
-  // speaker by id from the autocomplete.
-  if (sub === 'add' || sub === 'remove') {
-    const user = interaction.options.getUser('player');
-
-    if (sub === 'remove') {
-      if (user.id === target.manager_user_id) {
-        return interaction.reply({
-          content: "You run this campaign, so you can't take yourself off its roster.",
-          flags: MessageFlags.Ephemeral,
-        });
-      }
-      const removed = db.removeCampaignMember(target.id, user.id);
-      return interaction.reply({
-        content: removed
-          ? `🚪 **${user.username}** is off the roster for **${label}** and can no longer start a recording of it.\n` +
-            '_Anything they already said stays in the transcripts — this is about who can record, not a retraction._'
-          : `**${user.username}** wasn't on the roster for **${label}**.`,
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-
-    const name = interaction.options.getString('name')?.trim();
-    const added = db.addCampaignMember(target.id, user.id, interaction.user.id);
-    if (name) db.setCharacterName(target.id, user.id, name);
-
-    return interaction.reply({
-      content:
-        `🎲 **${user.username}** is at the table for **${label}**${name ? `, playing **${name}**` : ''}.` +
-        (added ? '' : '\n_(They were already on the roster.)_') +
-        (name ? '' : '\n_No character name set — set one with `/dm character` so they aren\'t written up as an NPC._'),
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
   // `player` is a user id, from the autocomplete. Someone who typed a raw
   // string instead gets matched against the display names rather than a
   // confusing "not found".
@@ -795,9 +759,92 @@ async function handleCampaign(interaction, db, cfg) {
   const resolved = resolveManagedCampaign(interaction, db, cfg);
   if (resolved.error) return interaction.reply({ content: resolved.error, flags: MessageFlags.Ephemeral });
 
+  if (sub === 'invite') return handleCampaignInvite(interaction, db, cfg, resolved.campaign);
+  if (sub === 'remove') return handleCampaignRemove(interaction, db, resolved.campaign);
   return sub === 'rename'
     ? handleCampaignRename(interaction, db, cfg, resolved.campaign)
     : handleCampaignOutput(interaction, db, resolved.campaign);
+}
+
+// Asking someone to join, which is also asking whether they may be recorded.
+//
+// The invitation is a DM rather than a channel message on purpose: the answer
+// is theirs, and a public "will you consent?" with the table watching is a
+// worse question than a private one.
+async function handleCampaignInvite(interaction, db, cfg, target) {
+  const user = interaction.options.getUser('player');
+  const name = interaction.options.getString('name')?.trim();
+  const label = campaignLabel(target);
+
+  if (user.bot) {
+    return interaction.reply({ content: "Bots don't play D&D, and can't consent to anything.", flags: MessageFlags.Ephemeral });
+  }
+
+  const existing = db.getConsent(target.id, user.id);
+  if (existing?.state === 'granted') {
+    return interaction.reply({
+      content: `**${user.username}** is already at the table for **${label}** and has agreed to be recorded.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const expiresAt = inviteExpiry();
+  const dm = buildInviteDm({
+    campaignId: target.id,
+    campaignName: label,
+    inviterName: interaction.user.username,
+    retentionDays: cfg.audioRetentionDays,
+    expiresAt,
+  });
+
+  // Sent BEFORE the invite is recorded. A DM can be refused outright by the
+  // recipient's privacy settings, and a pending invite nobody can see is worse
+  // than none — it would sit there looking like the question had been asked.
+  const channel = await user.createDM().catch(() => null);
+  const sent = channel ? await channel.send(dm).catch(() => null) : null;
+
+  if (!sent) {
+    return interaction.reply({
+      content:
+        `📪 I couldn't DM **${user.username}** — their privacy settings block messages from this server, so I can't ask them.\n` +
+        'They can change that in Privacy Settings, or turn DMs on for this server, and then you can invite them again.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  db.inviteToCampaign(target.id, user.id, interaction.user.id, expiresAt.toISOString());
+  // A character name given now is held until they accept — naming someone
+  // does not put them at the table any more, answering does.
+  if (name) db.setCharacterName(target.id, user.id, name);
+
+  return interaction.reply({
+    content:
+      `📨 Invited **${user.username}** to **${label}**${name ? `, as **${name}**` : ''}.\n` +
+      `They've been asked whether Quill may record them, and it won't until they say yes. ` +
+      `The invite expires ${discordTime(expiresAt)}.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleCampaignRemove(interaction, db, target) {
+  const user = interaction.options.getUser('player');
+  const label = campaignLabel(target);
+
+  if (user.id === target.manager_user_id) {
+    return interaction.reply({
+      content: "You run this campaign, so you can't take yourself off it.",
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const removed = db.removeFromCampaign(target.id, user.id);
+  return interaction.reply({
+    content: removed
+      ? `🚪 **${user.username}** is off **${label}** — they can't start a session for it and won't be recorded in it.\n` +
+        '_Anything they already said stays in the transcripts; this is about what happens from now on._'
+      : `**${user.username}** wasn't on **${label}**.`,
+    flags: MessageFlags.Ephemeral,
+  });
 }
 
 async function handleCampaignCreate(interaction, db, cfg) {
@@ -1136,6 +1183,10 @@ async function handleJoin(interaction, db, cfg) {
         // under two different names.
         return resolveSpeakerName(db, target.id, userId, discordName);
       },
+      // Checked before the audio stream is opened, not after — see
+      // voice/capture.js. Silence is not agreement, so anyone who has not
+      // answered is skipped exactly as if they had declined.
+      mayRecord: (userId) => db.mayRecord(target.id, userId),
       onUtterance: (userId, displayName, wavPath, startMs, endMs) => {
         capturedUtterances.push({ userId, displayName, wavPath, startMs, endMs });
       },
@@ -1177,9 +1228,19 @@ async function handleJoin(interaction, db, cfg) {
     // and finding out a month later is finding out too late.
     const several = db.countCampaignsInGuild(interaction.guildId) > 1;
     const ref = sessionRef(campaignLabel(target), db.getMeeting(meetingId)?.session_number);
+
+    // Who in the channel is about to be skipped. Said now, publicly, for two
+    // reasons: the DM finds out before the session rather than when the
+    // transcript comes back short, and the people being skipped can see that
+    // they are — which is the honest half of having asked them at all.
+    const unrecorded = voiceChannel.members
+      .filter((m) => !m.user.bot && !db.mayRecord(target.id, m.id))
+      .map((m) => m.displayName);
+
     await interaction.editReply(
       pick(JOIN_STARTED, { channel: voiceChannel.name }) +
-        (several ? `\n_Recording **${campaignLabel(target)}**${ref ? ` — \`${ref}\`` : ''}._` : '')
+        (several ? `\n_Recording **${campaignLabel(target)}**${ref ? ` — \`${ref}\`` : ''}._` : '') +
+        describeUnrecorded([...unrecorded])
     );
   } finally {
     // Must run even if startCapture/createMeeting throws, or the guild would
@@ -1723,8 +1784,51 @@ async function handleAsk(interaction, db, cfg) {
   await interaction.editReply(body.length > 1990 ? `${body.slice(0, 1980)}…` : body);
 }
 
+// The invited person's answer.
+//
+// Both buttons are removed once pressed: the question has been answered, and
+// leaving them there invites a second, contradictory click on a DM that stays
+// in the inbox forever.
+async function handleConsentButton(interaction, db) {
+  const parsed = parseConsentButton(interaction.customId);
+  if (!parsed) return interaction.update({ content: '⚠️ Unrecognised button.', components: [] });
+
+  const campaign = db.getCampaign(parsed.campaignId);
+  const label = campaignLabel(campaign) ?? 'that campaign';
+
+  // The campaign can have been deleted, or the invite withdrawn, between the
+  // DM being sent and the button being pressed.
+  if (!campaign) {
+    return interaction.update({ content: `⚠️ **${label}** no longer exists.`, components: [] });
+  }
+
+  const result = db.decideConsent(parsed.campaignId, interaction.user.id, parsed.granted);
+  if (!result) {
+    return interaction.update({
+      content: `⚠️ That invitation to **${label}** is no longer open — ask whoever runs the game for a new one.`,
+      components: [],
+    });
+  }
+  if (result.state === 'expired') {
+    return interaction.update({ content: expiredMessage(label), components: [] });
+  }
+
+  console.log(
+    `[consent] ${interaction.user.id} ${parsed.granted ? 'agreed to' : 'declined'} recording in campaign ${campaign.id}`
+  );
+  return interaction.update({
+    content: parsed.granted ? acceptedMessage(label) : declinedMessage(label),
+    components: [],
+  });
+}
+
 async function handleApprovalButton(interaction, db, cfg) {
   const { customId } = interaction;
+
+  // The invited person answering. Handled before everything else because it
+  // arrives in a DM rather than in a server, so none of the operator buttons
+  // below could ever be it.
+  if (customId.startsWith(CONSENT_PREFIX)) return handleConsentButton(interaction, db);
 
   // Scheduling buttons from the "ready to transcribe" DM.
   if (customId.startsWith(TRANSCRIBE_PREFIX)) {

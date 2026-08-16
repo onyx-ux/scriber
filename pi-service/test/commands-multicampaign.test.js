@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,6 +61,7 @@ async function harness(t) {
 // Captures whatever the handler replied with, however it replied.
 function command(name, { user, guildId = GUILD, sub = null, options = {}, channelId = 'the-channel' } = {}) {
   const said = { content: null, replied: false };
+  const dms = [];
   const take = (payload) => {
     said.replied = true;
     said.content = typeof payload === 'string' ? payload : (payload?.content ?? said.content);
@@ -69,6 +70,7 @@ function command(name, { user, guildId = GUILD, sub = null, options = {}, channe
 
   return {
     said,
+    dms,
     commandName: name,
     guildId,
     channelId,
@@ -84,7 +86,17 @@ function command(name, { user, guildId = GUILD, sub = null, options = {}, channe
       getSubcommand: () => sub,
       getString: (k) => (options[k] === undefined ? null : String(options[k])),
       getInteger: (k) => (options[k] === undefined ? null : Number(options[k])),
-      getUser: (k) => (options[k] === undefined ? null : { id: options[k], username: options[k] }),
+      getUser: (k) =>
+        options[k] === undefined
+          ? null
+          : {
+              id: options[k],
+              username: options[k],
+              bot: false,
+              // Inviting someone DMs them, so the fake user has to be able to
+              // receive one. dms[] is what was actually sent.
+              createDM: async () => ({ send: async (payload) => { dms.push({ to: options[k], payload }); return {}; } }),
+            },
       getChannel: (k) => (options[k] === undefined ? null : { id: options[k] }),
       getAttachment: () => null,
       getFocused: () => '',
@@ -116,6 +128,24 @@ function autocomplete(name, { user, guildId = GUILD, focused = 'campaign', sub =
   };
 }
 
+// The invited person pressing a button in their DM.
+function button(customId, user) {
+  const said = { content: null };
+  return {
+    said,
+    customId,
+    user: { id: user },
+    message: { components: [] },
+    isButton: () => true,
+    isAutocomplete: () => false,
+    isChatInputCommand: () => false,
+    update: (payload) => {
+      said.content = typeof payload === 'string' ? payload : payload?.content ?? null;
+      return Promise.resolve();
+    },
+  };
+}
+
 const run = async (dispatch, interaction) => {
   await dispatch(interaction);
   return interaction.said?.content ?? interaction.got?.choices;
@@ -130,10 +160,18 @@ async function twoTables(t) {
   assert.match(await run(h.dispatch, command('campaign', { user: DM_B, sub: 'create', options: { name: 'Strahd' } })), /Strahd/);
 
   const [cipher, strahd] = h.db.listCampaignsInGuild(GUILD);
-  await run(h.dispatch, command('dm', { user: DM_A, sub: 'add', options: { player: PLAYER_A, name: 'BenTen', campaign: cipher.id } }));
-  await run(h.dispatch, command('dm', { user: DM_B, sub: 'add', options: { player: PLAYER_B, name: 'Ireena', campaign: strahd.id } }));
+  await invite(h, DM_A, cipher.id, PLAYER_A, 'BenTen');
+  await invite(h, DM_B, strahd.id, PLAYER_B, 'Ireena');
 
   return { ...h, cipher, strahd };
+}
+
+// Invite someone and have them accept — the only route onto a roster now.
+async function invite(h, dm, campaignId, player, name = null) {
+  const opts = { player, campaign: campaignId };
+  if (name) opts.name = name;
+  await run(h.dispatch, command('campaign', { user: dm, sub: 'invite', options: opts }));
+  await run(h.dispatch, button(`consent:yes:${campaignId}`, player));
 }
 
 // Gives a campaign a finished session, so the reads have something to find.
@@ -260,31 +298,31 @@ test('a second campaign in the same server is allowed and separate', async (t) =
 
 // --- the roster ---
 
-test('/dm add enrols someone who has never been recorded', async (t) => {
+test('accepting an invitation enrols someone who has never been recorded', async (t) => {
   const { db, cipher } = await twoTables(t);
 
   assert.equal(db.isCampaignMember(cipher.id, PLAYER_A), true);
   assert.equal(db.getCharacterName(cipher.id, PLAYER_A), 'BenTen');
 });
 
-test('/dm add on one table does not touch the other', async (t) => {
+test('an invitation to one table does not touch the other', async (t) => {
   const { db, cipher, strahd } = await twoTables(t);
 
   assert.equal(db.isCampaignMember(strahd.id, PLAYER_A), false);
   assert.equal(db.getCharacterName(strahd.id, PLAYER_A), null, 'the same person can be unknown at the other table');
 });
 
-test("a DM cannot touch the other table's roster", async (t) => {
+test("a DM cannot invite to the other table's campaign", async (t) => {
   const { dispatch, db, strahd } = await twoTables(t);
-  const said = await run(dispatch, command('dm', { user: DM_A, sub: 'add', options: { player: 'ringer', campaign: strahd.id } }));
+  const said = await run(dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: 'ringer', campaign: strahd.id } }));
 
   assert.match(said, /runs \*\*Strahd\*\*|only they can/);
-  assert.equal(db.isCampaignMember(strahd.id, 'ringer'), false);
+  assert.equal(db.getConsent(strahd.id, 'ringer'), null);
 });
 
 test('/dm roster shows this campaign only, and flags who has no character', async (t) => {
   const { dispatch, db, cipher } = await twoTables(t);
-  await run(dispatch, command('dm', { user: DM_A, sub: 'add', options: { player: 'unnamed-player', campaign: cipher.id } }));
+  await invite({ dispatch, db }, DM_A, cipher.id, 'unnamed-player');
 
   const said = await run(dispatch, command('dm', { user: DM_A, sub: 'roster', options: { campaign: cipher.id } }));
   assert.match(said, /BenTen/);
@@ -292,17 +330,19 @@ test('/dm roster shows this campaign only, and flags who has no character', asyn
   assert.match(said, /no character set/);
 });
 
-test('/dm remove takes someone off the roster', async (t) => {
+test('/campaign remove takes someone off the campaign entirely', async (t) => {
   const { dispatch, db, cipher } = await twoTables(t);
-  const said = await run(dispatch, command('dm', { user: DM_A, sub: 'remove', options: { player: PLAYER_A, campaign: cipher.id } }));
+  const said = await run(dispatch, command('campaign', { user: DM_A, sub: 'remove', options: { player: PLAYER_A, campaign: cipher.id } }));
 
-  assert.match(said, /off the roster/);
+  assert.match(said, /is off/);
   assert.equal(db.isCampaignMember(cipher.id, PLAYER_A), false);
+  assert.equal(db.mayRecord(cipher.id, PLAYER_A), false, 'and is no longer recordable');
+  assert.equal(db.getConsent(cipher.id, PLAYER_A), null, 'asking again later is a fresh question');
 });
 
 test('a DM cannot remove themselves and strand the campaign', async (t) => {
   const { dispatch, db, cipher } = await twoTables(t);
-  const said = await run(dispatch, command('dm', { user: DM_A, sub: 'remove', options: { player: DM_A, campaign: cipher.id } }));
+  const said = await run(dispatch, command('campaign', { user: DM_A, sub: 'remove', options: { player: DM_A, campaign: cipher.id } }));
 
   assert.match(said, /can't take yourself off/);
   assert.equal(db.isCampaignMember(cipher.id, DM_A), true);
@@ -455,8 +495,8 @@ test('a player cannot run an owner command', async (t) => {
 
 test('the owner reaches a campaign they do not run', async (t) => {
   const { dispatch, db, cipher } = await twoTables(t);
-  await run(dispatch, command('dm', { user: OWNER, sub: 'add', options: { player: 'rescued', campaign: cipher.id } }));
-  assert.equal(db.isCampaignMember(cipher.id, 'rescued'), true, 'so a stranded campaign can be unstuck');
+  await run(dispatch, command('campaign', { user: OWNER, sub: 'invite', options: { player: 'rescued', campaign: cipher.id } }));
+  assert.equal(db.getConsent(cipher.id, 'rescued').state, 'pending', 'so a stranded campaign can be unstuck');
 });
 
 // --- picking between tables ---
@@ -636,4 +676,184 @@ test('/campaign list names both tables and who runs them', async (t) => {
   assert.match(said, /Strahd/);
   assert.match(said, new RegExp(DM_A));
   assert.match(said, new RegExp(DM_B));
+});
+
+// --- consent to be recorded ---
+//
+// The bot captures people's voices, and until this existed the only gate was
+// the roster, which the DM controls — so being added to a table was somebody
+// else agreeing on your behalf. These check the three rules the capture path
+// depends on: silence is not agreement, the answer is per campaign, and
+// declining means the audio is never taken rather than taken and dropped.
+
+test('an invitation does not record anyone by itself', async (t) => {
+  const h = await twoTables(t);
+  const said = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: 'newcomer', campaign: h.cipher.id } }));
+
+  assert.match(said, /Invited/);
+  assert.equal(h.db.getConsent(h.cipher.id, 'newcomer').state, 'pending');
+  assert.equal(h.db.mayRecord(h.cipher.id, 'newcomer'), false, 'pending is not agreement');
+  assert.equal(h.db.isCampaignMember(h.cipher.id, 'newcomer'), false, 'and not yet at the table');
+});
+
+test('the invitation DM says what happens and when it expires', async (t) => {
+  const h = await twoTables(t);
+  const cmd = command('campaign', { user: DM_A, sub: 'invite', options: { player: 'newcomer', campaign: h.cipher.id } });
+  await h.dispatch(cmd);
+
+  assert.equal(cmd.dms.length, 1, 'exactly one DM, to the invited person');
+  const dm = cmd.dms[0].payload.content;
+  assert.match(dm, /your voice is recorded whenever Quill is in the voice channel/i);
+  assert.match(dm, /turned into text on the bot owner/i);
+  assert.match(dm, /never sent anywhere else/i);
+  assert.match(dm, /<t:\d+:f>/, 'and an expiry Discord renders in their own timezone');
+  assert.ok(cmd.dms[0].payload.components?.length, 'with something to answer on');
+});
+
+test('the retention promise is read from config, never hardcoded', async (t) => {
+  const h = await twoTables(t);
+  h.cfg.audioRetentionDays = 7;
+  const seven = command('campaign', { user: DM_A, sub: 'invite', options: { player: 'a', campaign: h.cipher.id } });
+  await h.dispatch(seven);
+  assert.match(seven.dms[0].payload.content, /deleted after \*\*7 days\*\*/);
+
+  h.cfg.audioRetentionDays = 30;
+  const thirty = command('campaign', { user: DM_A, sub: 'invite', options: { player: 'b', campaign: h.cipher.id } });
+  await h.dispatch(thirty);
+  assert.match(thirty.dms[0].payload.content, /deleted after \*\*30 days\*\*/, 'a promise the bot cannot keep is worse than none');
+});
+
+test('accepting is what puts someone at the table and allows recording', async (t) => {
+  const h = await twoTables(t);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: 'newcomer', campaign: h.cipher.id } }));
+
+  const said = await run(h.dispatch, button(`consent:yes:${h.cipher.id}`, 'newcomer'));
+  assert.match(said, /Quill will include you/);
+  assert.equal(h.db.mayRecord(h.cipher.id, 'newcomer'), true);
+  assert.equal(h.db.isCampaignMember(h.cipher.id, 'newcomer'), true);
+});
+
+test('declining means never recorded, and says so plainly', async (t) => {
+  const h = await twoTables(t);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: 'newcomer', campaign: h.cipher.id } }));
+
+  const said = await run(h.dispatch, button(`consent:no:${h.cipher.id}`, 'newcomer'));
+  assert.match(said, /will \*\*not\*\* record you/);
+  assert.match(said, /skipped entirely/);
+  assert.equal(h.db.mayRecord(h.cipher.id, 'newcomer'), false);
+  assert.equal(h.db.getConsent(h.cipher.id, 'newcomer').state, 'declined');
+});
+
+test('the answer is per campaign — agreeing at one table is not agreeing at the other', async (t) => {
+  const h = await twoTables(t);
+  await invite(h, DM_A, h.cipher.id, 'plays-both');
+
+  assert.equal(h.db.mayRecord(h.cipher.id, 'plays-both'), true);
+  assert.equal(h.db.mayRecord(h.strahd.id, 'plays-both'), false, 'the other table has not asked, so it may not record');
+});
+
+test('an expired invitation cannot be accepted', async (t) => {
+  const h = await twoTables(t);
+  h.db.inviteToCampaign(h.cipher.id, 'slow', DM_A, new Date(Date.now() - 60_000).toISOString());
+
+  const said = await run(h.dispatch, button(`consent:yes:${h.cipher.id}`, 'slow'));
+  assert.match(said, /expired/);
+  assert.equal(h.db.mayRecord(h.cipher.id, 'slow'), false, 'a stale DM in an inbox cannot still be acted on');
+});
+
+test('a sweep expires invitations nobody answered', async (t) => {
+  const h = await twoTables(t);
+  h.db.inviteToCampaign(h.cipher.id, 'slow', DM_A, new Date(Date.now() - 60_000).toISOString());
+  h.db.inviteToCampaign(h.cipher.id, 'prompt', DM_A, new Date(Date.now() + 3_600_000).toISOString());
+
+  assert.equal(h.db.expireStaleInvites(), 1, 'only the one past its expiry');
+  assert.equal(h.db.getConsent(h.cipher.id, 'slow').state, 'expired');
+  assert.equal(h.db.getConsent(h.cipher.id, 'prompt').state, 'pending');
+});
+
+test('someone who declined can be asked again', async (t) => {
+  const h = await twoTables(t);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: 'unsure', campaign: h.cipher.id } }));
+  await run(h.dispatch, button(`consent:no:${h.cipher.id}`, 'unsure'));
+
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: 'unsure', campaign: h.cipher.id } }));
+  assert.equal(h.db.getConsent(h.cipher.id, 'unsure').state, 'pending', 'a fresh question, not a resumed one');
+  assert.equal(h.db.mayRecord(h.cipher.id, 'unsure'), false, 'and still not recordable until they say so');
+});
+
+test('re-inviting someone who already agreed just says so', async (t) => {
+  const h = await twoTables(t);
+  const said = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: PLAYER_A, campaign: h.cipher.id } }));
+  assert.match(said, /already at the table/);
+});
+
+// A pending invite nobody can see is worse than none — it would sit there
+// looking like the question had been asked.
+test('an invitation that cannot be delivered is not recorded as sent', async (t) => {
+  const h = await twoTables(t);
+  const cmd = command('campaign', { user: DM_A, sub: 'invite', options: { player: 'dms-closed', campaign: h.cipher.id } });
+  cmd.options.getUser = () => ({
+    id: 'dms-closed',
+    username: 'dms-closed',
+    bot: false,
+    createDM: async () => { throw new Error('50007'); },
+  });
+
+  await h.dispatch(cmd);
+  assert.match(cmd.said.content, /couldn't DM/);
+  assert.equal(h.db.getConsent(h.cipher.id, 'dms-closed'), null, 'no invite is recorded');
+});
+
+test('everyone already at the table when consent arrived is carried over', async (t) => {
+  const h = await harness(t);
+  // A campaign as it existed before consent: members, no consent rows.
+  const id = h.db.createCampaign(GUILD, 'Established', DM_A);
+  h.db.addCampaignMember(id, 'long-time-player', DM_A);
+  h.db.raw.prepare('DELETE FROM campaign_consent WHERE campaign_id = ?').run(id);
+  assert.equal(h.db.mayRecord(id, 'long-time-player'), false, 'no row yet');
+
+  // Re-opening runs the migration, which is where the carry-over happens.
+  const path = h.db.raw.name;
+  h.db.close();
+  const again = openDb(path);
+  try {
+    assert.equal(again.mayRecord(id, 'long-time-player'), true, 'a running game is not stopped to re-ask');
+    assert.equal(again.getConsent(id, 'long-time-player').invited_by, 'grandfathered');
+  } finally {
+    again.close();
+  }
+});
+
+// The privacy property is an ORDERING, and ordering is the one thing a unit
+// test of this file cannot check by calling it — startCapture needs a live
+// voice connection. So this reads the source.
+//
+// Structural, and deliberately so: if the consent check ever moves after
+// subscribe(), the bot starts opening audio streams for people who declined
+// and dropping the result afterwards. That still works, still passes every
+// behavioural test, and quietly breaks the promise the invitation makes.
+test('the consent check happens before any audio stream is opened', async () => {
+  const src = await readFile(new URL('../src/voice/capture.js', import.meta.url), 'utf8');
+
+  const gate = src.indexOf('mayRecord(userId)');
+  const subscribe = src.indexOf('receiver.subscribe(');
+  assert.ok(gate > 0, 'capture consults mayRecord');
+  assert.ok(subscribe > 0, 'capture subscribes to audio');
+  assert.ok(gate < subscribe, 'the check must come first — filtering afterwards means recording them and deleting it');
+});
+
+test('/join asks about every person, and skips the ones who have not agreed', async (t) => {
+  const h = await twoTables(t);
+  await run(h.dispatch, command('campaign', { user: DM_A, sub: 'invite', options: { player: 'undecided', campaign: h.cipher.id } }));
+
+  const asked = [];
+  const mayRecord = (userId) => {
+    asked.push(userId);
+    return h.db.mayRecord(h.cipher.id, userId);
+  };
+
+  assert.equal(mayRecord(PLAYER_A), true, 'agreed');
+  assert.equal(mayRecord('undecided'), false, 'invited but has not answered');
+  assert.equal(mayRecord('never-asked'), false, 'never asked at all');
+  assert.deepEqual(asked, [PLAYER_A, 'undecided', 'never-asked']);
 });

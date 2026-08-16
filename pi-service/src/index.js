@@ -85,6 +85,21 @@ async function main() {
 
     startRetentionTimer(db, config);
     console.log(`Retention timer started (${config.audioRetentionDays || 'disabled'} day(s)).`);
+
+    // An invitation nobody answered stops being one after a day. Swept hourly
+    // as well as checked when a button is pressed: the button check is what
+    // makes it safe, and the sweep is what stops a table's roster filling with
+    // questions that were never going to be answered.
+    const sweepInvites = () => {
+      try {
+        const expired = db.expireStaleInvites();
+        if (expired) console.log(`[consent] ${expired} unanswered invitation(s) expired`);
+      } catch (err) {
+        console.warn(`[consent] invite sweep failed: ${err.message}`);
+      }
+    };
+    sweepInvites();
+    setInterval(sweepInvites, 60 * 60 * 1000).unref?.();
   });
 
   await client.login(config.discordToken);

@@ -353,6 +353,49 @@ function migrate(db) {
     .run().changes;
   if (grandfathered) console.log(`[db] ${grandfathered} existing speaker(s) enrolled in their campaign`);
 
+  // Whether the bot may record a given person in a given campaign.
+  //
+  // Separate from membership on purpose. Membership answers "may you start a
+  // session" — consent answers "may your voice be captured", and only the
+  // person themselves can give that. Keeping them apart means a DM adding
+  // someone to the roster cannot also decide, on their behalf, that they agree
+  // to be recorded.
+  //
+  // Per campaign rather than per account: agreeing to be recorded at one table
+  // is not agreeing at every table you are ever invited to.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_consent (
+      campaign_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      -- pending | granted | declined | expired
+      state TEXT NOT NULL,
+      invited_by TEXT,
+      invited_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT,
+      decided_at TEXT,
+      PRIMARY KEY (campaign_id, user_id)
+    )
+  `);
+
+  // Everyone already at a table when consent arrived keeps being recorded.
+  // They have been playing on the old understanding and asking them to
+  // re-consent mid-campaign would stop a running game dead; the ask applies
+  // from here on. Written as an explicit row rather than an implicit "no row
+  // means yes", so the rule is visible in the data rather than in code.
+  const carried = db
+    .prepare(
+      // WHERE true is not decoration: in an INSERT ... SELECT, SQLite cannot
+      // tell an upsert clause from part of the SELECT without one, and errors
+      // with "near DO: syntax error".
+      `INSERT INTO campaign_consent (campaign_id, user_id, state, invited_by, decided_at)
+       SELECT campaign_id, user_id, 'granted', 'grandfathered', datetime('now')
+         FROM campaign_members
+        WHERE true
+       ON CONFLICT(campaign_id, user_id) DO NOTHING`
+    )
+    .run().changes;
+  if (carried) console.log(`[db] ${carried} existing player(s) carried over as already agreeing to be recorded`);
+
   // The manager runs the campaign, so they are a member of it by definition —
   // including before they have ever spoken in one.
   db.exec(`
@@ -578,6 +621,97 @@ function wrap(db) {
         )
         .all(userId);
     },
+
+    // --- consent to be recorded ---
+
+    inviteToCampaign: db.transaction((campaignId, userId, invitedBy, expiresAt) => {
+      // Re-inviting someone who already declined is allowed — people change
+      // their minds, and a DM should be able to ask again after talking to
+      // them. It resets to pending rather than silently granting.
+      db.prepare(
+        `INSERT INTO campaign_consent (campaign_id, user_id, state, invited_by, invited_at, expires_at, decided_at)
+         VALUES (?, ?, 'pending', ?, datetime('now'), ?, NULL)
+         ON CONFLICT(campaign_id, user_id) DO UPDATE SET
+           state = 'pending', invited_by = excluded.invited_by,
+           invited_at = excluded.invited_at, expires_at = excluded.expires_at, decided_at = NULL`
+      ).run(campaignId, userId, invitedBy, expiresAt);
+    }),
+
+    getConsent(campaignId, userId) {
+      return (
+        db.prepare(`SELECT * FROM campaign_consent WHERE campaign_id = ? AND user_id = ?`).get(campaignId, userId) ??
+        null
+      );
+    },
+
+    // Returns the row as it stands after the decision, or null if there was no
+    // live invite to decide on — expired, withdrawn, or never sent.
+    decideConsent: db.transaction((campaignId, userId, granted, nowIso = new Date().toISOString()) => {
+      const row = db
+        .prepare(`SELECT * FROM campaign_consent WHERE campaign_id = ? AND user_id = ?`)
+        .get(campaignId, userId);
+      if (!row) return null;
+      if (row.state === 'pending' && row.expires_at && row.expires_at <= nowIso) {
+        db.prepare(`UPDATE campaign_consent SET state = 'expired' WHERE campaign_id = ? AND user_id = ?`).run(
+          campaignId,
+          userId
+        );
+        return { ...row, state: 'expired' };
+      }
+      db.prepare(
+        `UPDATE campaign_consent SET state = ?, decided_at = ? WHERE campaign_id = ? AND user_id = ?`
+      ).run(granted ? 'granted' : 'declined', nowIso, campaignId, userId);
+
+      // Agreeing puts you at the table; declining does not throw you off it,
+      // because being on the roster is not the same as being recorded.
+      if (granted) {
+        db.prepare(
+          `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'accepted')
+           ON CONFLICT(campaign_id, user_id) DO NOTHING`
+        ).run(campaignId, userId);
+      }
+      return { ...row, state: granted ? 'granted' : 'declined' };
+    }),
+
+    // The one question the capture path asks, and the only state that answers
+    // yes. Absent, pending, declined and expired all mean "do not record" —
+    // silence is not agreement.
+    mayRecord(campaignId, userId) {
+      const row = db
+        .prepare(`SELECT state FROM campaign_consent WHERE campaign_id = ? AND user_id = ?`)
+        .get(campaignId, userId);
+      return row?.state === 'granted';
+    },
+
+    listConsent(campaignId) {
+      return db.prepare(`SELECT * FROM campaign_consent WHERE campaign_id = ?`).all(campaignId);
+    },
+
+    // An invite nobody answered stops being an invite. Swept on a timer and
+    // checked again when a button is pressed, so a stale DM sitting in
+    // somebody's inbox for a week cannot still be acted on.
+    expireStaleInvites(nowIso = new Date().toISOString()) {
+      return db
+        .prepare(
+          `UPDATE campaign_consent SET state = 'expired'
+            WHERE state = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?`
+        )
+        .run(nowIso).changes;
+    },
+
+    // Withdrawing an invitation, or a player being taken off the table
+    // entirely. Removes the consent record too: if they are asked again later
+    // it should be a fresh question, not a resumed one.
+    removeFromCampaign: db.transaction((campaignId, userId) => {
+      const members = db
+        .prepare(`DELETE FROM campaign_members WHERE campaign_id = ? AND user_id = ?`)
+        .run(campaignId, userId).changes;
+      const consent = db
+        .prepare(`DELETE FROM campaign_consent WHERE campaign_id = ? AND user_id = ?`)
+        .run(campaignId, userId).changes;
+      db.prepare(`DELETE FROM characters WHERE campaign_id = ? AND user_id = ?`).run(campaignId, userId);
+      return members + consent;
+    }),
 
     adoptUnmanagedCampaigns(userId) {
       return db

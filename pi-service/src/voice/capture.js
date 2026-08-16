@@ -68,7 +68,11 @@ function resampleToWav(pcmStream, wavPath) {
 // onUtterance(userId, displayName, wavPath, startMs, endMs) fires once per
 // speaking turn (Discord already gives us per-user audio streams, so no ML
 // diarization is needed — same trick Craig and Parley both rely on).
-export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtterance }) {
+// mayRecord(userId) -> boolean decides whether this person is captured at all.
+// Defaults to recording everyone, which is what every caller did before
+// consent existed and what the tests rely on; the live path passes the real
+// check. See campaign/consent.js.
+export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtterance, mayRecord = () => true }) {
   const connection = joinVoiceChannel({
     channelId: channel.id,
     guildId,
@@ -107,8 +111,29 @@ export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtt
   // running and will only end on genuine silence.
   const activeUsers = new Set();
 
+  // Logged once per person per session rather than on every speaking turn,
+  // which for someone talking all evening would be hundreds of lines.
+  const skipped = new Set();
+
   receiver.speaking.on('start', async (userId) => {
     if (activeUsers.has(userId)) return;
+
+    // The consent check, and it belongs exactly here: BEFORE subscribe().
+    //
+    // Subscribing is what opens an audio stream for this person — decode it
+    // and it lands in a WAV on disk. Not subscribing means their packets are
+    // dropped by the voice library and nothing of theirs is ever decoded,
+    // written or held. Filtering later would mean recording them first and
+    // deleting it afterwards, which is not the same promise at all, and not
+    // the one the invitation makes.
+    if (!mayRecord(userId)) {
+      if (!skipped.has(userId)) {
+        skipped.add(userId);
+        console.log(`[voice] not recording ${userId} — no consent for this campaign`);
+      }
+      return;
+    }
+
     activeUsers.add(userId);
 
     const startMs = Date.now() - sessionStart;
