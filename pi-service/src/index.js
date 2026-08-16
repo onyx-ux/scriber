@@ -19,6 +19,15 @@ const startedAtMs = Date.now();
 async function main() {
   const db = openDb(join(config.dataDir, 'db.sqlite'));
 
+  // Campaigns that predate campaign management go to the bot owner. Without
+  // this every existing campaign reads as unclaimed, and the first person to
+  // run /campaign in one would take it over — including in a server the owner
+  // set up long before the idea of a manager existed.
+  if (config.ownerUserId) {
+    const adopted = db.adoptUnmanagedCampaigns(config.ownerUserId);
+    if (adopted) console.log(`[campaigns] ${adopted} unmanaged campaign(s) assigned to the bot owner`);
+  }
+
   // Before anything reads a ledger. A half-migrated ledger silently loses
   // its dedupe and re-introduces every NPC the campaign has ever met.
   for (const step of await migrateLedgerFolders({ db, cfg: config }).catch((err) => {

@@ -146,6 +146,19 @@ function migrate(db) {
      GROUP BY guild_id
     ON CONFLICT(guild_id) DO NOTHING
   `);
+
+  // Who runs this campaign, as far as the bot is concerned.
+  //
+  // Deliberately NOT Discord's Manage Server permission. The person who runs
+  // the game is often not the person who administers the server, and in a
+  // server the bot was simply invited to, "can manage this Discord" and "is
+  // the DM" have nothing to do with each other. Whoever names the campaign
+  // claims it; see commands/index.js.
+  const campaignColumns = db.prepare(`PRAGMA table_info(campaigns)`).all().map((c) => c.name);
+  if (!campaignColumns.includes('manager_user_id')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN manager_user_id TEXT`);
+    console.log('[db] migrated: added campaigns.manager_user_id');
+  }
 }
 
 export function openDb(path) {
@@ -198,6 +211,40 @@ function wrap(db) {
 
     getCampaignName(guildId) {
       return db.prepare(`SELECT name FROM campaigns WHERE guild_id = ?`).get(guildId)?.name ?? null;
+    },
+
+    getCampaignManager(guildId) {
+      return (
+        db.prepare(`SELECT manager_user_id FROM campaigns WHERE guild_id = ?`).get(guildId)?.manager_user_id ?? null
+      );
+    },
+
+    // Claims an UNMANAGED campaign for a user, and returns who holds it
+    // afterwards. Whoever names a campaign first becomes its manager; a
+    // campaign that already has one is left alone, so this can be called on
+    // every /campaign without a separate "is it claimed?" round trip racing
+    // against itself.
+    claimCampaign: db.transaction((guildId, userId) => {
+      db.prepare(
+        `INSERT INTO campaigns (guild_id, manager_user_id, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(guild_id) DO UPDATE SET manager_user_id = COALESCE(campaigns.manager_user_id, excluded.manager_user_id)`
+      ).run(guildId, userId);
+      return db.prepare(`SELECT manager_user_id FROM campaigns WHERE guild_id = ?`).get(guildId).manager_user_id;
+    }),
+
+    // Handing a campaign over, and the backfill that gives existing campaigns
+    // a manager on first boot after the column was added.
+    setCampaignManager(guildId, userId) {
+      db.prepare(
+        `INSERT INTO campaigns (guild_id, manager_user_id, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(guild_id) DO UPDATE SET manager_user_id = excluded.manager_user_id, updated_at = excluded.updated_at`
+      ).run(guildId, userId);
+    },
+
+    adoptUnmanagedCampaigns(userId) {
+      return db
+        .prepare(`UPDATE campaigns SET manager_user_id = ? WHERE manager_user_id IS NULL`)
+        .run(userId).changes;
     },
 
     // Campaigns the bot has actually recorded, so /campaign can offer them by

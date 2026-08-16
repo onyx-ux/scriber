@@ -30,6 +30,7 @@ import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
 import { readLedgerFile } from '../campaign/ledger.js';
 import { resolveScope } from '../campaign/scope.js';
+import { refuseUnlessOwner, refuseUnlessManager, isManager } from '../campaign/permissions.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import { exportCampaignSite } from '../export/site.js';
 import {
@@ -114,6 +115,19 @@ const InteractionContext = { GUILD: 0, BOT_DM: 1, PRIVATE_CHANNEL: 2 };
 const PLAYER_COMMANDS = new Set([
   'history', 'recap', 'funny', 'search', 'ask', 'stats', 'npcs', 'locations', 'archive',
 ]);
+
+// The pipeline. These spend the owner's GPU, API budget and disk, so nobody
+// else has a reason to reach them in any server — the dashboard is where they
+// belong for day-to-day use, and these stay as the away-from-home fallback.
+export const OWNER_ONLY = new Set([
+  'approve', 'transcribe', 'summarise', 'pause', 'resume', 'import', 'export', 'status', 'pending',
+]);
+
+// A campaign's records. Held by whoever claimed the campaign with /campaign,
+// not by a Discord permission — see campaign/permissions.js. /campaign itself
+// is absent because an UNCLAIMED campaign has to be claimable by the person
+// setting it up; its handler does the check.
+export const MANAGER_ONLY = new Set(['dm', 'correct', 'uncorrect', 'corrections']);
 
 function playerCommand(builder) {
   return builder
@@ -393,17 +407,6 @@ function targetGuildId(interaction) {
   return interaction.options.getString('campaign') || interaction.guildId;
 }
 
-// Renaming someone else's character is the DM's job, not the table's. Where
-// no owner is configured there is nobody to check against, so the command
-// stays open rather than locking everyone out.
-function refuseIfNotOwner(interaction, cfg) {
-  if (!cfg.ownerUserId || interaction.user.id === cfg.ownerUserId) return null;
-  return {
-    content: 'Only the DM (the bot owner) can set another player’s character.',
-    flags: MessageFlags.Ephemeral,
-  };
-}
-
 async function handleCampaignAutocomplete(interaction, db) {
   if (interaction.commandName === 'dm') return handleDmAutocomplete(interaction, db);
 
@@ -485,9 +488,7 @@ async function handleDmAutocomplete(interaction, db) {
 }
 
 async function handleDm(interaction, db, cfg) {
-  const refusal = refuseIfNotOwner(interaction, cfg);
-  if (refusal) return interaction.reply(refusal);
-
+  // Gated to the campaign's manager before this runs — see MANAGER_ONLY.
   const sub = interaction.options.getSubcommand();
   const guildId = targetGuildId(interaction);
 
@@ -575,11 +576,11 @@ async function handleCampaign(interaction, db, cfg) {
   const chosenGuild = interaction.options.getString('campaign');
   const guildId = chosenGuild || interaction.guildId;
 
-  // In a DM this is the owner doing housekeeping. Anywhere else, a stranger
-  // renaming the folder everyone's notes are filed in would be a nuisance.
-  if (!interaction.guildId && cfg.ownerUserId && interaction.user.id !== cfg.ownerUserId) {
+  // A DM has no server to stand in for "you are part of this table", so
+  // reaching a campaign from one requires already managing it.
+  if (!interaction.guildId && !isManager(interaction.user.id, db, guildId, cfg)) {
     return interaction.reply({
-      content: 'Only the bot owner can rename a campaign from a DM.',
+      content: 'You can only manage a campaign you run from a DM.',
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -604,15 +605,33 @@ async function handleCampaign(interaction, db, cfg) {
 
   const current = db.getCampaignName(guildId);
   const fallback = db.listCampaigns().find((c) => c.guild_id === guildId)?.channel_name;
+  const manager = db.getCampaignManager(guildId);
 
   if (!name) {
+    const who = manager ? `Run by <@${manager}>.` : 'Nobody runs it yet — naming it claims it.';
     return interaction.reply({
-      content: current
-        ? `This campaign is called **${current}** — session notes are filed in \`${campaignFolder({ channel_name: fallback }, current)}/\`.`
-        : `This campaign has no name set, so notes are filed under \`${campaignFolder({ channel_name: fallback })}/\` (from the channel name). Set one with \`/campaign name:...\`.`,
+      content:
+        (current
+          ? `This campaign is called **${current}** — session notes are filed in \`${campaignFolder({ channel_name: fallback }, current)}/\`.`
+          : `This campaign has no name set, so notes are filed under \`${campaignFolder({ channel_name: fallback })}/\` (from the channel name). Set one with \`/campaign name:...\`.`) +
+        `
+${who}`,
       flags: MessageFlags.Ephemeral,
     });
   }
+
+  // Naming a campaign is what claims it. An unclaimed one goes to whoever
+  // sets it up — the person doing that is the person running the game — and
+  // a claimed one can only be renamed by them (or by the bot owner, so a
+  // campaign whose manager has left the server can still be unstuck).
+  if (manager && !isManager(interaction.user.id, db, guildId, cfg)) {
+    return interaction.reply({
+      content: `🔒 <@${manager}> runs this campaign, so only they can rename it.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  const claimedBy = db.claimCampaign(guildId, interaction.user.id);
+  const justClaimed = !manager && claimedBy === interaction.user.id;
 
   const trimmed = name.trim();
   const previousFolder = campaignFolder({ channel_name: fallback }, current);
@@ -643,6 +662,7 @@ async function handleCampaign(interaction, db, cfg) {
     content:
       `📖 Campaign set to **${trimmed}**.\n` +
       `Session notes are filed in \`${folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and so on.` +
+      (justClaimed ? '\n\n🎲 You run this campaign now — `/dm`, `/correct` and renaming it are yours.' : '') +
       (current && current !== trimmed ? `\n\n_Previously **${current}**._` : '') +
       carried,
     flags: MessageFlags.Ephemeral,
@@ -673,6 +693,17 @@ export function registerCommandHandlers(client, db, cfg) {
     }
 
     if (!interaction.isChatInputCommand()) return;
+
+    // One gate for the whole command surface, so who-can-run-what is
+    // readable in one place rather than scattered through the handlers.
+    const refusal = OWNER_ONLY.has(interaction.commandName)
+      ? refuseUnlessOwner(interaction.user.id, cfg)
+      : MANAGER_ONLY.has(interaction.commandName)
+        ? refuseUnlessManager(interaction.user.id, db, targetGuildId(interaction), cfg)
+        : null;
+    if (refusal) {
+      return interaction.reply({ content: refusal, flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
 
     // Resolve which campaign a player command is about BEFORE the handler
     // runs, so every one of them can read a single value regardless of where

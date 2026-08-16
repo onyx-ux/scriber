@@ -212,6 +212,34 @@ whole stack on one machine for debugging.)*
 - `/transcribe meeting_id:<id> [when:<now|later|pi>]` — control when a queued session transcribes: `now` runs it on the PC as soon as the whisper server answers, `later` pushes it back a day, `pi` transcribes it locally on the Pi instead (slower, no GPU needed). Same three actions as the DM buttons
 - `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
+### Who can run what
+
+Three tiers, and none of them is a Discord permission.
+
+| Tier | Commands | Who |
+|---|---|---|
+| **The table** | `/join` `/leave` `/setcharacter` `/whoami` `/campaign` + the nine read commands | anyone in the server |
+| **Campaign manager** | `/dm` `/correct` `/uncorrect` `/corrections` | whoever claimed the campaign |
+| **Bot owner** | `/approve` `/transcribe` `/summarise` `/pause` `/resume` `/import` `/export` `/status` `/pending` | `OWNER_USER_ID` only |
+
+**Naming a campaign claims it.** The first person to run `/campaign name:...`
+in a server becomes its manager, and from then on only they can rename it, set
+the roster, or correct transcripts. Manage Server was the obvious gate and is
+the wrong one: the person running the game is often not the person
+administering the Discord, and in a server the bot was merely invited to the
+two have nothing to do with each other. So the bot tracks it itself
+(`campaigns.manager_user_id`).
+
+The bot owner can always act, so a campaign whose manager has left the server
+can still be unstuck. Campaigns that predate this are adopted by the owner on
+first boot — otherwise they would read as unclaimed and the next person to run
+`/campaign` would take one over.
+
+The owner tier is the pipeline: it spends the owner's GPU, API budget and
+disk, so nobody else has a reason to reach it in any server. Those commands
+stay in Discord as the away-from-home fallback; the dashboard is where they
+belong day to day.
+
 ### Players can install the app themselves
 
 Nine read-only commands are **user-installable**: a player adds Scriber to
