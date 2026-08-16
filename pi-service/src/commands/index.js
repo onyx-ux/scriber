@@ -14,7 +14,7 @@ import {
 } from '../pipeline/model-client.js';
 import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
-import { campaignFolder } from '../export/naming.js';
+import { campaignFolder, campaignFolderFor } from '../export/naming.js';
 import { listTranscriptions, describeTranscription, formatDuration } from '../pipeline/progress.js';
 import {
   parseTranscribeAction,
@@ -844,7 +844,7 @@ async function handleCampaignList(interaction, db, cfg) {
   }
 
   const lines = campaigns.map((c) => {
-    const folder = campaignFolder({ channel_name: c.channel_name }, c.name);
+    const folder = campaignFolderFor(c);
     const who = c.manager_user_id ? `<@${c.manager_user_id}>` : '_unclaimed_';
     const where =
       c.output_mode === 'dm'
@@ -880,8 +880,8 @@ async function handleCampaignRename(interaction, db, cfg, target) {
   }
 
   const current = target.name;
-  const previousFolder = campaignFolder({ channel_name: target.channel_name }, current);
-  const folder = campaignFolder({ channel_name: target.channel_name }, trimmed);
+  const previousFolder = campaignFolderFor(target);
+  const folder = campaignFolderFor({ ...target, name: trimmed });
   db.setCampaignName(target.id, trimmed);
 
   // Take the existing notes with us. Leaving them behind doesn't just look
@@ -1589,7 +1589,7 @@ async function handleStats(interaction, db) {
 // notes exist but whose sessions were all deleted still answers.
 async function ledgerEntries(db, cfg, campaignRow, filename) {
   if (!campaignRow) return null;
-  const folder = campaignFolder({ channel_name: campaignRow.channel_name }, campaignRow.name);
+  const folder = campaignFolderFor(campaignRow);
   const raw = await readLedgerFile(cfg, folder, filename);
   return (raw || '').split('\n').filter((l) => l.trim().startsWith('-'));
 }

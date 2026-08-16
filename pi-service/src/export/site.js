@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { sessionNotePath, sessionLabel, campaignFolder } from './naming.js';
+import { sessionNotePath, sessionLabel, campaignFolderFor } from './naming.js';
 
 // A single self-contained HTML dashboard for the whole campaign, written
 // alongside the markdown exports so it syncs to Drive/Obsidian like anything
@@ -275,7 +275,7 @@ export async function exportCampaignSite(db, campaignId, cfg) {
   // meant a campaign: the moment a second table exists, each regeneration
   // overwrites the other's archive with its own sessions.
   const campaign = db.getCampaign(campaignId);
-  const folder = campaignFolder({ channel_name: campaign?.channel_name, guild_id: campaign?.guild_id }, campaign?.name);
+  const folder = campaignFolderFor(campaign);
   const dir = join(cfg.obsidianExportDir, folder);
 
   await mkdir(dir, { recursive: true });

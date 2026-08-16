@@ -22,7 +22,7 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { config } from '../src/config/env.js';
 import { openDb } from '../src/store/db.js';
-import { campaignFolder } from '../src/export/naming.js';
+import { campaignFolderFor } from '../src/export/naming.js';
 import { backupAndSyncDatabase } from '../src/sync/drive-sync.js';
 import { pickCampaign } from './lib/pick-campaign.mjs';
 
@@ -54,7 +54,7 @@ const meetings = db.raw
   .prepare(`SELECT * FROM meetings WHERE campaign_id IN (${placeholders}) ORDER BY id`)
   .all(...ids);
 
-const folders = new Set(campaigns.map((c) => campaignFolder({ channel_name: c.channel_name }, c.name)));
+const folders = new Set(campaigns.map((c) => campaignFolderFor(c)));
 
 const count = (sql) => db.raw.prepare(sql).get(...ids).n;
 const counts = {

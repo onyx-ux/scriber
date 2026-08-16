@@ -15,7 +15,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { config } from '../src/config/env.js';
 import { openDb } from '../src/store/db.js';
-import { campaignFolder } from '../src/export/naming.js';
+import { campaignFolderFor } from '../src/export/naming.js';
 import { readVaultEntities, buildNameIndex, addPlainNames } from '../src/campaign/vault-index.js';
 import { linkifyNote } from '../src/campaign/vault-linker.js';
 import { readKnownEntityNames } from '../src/campaign/ledger.js';
@@ -37,7 +37,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   if (/^\d{15,}$/.test(which)) {
     const db = openDb(join(config.dataDir, 'db.sqlite'));
     const campaign = pickCampaign(db, which);
-    folder = campaignFolder({ channel_name: campaign.channel_name }, campaign.name);
+    folder = campaignFolderFor(campaign);
   }
 
   const root = join(config.obsidianExportDir, folder);

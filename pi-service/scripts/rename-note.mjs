@@ -11,7 +11,7 @@ import { readdir, readFile, writeFile, rename, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { config } from '../src/config/env.js';
 import { openDb } from '../src/store/db.js';
-import { campaignFolder } from '../src/export/naming.js';
+import { campaignFolderFor } from '../src/export/naming.js';
 import { renameInNote, renameLinks } from '../src/campaign/rename-entity.js';
 import { npcFileName } from '../src/campaign/npc-extract.js';
 import { pickCampaign } from './lib/pick-campaign.mjs';
@@ -29,7 +29,7 @@ let folder = which;
 if (/^\d{15,}$/.test(which)) {
   const db = openDb(join(config.dataDir, 'db.sqlite'));
   const campaign = pickCampaign(db, which);
-  folder = campaignFolder({ channel_name: campaign.channel_name }, campaign.name);
+  folder = campaignFolderFor(campaign);
 }
 
 const root = join(config.obsidianExportDir, folder);
