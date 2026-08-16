@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quill</title>
+<!-- Inline so the page stays a single self-contained file with no second
+     request — and so a tab left open is findable by its icon rather than by
+     reading titles. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%AA%B6%3C/text%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #10131a; --card: #171b24; --line: #262c3a;
@@ -119,6 +123,54 @@
   .notes-body .scene { border-left: 2px solid var(--line); padding-left: 14px; margin-bottom: 4px; }
   .notes-body .funny li { color: #fde68a; }
   .notes-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+
+  /* --- what needs you, first --- */
+
+  /* A live recording and a session waiting on a decision are the two reasons
+     to open this page. They used to be the third and fourth cards in a grid of
+     six, below the campaign list, which meant the answer to "is anything
+     happening?" was somewhere in the middle of the screen. They now sit
+     directly under the header — and vanish entirely when there is nothing,
+     so a quiet bot opens on a quiet page rather than on two cards saying
+     "Idle" and "Nothing waiting". */
+  #attention:empty { display: none; }
+  #attention { display: grid; gap: 14px; margin-bottom: 14px;
+               grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  .card.attn { border-color: #3b4763; box-shadow: 0 0 0 1px #1d2537, 0 6px 24px #0006; }
+  .card.attn.live { border-color: var(--live); }
+  .card.attn h2 { color: var(--text); }
+  .count { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 8px;
+           border-radius: 999px; background: var(--warn); color: #1a1200;
+           font-size: 11px; font-weight: 700; text-align: center; vertical-align: middle; }
+
+  header { position: sticky; top: 0; z-index: 5; padding: 14px 0 10px; margin-bottom: 10px;
+           background: linear-gradient(var(--bg) 72%, transparent); }
+  body.stale .wrap > *:not(header):not(#err) { opacity: .55; transition: opacity .3s; }
+
+  /* Keyboard reachability. The campaign rows are the page's main navigation
+     and were plain divs with a click handler — invisible to Tab, unusable
+     without a mouse. */
+  .camp { border-radius: 8px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .camp:focus-visible { outline-offset: -2px; }
+
+  .skeleton { color: var(--dim); font-style: italic; padding: 14px 0; }
+  .skeleton::after { content: ''; display: inline-block; width: 1em; text-align: left;
+                     animation: dots 1.2s steps(4, end) infinite; }
+  @keyframes dots { 0% { content: '' } 25% { content: '.' } 50% { content: '..' } 75% { content: '...' } }
+
+  /* Save appears only once a field has actually changed, so a roster of seven
+     is seven names rather than seven buttons competing for attention. Only on
+     forms that edit something already there — a form you fill from empty needs
+     its button visible from the start. */
+  form.inline.gated button[type=submit] { visibility: hidden; }
+  form.inline.gated.dirty button[type=submit] { visibility: visible; }
+
+  @media (max-width: 640px) {
+    body { padding: 14px; }
+    .who { grid-template-columns: 1fr; }
+    .who .acts { margin-top: 6px; }
+  }
 </style>
 </head>
 <body>
@@ -130,6 +182,8 @@
   </header>
 
   <div id="err"></div>
+
+  <div id="attention"></div>
 
   <div class="totals" id="totals"></div>
 
@@ -143,19 +197,8 @@
 
   <div class="grid">
     <div class="card">
-      <h2>Now recording</h2>
-      <div id="recording"></div>
-    </div>
-
-    <div class="card">
       <h2>Working on</h2>
       <div id="working"></div>
-    </div>
-
-    <div class="card">
-      <h2>Waiting for you</h2>
-      <div id="waiting"></div>
-      <div class="acts" id="waiting-bulk"></div>
     </div>
 
     <div class="card">
@@ -227,7 +270,9 @@ function ago(iso) {
 
 function render(s) {
   $('who').innerHTML = `${dot(s.bot.online)}${esc(s.bot.user || 'offline')} · up ${duration(s.bot.uptimeMs)} · opus ${esc(s.bot.opus.name)}`;
-  $('stamp').textContent = 'updated ' + new Date(s.generatedAt).toLocaleTimeString();
+  // The stamp is driven by its own one-second timer (see sinceLastSeen), so it
+  // keeps counting up while the bot is unreachable rather than freezing at the
+  // moment contact was lost. Nothing to set here.
 
   // Older bots won't send these; the page should degrade rather than break.
   const totals = s.totals ?? null;
@@ -256,7 +301,9 @@ function render(s) {
             (c.members && c.named < c.members ? `<span class="tag">${c.members - c.named} unnamed</span>` : '');
           const where = c.guildName ? esc(c.guildName) : `server ${esc(c.guildId)}`;
           return `
-            <div class="camp${openCampaignId === c.id ? ' open' : ''}" data-campaign="${c.id}">
+            <div class="camp${openCampaignId === c.id ? ' open' : ''}" data-campaign="${c.id}"
+                 role="button" tabindex="0" aria-expanded="${openCampaignId === c.id}"
+                 aria-label="Open ${esc(c.name || c.channel || 'campaign')}">
               <div>
                 <div class="name">${esc(c.name || c.channel || 'unnamed campaign')}${tags}</div>
                 <div class="meta">${where} · ${c.members} player(s) · last played ${esc(ago(c.lastSessionAt))} · notes → ${esc(c.output)}</div>
@@ -267,13 +314,17 @@ function render(s) {
         .join('')
     : empty('No campaigns yet.');
 
-  $('recording').innerHTML = s.recording.length
-    ? s.recording.map((r) => `
-        <div class="item">
-          <div class="title"><span class="dot live"></span>${esc(r.guildName)} — ${esc(r.channel || 'voice')}</div>
-          <div class="sub">session #${r.meetingId} · ${duration(r.recordingForMs)} · ${r.clips} clips · ${r.speakers} speaker(s)</div>
-        </div>`).join('')
-    : empty('Not recording.');
+  // --- the band that only exists when something is happening ---
+  const live = s.recording.length
+    ? `<div class="card attn live">
+         <h2><span class="dot live"></span>Recording now</h2>
+         ${s.recording.map((r) => `
+           <div class="item">
+             <div class="title">${esc(r.guildName)} — ${esc(r.channel || 'voice')}</div>
+             <div class="sub">session #${r.meetingId} · ${duration(r.recordingForMs)} · ${r.clips} clips · ${r.speakers} speaker(s)</div>
+           </div>`).join('')}
+       </div>`
+    : '';
 
   const work = [
     ...s.working.transcribing.map((t) => ({
@@ -328,23 +379,39 @@ function render(s) {
     return `<div class="acts">${buttons}</div>`;
   }
 
-  $('waiting').innerHTML = waiting.length
-    ? waiting.map((q) => `
-        <div class="item">
-          <div class="title">#${q.meetingId} — ${esc(q.channel)}</div>
-          <div class="sub">${esc(q.what)}${q.utterances ? ` · ${q.utterances} lines` : ''}${q.lastError ? `<br>last error: ${esc(q.lastError)}` : ''}</div>
-          ${actions(q)}
-        </div>`).join('') + (canAct ? '' : DISABLED_NOTE)
-    : empty('Nothing waiting.');
-
   // "Release everything" is separated from the per-session buttons on purpose:
   // it is the one click here that spends real money without naming what it
   // spent it on, so it should not sit in the same row as a single approval.
   const bulk = s.queue.awaitingSummary.length;
-  $('waiting-bulk').innerHTML =
-    bulk > 1 && canAct
-      ? `<button data-act="summary/approve-all" data-confirm="Release all ${bulk} waiting summaries?">Release all ${bulk} summaries</button>`
-      : '';
+  const needsYou = waiting.filter((q) => q.act).length;
+
+  const queued = waiting.length
+    ? `<div class="card attn">
+         <h2>Waiting for you${needsYou ? `<span class="count">${needsYou}</span>` : ''}</h2>
+         ${waiting.map((q) => `
+           <div class="item">
+             <div class="title">#${q.meetingId} — ${esc(q.channel)}</div>
+             <div class="sub">${esc(q.what)}${q.utterances ? ` · ${q.utterances} lines` : ''}${q.lastError ? `<br>last error: ${esc(q.lastError)}` : ''}</div>
+             ${actions(q)}
+           </div>`).join('')}
+         ${canAct ? '' : DISABLED_NOTE}
+         ${
+           bulk > 1 && canAct
+             ? `<div class="acts"><button data-act="summary/approve-all" data-confirm="Release all ${bulk} waiting summaries?">Release all ${bulk} summaries</button></div>`
+             : ''
+         }
+       </div>`
+    : '';
+
+  $('attention').innerHTML = live + queued;
+
+  // The tab title carries the same two facts, so a dashboard left open in a
+  // background tab can still say a session ended and is waiting on you.
+  document.title = s.recording.length
+    ? '● Recording — Quill'
+    : needsYou
+      ? `(${needsYou}) Quill`
+      : 'Quill';
 
   $('servers').innerHTML = s.servers.length
     ? s.servers.map((g) => {
@@ -421,9 +488,10 @@ function rosterRow(view, p) {
         <div class="sub">${plays} · ${heard} · <span class="${consentClass(p.consent.state)}">${esc(p.consent.label)}</span></div>
       </div>
       <div class="acts">
-        <form class="inline" data-act="roster/character" data-campaign="${view.id}" data-user="${esc(p.userId)}">
-          <input name="name" placeholder="character" value="${esc(p.characterName || '')}" size="12">
-          <button type="submit">Save</button>
+        <form class="inline gated" data-act="roster/character" data-campaign="${view.id}" data-user="${esc(p.userId)}">
+          <input name="name" placeholder="character" value="${esc(p.characterName || '')}" size="12"
+                 aria-label="Character name for ${who}">
+          <button type="submit" class="go">Save</button>
         </form>
         ${p.characterName ? `<button data-act="roster/forget" data-campaign="${view.id}" data-user="${esc(p.userId)}">Clear</button>` : ''}
       </div>
@@ -492,12 +560,31 @@ function renderDetail(view) {
       <div>
         <h3>Sessions</h3>
         ${view.sessions.length ? view.sessions.map((s) => sessionRow(view, s)).join('') : empty('None recorded.')}
+
+        <h3>Import a recording</h3>
+        <form class="inline" data-act="import" data-campaign="${view.id}">
+          <input name="url" type="url" placeholder="https://… link to the audio" required style="flex:1 1 100%">
+          <input name="speaker" placeholder="speaker label (default: Table)" size="14">
+          <button type="submit" class="go">Import</button>
+        </form>
+        <div class="sub muted" style="margin-top:8px">
+          For a game played in person, or anything recorded outside Discord. It runs through the same
+          transcribe → summarise → post pipeline, and appears under "Working on" once it starts.
+          <b>Every line is attributed to one label</b> — a single microphone has no per-speaker channels.
+        </div>
       </div>
     </div>`;
 }
 
-async function openCampaign(id) {
+async function openCampaign(id, { quiet = false } = {}) {
   openCampaignId = id;
+  // Something immediately, so a click on a slow link is not indistinguishable
+  // from a click that did nothing. Skipped when refreshing an already-open
+  // panel after an action, which would otherwise flash the whole thing away.
+  if (!quiet) {
+    $('detail').className = 'card wide open';
+    $('detail').innerHTML = '<div class="skeleton">Loading</div>';
+  }
   try {
     const res = await fetch(`${API}/campaign?id=${id}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -730,7 +817,53 @@ async function send(action, body) {
   // is reloaded too, since roster and correction actions change what it shows
   // and nothing else will refresh it.
   tick();
-  if (openCampaignId) openCampaign(openCampaignId);
+  if (openCampaignId) openCampaign(openCampaignId, { quiet: true });
+}
+
+// --- keyboard ---
+//
+// The campaign rows are this page's main navigation and were plain divs with a
+// click handler: invisible to Tab, unusable without a mouse. They are buttons
+// now in every sense but the tag, so they answer to Enter and Space too.
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    // Innermost first, so Escape backs out one level at a time rather than
+    // closing everything and losing your place in the campaign.
+    if ($('notes').classList.contains('open')) return closeNotes();
+    if (openCampaignId) return closeCampaign();
+    return;
+  }
+
+  const row = event.target.closest?.('.camp[data-campaign]');
+  if (row && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    const id = Number(row.dataset.campaign);
+    return id === openCampaignId ? closeCampaign() : openCampaign(id);
+  }
+});
+
+// Save shows itself once a field actually differs from what was loaded — so a
+// roster of seven reads as seven names, not seven buttons.
+document.addEventListener('input', (event) => {
+  const field = event.target.closest('form.inline.gated input');
+  if (!field) return;
+  const form = field.closest('form');
+  const changed = [...form.elements].some((el) => el.name && el.value !== (el.defaultValue ?? ''));
+  form.classList.toggle('dirty', changed);
+});
+
+let lastSeen = null;
+
+// "updated 21:43:07" is a clock time you have to compare against another clock
+// time to learn the only thing you wanted: whether this is current. Seconds ago
+// says it directly.
+function sinceLastSeen() {
+  if (!lastSeen) return 'never';
+  const s = Math.round((Date.now() - lastSeen) / 1000);
+  if (s < 2) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
 }
 
 async function tick() {
@@ -738,16 +871,29 @@ async function tick() {
     const res = await fetch(`${API}/status`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     render(await res.json());
+    lastSeen = Date.now();
+    document.body.classList.remove('stale');
     $('err').style.display = 'none';
   } catch (err) {
     // The bot being unreachable is itself information — say so plainly rather
-    // than freezing on stale numbers.
+    // than freezing on numbers that look current. The page dims as well as
+    // saying so: a dashboard confidently showing "not recording" while it has
+    // no idea is worse than one that admits it lost contact.
+    document.body.classList.add('stale');
+    document.title = 'Quill — offline';
     $('err').style.display = 'block';
-    $('err').innerHTML = `Can't reach the bot at <code>${esc(API)}</code> — ${esc(err.message)}.<br>
+    $('err').innerHTML = `Can't reach the bot at <code>${esc(API)}</code> — ${esc(err.message)}.
+      Showing what it last said, ${esc(sinceLastSeen())}.<br>
       Is the Pi up, and is <code>STATUS_PORT</code> set? Override with <code>?api=http://host:port</code>.`;
     $('who').innerHTML = `${dot(false)}unreachable`;
   }
 }
+
+// Ticks on its own second so the age keeps counting up while the bot is
+// unreachable, instead of freezing at whatever it said when contact was lost.
+setInterval(() => {
+  $('stamp').textContent = `updated ${sinceLastSeen()}`;
+}, 1000);
 
 tick();
 setInterval(tick, 5000);
