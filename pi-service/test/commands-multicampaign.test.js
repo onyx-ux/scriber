@@ -573,7 +573,9 @@ test('every command that resolves a campaign lets you name one', async () => {
   const { commandDefs, MANAGER_ONLY } = await import('../src/commands/index.js');
 
   // The tiers that resolve a campaign, and so can refuse with "which one?".
-  const resolves = new Set([...MANAGER_ONLY, 'join', 'setcharacter', 'whoami']);
+  // /import is an owner command but resolves one anyway — it creates a session,
+  // so it has to say which campaign's records that session is joining.
+  const resolves = new Set([...MANAGER_ONLY, 'join', 'setcharacter', 'whoami', 'import']);
   const SUBCOMMAND = 1;
 
   const missing = commandDefs

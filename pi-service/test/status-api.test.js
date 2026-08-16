@@ -212,6 +212,36 @@ test('an unclaimed campaign is flagged, since nobody can run its commands', asyn
   assert.equal(c.claimed, false);
 });
 
+// The dashboard is a static page reading this payload by key. Nothing else
+// couples the two, so a rename here shows up as a blank card rather than an
+// error — this is the contract, written down.
+test('the payload carries every field the dashboard renders', async (t) => {
+  const db = await freshDb(t);
+  const id = db.createCampaign('g1', 'Cipher', 'dm');
+  const meeting = db.createMeeting({
+    guildId: 'g1', campaignId: id, channelId: 'c', channelName: 'Voice',
+    startedAt: '2026-08-01T10:00:00Z', audioDir: '/tmp',
+  });
+  db.endMeeting(meeting, '2026-08-01T12:00:00Z');
+
+  const client = { user: { tag: 'Quill#0233' }, guilds: { cache: new Map([['g1', { id: 'g1', name: 'The Table' }]]) } };
+  const s = buildStatus({ db, cfg, client });
+
+  for (const key of ['totals', 'campaigns', 'servers', 'recording', 'working', 'queue', 'schedule', 'health', 'bot']) {
+    assert.ok(key in s, `payload.${key}`);
+  }
+  for (const key of ['campaigns', 'claimed', 'players', 'sessions', 'lines', 'hours']) {
+    assert.ok(key in s.totals, `totals.${key}`);
+  }
+  for (const key of [
+    'id', 'name', 'channel', 'guildId', 'guildName', 'sessions', 'completed',
+    'members', 'named', 'lines', 'hours', 'lastSessionAt', 'claimed', 'output', 'recording',
+  ]) {
+    assert.ok(key in s.campaigns[0], `campaigns[].${key}`);
+  }
+  assert.ok('campaigns' in s.servers[0], 'servers[].campaigns');
+});
+
 // This is served unauthenticated on the LAN by default, and can be exposed to
 // a URL — so who runs which game must not be in it.
 test('the overview carries no user ids', async (t) => {
