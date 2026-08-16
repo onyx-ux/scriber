@@ -29,6 +29,7 @@ import { resolveSpeakerName } from '../campaign/character-names.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { importAudio } from '../pipeline/import-audio.js';
 import { readLedgerFile } from '../campaign/ledger.js';
+import { resolveScope } from '../campaign/scope.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import { exportCampaignSite } from '../export/site.js';
 import {
@@ -90,13 +91,52 @@ export const activeSessions = new Map();
 // actually landing in activeSessions (see handleJoin).
 const startingGuilds = new Set();
 
+// Commands a PLAYER can run anywhere.
+//
+// Discord calls this a user install: a player adds Scriber to their own
+// account and its commands follow them into any channel, including servers
+// the bot has never been in. Discord makes those replies visible only to the
+// caller, which suits these nine — they already reply privately.
+//
+// Only the read-only ones. /join needs the bot in the voice channel it is
+// being asked to record, and anything that changes the campaign belongs to
+// the table, not to whoever installed the app.
+//
+// The optional `campaign` option exists because interaction.guildId is
+// useless here: run in some unrelated server it names that server, not the
+// game. campaign/scope.js resolves it, and enforces that a caller can only
+// reach a campaign they have actually spoken in.
+const IntegrationType = { GUILD_INSTALL: 0, USER_INSTALL: 1 };
+const InteractionContext = { GUILD: 0, BOT_DM: 1, PRIVATE_CHANNEL: 2 };
+
+// The nine, by name, so the dispatcher and the autocomplete agree with the
+// builders about which commands are user-installable.
+const PLAYER_COMMANDS = new Set([
+  'history', 'recap', 'funny', 'search', 'ask', 'stats', 'npcs', 'locations', 'archive',
+]);
+
+function playerCommand(builder) {
+  return builder
+    .setIntegrationTypes([IntegrationType.GUILD_INSTALL, IntegrationType.USER_INSTALL])
+    .setContexts([InteractionContext.GUILD, InteractionContext.BOT_DM, InteractionContext.PRIVATE_CHANNEL])
+    .addStringOption((o) =>
+      o
+        .setName('campaign')
+        .setDescription("Which campaign (only needed if you're in more than one)")
+        .setRequired(false)
+        .setAutocomplete(true)
+    );
+}
+
 export const commandDefs = [
   new SlashCommandBuilder().setName('join').setDescription('Start recording this voice channel'),
   new SlashCommandBuilder().setName('leave').setDescription('Stop recording, transcribe, and queue the summary'),
-  new SlashCommandBuilder()
-    .setName('history')
-    .setDescription('List recent sessions')
-    .addIntegerOption((o) => o.setName('count').setDescription('How many to show').setRequired(false)),
+  playerCommand(
+    new SlashCommandBuilder()
+      .setName('history')
+      .setDescription('List recent sessions')
+      .addIntegerOption((o) => o.setName('count').setDescription('How many to show').setRequired(false))
+  ),
   new SlashCommandBuilder()
     .setName('summarise')
     .setDescription('Retry summarisation now for a meeting (useful right after turning your PC on)')
@@ -137,18 +177,20 @@ export const commandDefs = [
   new SlashCommandBuilder()
     .setName('status')
     .setDescription('Show what is currently queued/retrying (e.g. waiting on your PC)'),
-  new SlashCommandBuilder()
-    .setName('recap')
-    .setDescription("Post last session's TL;DR again"),
-  new SlashCommandBuilder()
-    .setName('funny')
-    .setDescription('Pull a random funny or memorable moment from this campaign\'s history'),
-  new SlashCommandBuilder()
-    .setName('search')
-    .setDescription('Search every transcript in this campaign for a word or phrase')
-    .addStringOption((o) =>
-      o.setName('query').setDescription('Word or phrase to look for (e.g. an NPC name)').setRequired(true)
-    ),
+  playerCommand(new SlashCommandBuilder().setName('recap').setDescription("Post last session's TL;DR again")),
+  playerCommand(
+    new SlashCommandBuilder()
+      .setName('funny')
+      .setDescription("Pull a random funny or memorable moment from this campaign's history")
+  ),
+  playerCommand(
+    new SlashCommandBuilder()
+      .setName('search')
+      .setDescription('Search every transcript in this campaign for a word or phrase')
+      .addStringOption((o) =>
+        o.setName('query').setDescription('Word or phrase to look for (e.g. an NPC name)').setRequired(true)
+      )
+  ),
   new SlashCommandBuilder()
     .setName('correct')
     .setDescription('Fix a name whisper keeps mishearing — across all past sessions and all future ones')
@@ -168,12 +210,14 @@ export const commandDefs = [
     .setName('pause')
     .setDescription('Pause summarising — queued sessions wait rather than being sent out'),
   new SlashCommandBuilder().setName('resume').setDescription('Resume summarising after a /pause'),
-  new SlashCommandBuilder()
-    .setName('ask')
-    .setDescription('Ask a question about this campaign, answered from past sessions')
-    .addStringOption((o) =>
-      o.setName('question').setDescription('e.g. "who was the smuggler we met at the docks?"').setRequired(true)
-    ),
+  playerCommand(
+    new SlashCommandBuilder()
+      .setName('ask')
+      .setDescription('Ask a question about this campaign, answered from past sessions')
+      .addStringOption((o) =>
+        o.setName('question').setDescription('e.g. "who was the smuggler we met at the docks?"').setRequired(true)
+      )
+  ),
   new SlashCommandBuilder()
     .setName('import')
     .setDescription('Import a recording made outside Discord (in-person game, phone recording)')
@@ -288,23 +332,35 @@ export const commandDefs = [
   new SlashCommandBuilder()
     .setName('whoami')
     .setDescription('Show what name you currently appear as in transcripts and notes'),
-  new SlashCommandBuilder()
-    .setName('stats')
-    .setDescription('Campaign-wide totals: sessions, hours, lines, and who talks the most'),
-  new SlashCommandBuilder()
-    .setName('npcs')
-    .setDescription('List every NPC the campaign has met so far'),
-  new SlashCommandBuilder()
-    .setName('locations')
-    .setDescription('List every location the campaign has visited so far'),
-  new SlashCommandBuilder()
-    .setName('archive')
-    .setDescription('Get the browsable campaign archive (a single HTML file) right now'),
+  playerCommand(
+    new SlashCommandBuilder()
+      .setName('stats')
+      .setDescription('Campaign-wide totals: sessions, hours, lines, and who talks the most')
+  ),
+  playerCommand(
+    new SlashCommandBuilder().setName('npcs').setDescription('List every NPC the campaign has met so far')
+  ),
+  playerCommand(
+    new SlashCommandBuilder().setName('locations').setDescription('List every location the campaign has visited so far')
+  ),
+  playerCommand(
+    new SlashCommandBuilder()
+      .setName('archive')
+      .setDescription('Get the browsable campaign archive (a single HTML file) right now')
+  ),
 ].map((c) => c.toJSON());
 
 // Shows the campaigns the bot has actually recorded, labelled by their set
 // name (or the channel they were recorded in), so a DM can pick one without
 // anyone having to know a guild id.
+// The campaign a player command resolved to. Set by the dispatcher, which
+// runs campaign/scope.js before the handler — so a handler can keep reading
+// one value whether it was invoked in the campaign's own server or from a
+// user install three servers away.
+function campaignId(interaction) {
+  return interaction.scriberGuildId ?? interaction.guildId;
+}
+
 // Which campaign a DM-side command is about: the option if given, else the
 // server it was run in. Shared by /campaign and /dm, which have the same
 // problem — a DM has no guild to infer from.
@@ -325,6 +381,22 @@ function refuseIfNotOwner(interaction, cfg) {
 
 async function handleCampaignAutocomplete(interaction, db) {
   if (interaction.commandName === 'dm') return handleDmAutocomplete(interaction, db);
+
+  // A player command's campaign list is the caller's OWN campaigns. Offering
+  // every campaign the bot knows would leak their names to anyone who
+  // installed the app, and picking one they aren't in is refused anyway.
+  if (PLAYER_COMMANDS.has(interaction.commandName)) {
+    const typed = String(interaction.options.getFocused() || '').toLowerCase();
+    return interaction.respond(
+      db
+        .listCampaignsForUser(interaction.user.id)
+        .map((c) => ({ name: c.campaign_name || c.channel_name, value: c.guild_id }))
+        .filter((c) => !typed || c.name.toLowerCase().includes(typed))
+        .slice(0, 25)
+        .map(({ name, value }) => ({ name: name.slice(0, 100), value }))
+    );
+  }
+
   if (interaction.commandName !== 'campaign') return interaction.respond([]);
 
   const typed = String(interaction.options.getFocused() || '').toLowerCase();
@@ -577,6 +649,19 @@ export function registerCommandHandlers(client, db, cfg) {
 
     if (!interaction.isChatInputCommand()) return;
 
+    // Resolve which campaign a player command is about BEFORE the handler
+    // runs, so every one of them can read a single value regardless of where
+    // it was invoked from. This is also the membership check for a
+    // user-installed app — see campaign/scope.js.
+    if (PLAYER_COMMANDS.has(interaction.commandName)) {
+      const scope = resolveScope(interaction, db);
+      if (scope.error) {
+        return interaction.reply({ content: scope.error, flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
+      interaction.scriberGuildId = scope.guildId;
+      interaction.scriberScope = scope;
+    }
+
     try {
       // Each handler must be awaited here, not just returned — "return
       // handleX(...)" hands back the promise without keeping this try block
@@ -797,7 +882,7 @@ async function handleTranscribe(interaction, db, cfg) {
 
 async function handleHistory(interaction, db) {
   const count = interaction.options.getInteger('count') || 10;
-  const meetings = db.listRecentMeetings(interaction.guildId, count);
+  const meetings = db.listRecentMeetings(campaignId(interaction), count);
   if (meetings.length === 0) {
     return interaction.reply({ content: pick(HISTORY_EMPTY), flags: MessageFlags.Ephemeral });
   }
@@ -915,7 +1000,7 @@ async function handleStatus(interaction, db, cfg) {
 }
 
 async function handleRecap(interaction, db) {
-  const meeting = db.getLastCompletedMeeting(interaction.guildId);
+  const meeting = db.getLastCompletedMeeting(campaignId(interaction));
   if (!meeting) {
     return interaction.reply({ content: pick(RECAP_NONE), flags: MessageFlags.Ephemeral });
   }
@@ -1064,7 +1149,7 @@ async function handleWhoAmI(interaction, db) {
 }
 
 async function handleStats(interaction, db) {
-  const stats = db.campaignStats(interaction.guildId);
+  const stats = db.campaignStats(campaignId(interaction));
   if (stats.totalSessions === 0) {
     return interaction.reply({ content: pick(STATS_EMPTY), flags: MessageFlags.Ephemeral });
   }
@@ -1106,18 +1191,18 @@ function ledgerReply(entries, emptyPick, headerPick) {
 }
 
 async function handleNpcs(interaction, db, cfg) {
-  const entries = await ledgerEntries(db, cfg, interaction.guildId, 'NPCs.md');
+  const entries = await ledgerEntries(db, cfg, campaignId(interaction), 'NPCs.md');
   await interaction.reply(ledgerReply(entries, NPCS_EMPTY, NPCS_HEADER));
 }
 
 async function handleLocations(interaction, db, cfg) {
-  const entries = await ledgerEntries(db, cfg, interaction.guildId, 'Locations.md');
+  const entries = await ledgerEntries(db, cfg, campaignId(interaction), 'Locations.md');
   await interaction.reply(ledgerReply(entries, LOCATIONS_EMPTY, LOCATIONS_HEADER));
 }
 
 async function handleArchive(interaction, db, cfg) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const path = await exportCampaignSite(db, interaction.guildId, cfg);
+  const path = await exportCampaignSite(db, campaignId(interaction), cfg);
   const attachment = new AttachmentBuilder(path, { name: 'campaign-archive.html' });
   await interaction.editReply({ content: pick(ARCHIVE_SENT), files: [attachment] });
 }
@@ -1143,7 +1228,7 @@ async function handleAsk(interaction, db, cfg) {
   // Answering means a full model round-trip; Discord needs the ack inside 3s.
   await interaction.deferReply();
 
-  const { summaries, excerpts } = gatherContext(db, interaction.guildId, question, cfg);
+  const { summaries, excerpts } = gatherContext(db, campaignId(interaction), question, cfg);
   if (summaries.length === 0 && excerpts.length === 0) {
     return interaction.editReply(
       "📭 There's nothing in the campaign records yet — I need at least one completed session to answer questions."
@@ -1299,7 +1384,7 @@ async function handleSearch(interaction, db) {
     return interaction.reply({ content: pick(SEARCH_NONE, { query }), flags: MessageFlags.Ephemeral });
   }
 
-  const rows = db.searchUtterances(interaction.guildId, query, 25);
+  const rows = db.searchUtterances(campaignId(interaction), query, 25);
   if (rows.length === 0) {
     return interaction.reply({ content: pick(SEARCH_NONE, { query }), flags: MessageFlags.Ephemeral });
   }
@@ -1333,7 +1418,7 @@ async function handleSearch(interaction, db) {
 }
 
 async function handleFunny(interaction, db) {
-  const meetings = db.listCompletedMeetings(interaction.guildId);
+  const meetings = db.listCompletedMeetings(campaignId(interaction));
 
   // Every funny moment from every completed session, paired with which
   // session it came from — the pool /funny picks randomly out of.

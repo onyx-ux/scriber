@@ -641,6 +641,29 @@ function wrap(db) {
       return db.prepare(`SELECT * FROM characters WHERE guild_id = ?`).all(guildId);
     },
 
+    // The campaigns a given person has actually spoken in.
+    //
+    // This is the membership check behind the user-installed commands: anyone
+    // can add a user-installed app to their own Discord account, so having
+    // spoken at the table is what distinguishes a player from a stranger who
+    // knows the campaign's name.
+    listCampaignsForUser(userId) {
+      return db
+        .prepare(
+          `SELECT m.guild_id,
+                  MAX(m.channel_name)  AS channel_name,
+                  c.name               AS campaign_name,
+                  MAX(m.started_at)    AS last_seen
+             FROM utterances u
+             JOIN meetings m   ON m.id = u.meeting_id
+             LEFT JOIN campaigns c ON c.guild_id = m.guild_id
+            WHERE u.user_id = ?
+            GROUP BY m.guild_id
+            ORDER BY last_seen DESC`
+        )
+        .all(userId);
+    },
+
     // Every label this campaign's transcripts have ever carried, including
     // ones nobody uses any more. listRoster deliberately collapses to the
     // CURRENT name — that is what a DM should be picking from — but a summary
