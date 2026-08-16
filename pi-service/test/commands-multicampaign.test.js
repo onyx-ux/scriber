@@ -447,6 +447,71 @@ test('/campaign output is per campaign', async (t) => {
   assert.equal(db.getOutputForMeeting(inStrahd).channelId, 'CHAN-9');
 });
 
+// Found by running the bot, not by these tests — every test above names the
+// campaign explicitly, so none of them ever hit the refusal that tells you to
+// do exactly that. Six commands shipped able to say "re-run with the
+// `campaign` option" while having no such option, which made them unusable in
+// any server holding two tables.
+test('every command that resolves a campaign lets you name one', async () => {
+  process.env.DISCORD_TOKEN ||= 'x';
+  process.env.DISCORD_CLIENT_ID ||= 'x';
+  process.env.GEMINI_API_KEY ||= 'x';
+  const { commandDefs, MANAGER_ONLY } = await import('../src/commands/index.js');
+
+  // The tiers that resolve a campaign, and so can refuse with "which one?".
+  const resolves = new Set([...MANAGER_ONLY, 'join', 'setcharacter', 'whoami']);
+  const SUBCOMMAND = 1;
+
+  const missing = commandDefs
+    .filter((c) => resolves.has(c.name))
+    .filter((c) => {
+      const subs = (c.options ?? []).filter((o) => o.type === SUBCOMMAND);
+      // A command with subcommands carries the option on each of them.
+      return subs.length
+        ? !subs.every((s) => (s.options ?? []).some((o) => o.name === 'campaign'))
+        : !(c.options ?? []).some((o) => o.name === 'campaign');
+    })
+    .map((c) => c.name);
+
+  assert.deepEqual(missing, [], `these can ask you to name a campaign but offer no way to: ${missing.join(', ')}`);
+});
+
+// The same invariant from the other end: the refusal must only be reachable
+// from a command that can act on it.
+test('being asked which campaign is always answerable', async (t) => {
+  const { dispatch, db, cipher, strahd } = await twoTables(t);
+  db.addCampaignMember(cipher.id, 'plays-both', DM_A);
+  db.addCampaignMember(strahd.id, 'plays-both', DM_B);
+
+  // /setcharacter is the one a player reaches for first, and the one that was
+  // broken: a member of two tables here got told to use an option that did
+  // not exist.
+  const asked = await run(dispatch, command('setcharacter', { user: 'plays-both', options: { name: 'Fuji' } }));
+  assert.match(asked, /more than one table/);
+
+  const done = await run(
+    dispatch,
+    command('setcharacter', { user: 'plays-both', options: { name: 'Fuji', campaign: cipher.id } })
+  );
+  assert.doesNotMatch(done, /more than one table/, 'and naming one actually works');
+  assert.equal(db.getCharacterName(cipher.id, 'plays-both'), 'Fuji');
+  assert.equal(db.getCharacterName(strahd.id, 'plays-both'), null, 'on that table only');
+});
+
+test('/whoami answers per campaign', async (t) => {
+  const { dispatch, db, cipher, strahd } = await twoTables(t);
+  db.addCampaignMember(cipher.id, 'plays-both', DM_A);
+  db.addCampaignMember(strahd.id, 'plays-both', DM_B);
+  db.setCharacterName(cipher.id, 'plays-both', 'Fuji');
+
+  assert.match(await run(dispatch, command('whoami', { user: 'plays-both', options: { campaign: cipher.id } })), /Fuji/);
+  assert.doesNotMatch(
+    await run(dispatch, command('whoami', { user: 'plays-both', options: { campaign: strahd.id } })),
+    /Fuji/,
+    'the other table does not know that character'
+  );
+});
+
 test('/campaign list names both tables and who runs them', async (t) => {
   const { dispatch } = await twoTables(t);
   const said = await run(dispatch, command('campaign', { user: DM_A, sub: 'list' }));

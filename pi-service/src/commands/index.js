@@ -154,17 +154,28 @@ const MEMBER_COMMANDS = new Set(['join', 'setcharacter', 'whoami']);
 const MAX_CAMPAIGNS_PER_GUILD = 10;
 const MAX_CAMPAIGNS_PER_MANAGER = 20;
 
+// Any command that RESOLVES a campaign has to let you name one, or its own
+// "re-run with the `campaign` option" refusal is an instruction you cannot
+// follow. Six commands shipped without it and became unusable the moment a
+// server held two tables — see the test that now enforces this.
+function campaignOption(o) {
+  return o
+    .setName('campaign')
+    .setDescription("Which campaign (only needed if you're in more than one)")
+    .setRequired(false)
+    .setAutocomplete(true);
+}
+
+function withCampaign(builder) {
+  return builder.addStringOption(campaignOption);
+}
+
 function playerCommand(builder) {
-  return builder
-    .setIntegrationTypes([IntegrationType.GUILD_INSTALL, IntegrationType.USER_INSTALL])
-    .setContexts([InteractionContext.GUILD, InteractionContext.BOT_DM, InteractionContext.PRIVATE_CHANNEL])
-    .addStringOption((o) =>
-      o
-        .setName('campaign')
-        .setDescription("Which campaign (only needed if you're in more than one)")
-        .setRequired(false)
-        .setAutocomplete(true)
-    );
+  return withCampaign(
+    builder
+      .setIntegrationTypes([IntegrationType.GUILD_INSTALL, IntegrationType.USER_INSTALL])
+      .setContexts([InteractionContext.GUILD, InteractionContext.BOT_DM, InteractionContext.PRIVATE_CHANNEL])
+  );
 }
 
 export const commandDefs = [
@@ -228,13 +239,17 @@ export const commandDefs = [
     .addStringOption((o) =>
       o.setName('session').setDescription('e.g. Cipher_02').setRequired(true).setAutocomplete(true)
     ),
-  new SlashCommandBuilder()
-    .setName('setcharacter')
-    .setDescription('Map your Discord account to your D&D character name for transcripts/notes')
-    .addStringOption((o) => o.setName('name').setDescription('Character name').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName('status')
-    .setDescription('Show what is currently queued/retrying (e.g. waiting on your PC)'),
+  withCampaign(
+    new SlashCommandBuilder()
+      .setName('setcharacter')
+      .setDescription('Map your Discord account to your D&D character name for transcripts/notes')
+      .addStringOption((o) => o.setName('name').setDescription('Character name').setRequired(true))
+  ),
+  withCampaign(
+    new SlashCommandBuilder()
+      .setName('status')
+      .setDescription('Show what is currently queued/retrying (e.g. waiting on your PC)')
+  ),
   playerCommand(new SlashCommandBuilder().setName('recap').setDescription("Post last session's TL;DR again")),
   playerCommand(
     new SlashCommandBuilder()
@@ -249,18 +264,22 @@ export const commandDefs = [
         o.setName('query').setDescription('Word or phrase to look for (e.g. an NPC name)').setRequired(true)
       )
   ),
-  new SlashCommandBuilder()
-    .setName('correct')
-    .setDescription('Fix a name whisper keeps mishearing — across all past sessions and all future ones')
-    .addStringOption((o) =>
-      o.setName('wrong').setDescription('What it hears (e.g. "Vecks")').setRequired(true)
-    )
-    .addStringOption((o) =>
-      o.setName('right').setDescription('What it should be (e.g. "Vex")').setRequired(true)
-    ),
-  new SlashCommandBuilder()
-    .setName('corrections')
-    .setDescription('List the saved transcript corrections for this campaign'),
+  withCampaign(
+    new SlashCommandBuilder()
+      .setName('correct')
+      .setDescription('Fix a name whisper keeps mishearing — across all past sessions and all future ones')
+      .addStringOption((o) =>
+        o.setName('wrong').setDescription('What it hears (e.g. "Vecks")').setRequired(true)
+      )
+      .addStringOption((o) =>
+        o.setName('right').setDescription('What it should be (e.g. "Vex")').setRequired(true)
+      )
+  ),
+  withCampaign(
+    new SlashCommandBuilder()
+      .setName('corrections')
+      .setDescription('List the saved transcript corrections for this campaign')
+  ),
   new SlashCommandBuilder()
     .setName('pending')
     .setDescription('Show everything currently in the pipeline (recording, transcribing, awaiting approval)'),
@@ -311,12 +330,14 @@ export const commandDefs = [
           { name: 'Claude', value: 'anthropic' }
         )
     ),
-  new SlashCommandBuilder()
-    .setName('uncorrect')
-    .setDescription('Remove a saved transcript correction')
-    .addStringOption((o) =>
-      o.setName('wrong').setDescription('The mangled text to stop correcting (must match /correct exactly)').setRequired(true)
-    ),
+  withCampaign(
+    new SlashCommandBuilder()
+      .setName('uncorrect')
+      .setDescription('Remove a saved transcript correction')
+      .addStringOption((o) =>
+        o.setName('wrong').setDescription('The mangled text to stop correcting (must match /correct exactly)').setRequired(true)
+      )
+  ),
   // Subcommands rather than a pile of optional flags, because a server can
   // now hold several campaigns and "create" and "rename" are very different
   // acts to conflate behind one `name:` option — the flat version would have
@@ -475,9 +496,11 @@ export const commandDefs = [
             .setAutocomplete(true)
         )
     ),
-  new SlashCommandBuilder()
-    .setName('whoami')
-    .setDescription('Show what name you currently appear as in transcripts and notes'),
+  withCampaign(
+    new SlashCommandBuilder()
+      .setName('whoami')
+      .setDescription('Show what name you currently appear as in transcripts and notes')
+  ),
   playerCommand(
     new SlashCommandBuilder()
       .setName('stats')
