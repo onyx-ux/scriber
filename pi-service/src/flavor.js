@@ -14,7 +14,7 @@ export function pick(list, vars = {}) {
 
 export const JOIN_NO_CHANNEL = [
   "🧙 I can't record a voice channel you're not in. Join one first.",
-  '🕯️ The scribe needs a room to sit in — hop into a voice channel first.',
+  '🕯️ Quill needs a room to sit in — hop into a voice channel first.',
   "🐦 A familiar can't follow you if you're nowhere to be found. Join a voice channel first.",
   '📜 There is no scene to record — join a voice channel first.',
   '🗝️ The archive requires a location. Join a voice channel, then try again.',
@@ -78,7 +78,7 @@ export const JOIN_STARTED = [
   "🧾 The guild scribe unrolls a fresh scroll in **{channel}**. Don't waste it on small talk.",
   "🌙 Under a watchful moon, tonight's tale begins recording in **{channel}**.",
   '⚗️ A memory-bottling ritual begins in **{channel}** — every word, preserved.',
-  '🎙️ Recording started in **{channel}**. The scribe is listening, and so is history.',
+  '🎙️ Recording started in **{channel}**. Quill is listening, and so is history.',
 ];
 
 export const LEAVE_NOT_RECORDING = [
@@ -112,7 +112,7 @@ export const LEAVE_NOT_RECORDING = [
 // possibly until Monday. So they now describe the tome being CLOSED and set
 // aside, which is exactly what happened.
 export const LEAVE_START = [
-  '⏳ The scribe closes the tome and sets it aside for later.',
+  '⏳ Quill closes the tome and sets it aside for later.',
   '🖋️ Setting down the quill. Tonight\'s pages are safe until the archivist returns.',
   '📜 Rolling up the scroll and tying it off. It keeps.',
   "🧙 'Enough for tonight,' the wizard mutters, stacking the notes with care.",
@@ -137,7 +137,7 @@ export const LEAVE_START = [
 // {failCount}
 export const LEAVE_NOTHING_USABLE = [
   '😶 Nothing but silence and static came through — {failCount} clip(s) failed to transcribe.',
-  "🕸️ The scribe's notes came back blank. {failCount} recording(s) couldn't be read.",
+  "🕸️ Quill's notes came back blank. {failCount} recording(s) couldn't be read.",
   '📜 An empty scroll — transcription produced nothing usable ({failCount} failure(s)).',
   "🧙 'I... didn't catch any of that.' Transcription failed on {failCount} clip(s).",
   "🔇 The session was recorded, but the words didn't survive the journey ({failCount} failure(s)).",
@@ -167,7 +167,7 @@ export const LEAVE_SUMMARIZING_NOW = [
   '✅ {count} lines saved to the annals. The recap-conjuring begins immediately.',
   '✅ {count} lines transcribed — handing this off to the Oracle for summarising.',
   '✅ Captured {count} lines of dialogue. Weaving them into a recap now.',
-  "✅ {count} lines down. The scribe's apprentice is writing the summary.",
+  "✅ {count} lines down. Quill's apprentice is writing the summary.",
   '✅ Transcription complete — {count} lines. Recap incoming shortly.',
   '✅ {count} lines of session recorded. The summary spell is already being cast.',
   '✅ {count} lines transcribed. Turning chaos into a coherent recap now...',

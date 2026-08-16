@@ -8,7 +8,7 @@
 // This is a privacy boundary, not just a lookup. Anyone on Discord can add a
 // user-installed app to their own account, so "which campaign" cannot be
 // answered from the command's arguments alone — otherwise a stranger could
-// install Scriber and read another table's transcripts by naming their
+// install Quill and read another table's transcripts by naming their
 // campaign. Outside the campaign's own server, the only campaigns offered are
 // the ones the CALLER has actually spoken in.
 //

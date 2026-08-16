@@ -95,7 +95,7 @@ const startingGuilds = new Set();
 
 // Commands a PLAYER can run anywhere.
 //
-// Discord calls this a user install: a player adds Scriber to their own
+// Discord calls this a user install: a player adds Quill to their own
 // account and its commands follow them into any channel, including servers
 // the bot has never been in. Discord makes those replies visible only to the
 // caller, which suits these nine — they already reply privately.
@@ -147,7 +147,20 @@ function playerCommand(builder) {
 }
 
 export const commandDefs = [
-  new SlashCommandBuilder().setName('join').setDescription('Start recording this voice channel'),
+  // Recording someone requires being at their table. Membership is the
+  // bot's own roster, not Discord's member list — in a server the bot was
+  // invited to, being able to see a voice channel is not permission to
+  // record the game happening in it.
+  new SlashCommandBuilder()
+    .setName('join')
+    .setDescription('Start recording this voice channel')
+    .addStringOption((o) =>
+      o
+        .setName('campaign')
+        .setDescription("Which campaign this session belongs to (only needed if you're in more than one here)")
+        .setRequired(false)
+        .setAutocomplete(true)
+    ),
   new SlashCommandBuilder().setName('leave').setDescription('Stop recording, transcribe, and queue the summary'),
   playerCommand(
     new SlashCommandBuilder()
@@ -436,6 +449,18 @@ function targetGuildId(interaction) {
 
 async function handleCampaignAutocomplete(interaction, db) {
   if (interaction.commandName === 'dm') return handleDmAutocomplete(interaction, db);
+
+  if (interaction.commandName === 'join') {
+    const typed = String(interaction.options.getFocused() || '').toLowerCase();
+    return interaction.respond(
+      db
+        .listCampaignsForMember(interaction.user.id)
+        .filter((c) => c.guild_id === interaction.guildId)
+        .map((c) => ({ name: (c.name || 'unnamed campaign').slice(0, 100), value: String(c.id) }))
+        .filter((c) => !typed || c.name.toLowerCase().includes(typed))
+        .slice(0, 25)
+    );
+  }
 
   // The session picker for /summarise, /transcribe and /export. Showing the
   // date alongside the reference is what makes it usable — nobody remembers
@@ -847,12 +872,52 @@ export function registerCommandHandlers(client, db, cfg) {
   });
 }
 
+// Which campaign a recording belongs to, out of the ones the caller is at the
+// table for IN THIS SERVER.
+//
+// The membership check is the point: /join starts recording people's voices,
+// and in a server the bot was merely invited to, being able to see a voice
+// channel is not permission to record the game happening in it. The roster is
+// the bot's own — the manager builds it with /dm character — so it says who is
+// actually at this table rather than who is in this Discord.
+export function resolveJoinCampaign(interaction, db) {
+  const mine = db
+    .listCampaignsForMember(interaction.user.id)
+    .filter((c) => c.guild_id === interaction.guildId);
+
+  if (mine.length === 0) {
+    return {
+      error:
+        "🎲 You're not on the roster for a campaign in this server, so I can't start a recording for you.\n" +
+        'Whoever runs the game adds you with `/dm character` — or claims the campaign with `/campaign name:...` if nobody has yet.',
+    };
+  }
+
+  const asked = interaction.options.getString('campaign');
+  if (asked) {
+    const match = mine.find((c) => String(c.id) === asked);
+    return match ? { campaign: match } : { error: "That isn't a campaign you're on the roster for here." };
+  }
+
+  if (mine.length === 1) return { campaign: mine[0] };
+
+  const list = mine.map((c) => `• **${c.name || 'unnamed campaign'}**`).join('\n');
+  return {
+    error:
+      "You're at more than one table in this server, so I don't know which this is. " +
+      `Re-run with the \`campaign\` option:\n\n${list}`,
+  };
+}
+
 async function handleJoin(interaction, db, cfg) {
   const member = interaction.member;
   const voiceChannel = member?.voice?.channel;
   if (!voiceChannel) {
     return interaction.reply({ content: pick(JOIN_NO_CHANNEL), flags: MessageFlags.Ephemeral });
   }
+
+  const { campaign, error } = resolveJoinCampaign(interaction, db);
+  if (error) return interaction.reply({ content: error, flags: MessageFlags.Ephemeral });
   if (activeSessions.has(interaction.guildId) || startingGuilds.has(interaction.guildId)) {
     return interaction.reply({ content: pick(JOIN_ALREADY_RECORDING), flags: MessageFlags.Ephemeral });
   }
@@ -904,6 +969,7 @@ async function handleJoin(interaction, db, cfg) {
     // dangling "recording" meeting behind for crash-recovery to trip over.
     const meetingId = db.createMeeting({
       guildId: interaction.guildId,
+      campaignId: campaign.id,
       channelId: interaction.channelId,
       channelName: voiceChannel.name,
       startedAt: new Date().toISOString(),

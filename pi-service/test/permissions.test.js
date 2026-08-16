@@ -334,3 +334,70 @@ test('two campaigns in one server can send their notes to different places', asy
   assert.equal(db.getOutputForMeeting(inB).mode, 'dm');
   assert.equal(db.getOutputForMeeting(inB).managerUserId, PLAYER);
 });
+
+// --- /join is gated on the bot's own roster ---
+
+const { resolveJoinCampaign } = await import('../src/commands/index.js');
+
+const joining = (guildId, userId, campaign = null) => ({
+  guildId,
+  user: { id: userId },
+  options: { getString: (n) => (n === 'campaign' ? campaign : null) },
+});
+
+// In a server the bot was merely invited to, being able to see a voice
+// channel is not permission to record the game happening in it.
+test('someone not on the roster cannot start a recording', async (t) => {
+  const db = await tmpDb(t);
+  db.createCampaign('G', 'Cipher', DM);
+
+  const { error, campaign } = resolveJoinCampaign(joining('G', PLAYER), db);
+  assert.equal(campaign, undefined);
+  assert.match(error, /not on the roster/);
+  assert.match(error, /\/dm character/, 'and says how to get on it');
+});
+
+test('the manager can always start their own campaign', async (t) => {
+  const db = await tmpDb(t);
+  const id = db.createCampaign('G', 'Cipher', DM);
+  assert.equal(resolveJoinCampaign(joining('G', DM), db).campaign.id, id);
+});
+
+test('a player added to the roster can start a recording', async (t) => {
+  const db = await tmpDb(t);
+  const id = db.createCampaign('G', 'Cipher', DM);
+  db.addCampaignMember(id, PLAYER, DM);
+  assert.equal(resolveJoinCampaign(joining('G', PLAYER), db).campaign.id, id);
+});
+
+// Membership in one server says nothing about another.
+test('being at a table elsewhere does not let you record here', async (t) => {
+  const db = await tmpDb(t);
+  db.createCampaign('ELSEWHERE', 'Cipher', PLAYER);
+  db.createCampaign('HERE', 'Someone Elses Game', DM);
+
+  assert.match(resolveJoinCampaign(joining('HERE', PLAYER), db).error, /not on the roster/);
+});
+
+test('two tables in one server ask which, and name them', async (t) => {
+  const db = await tmpDb(t);
+  const a = db.createCampaign('G', 'Cipher', DM);
+  const b = db.createCampaign('G', 'Curse of Strahd', DM);
+
+  const { error } = resolveJoinCampaign(joining('G', DM), db);
+  assert.match(error, /more than one table/);
+  assert.match(error, /Cipher/);
+  assert.match(error, /Curse of Strahd/);
+
+  assert.equal(resolveJoinCampaign(joining('G', DM, String(a)), db).campaign.id, a);
+  assert.equal(resolveJoinCampaign(joining('G', DM, String(b)), db).campaign.id, b);
+});
+
+test('naming a campaign you are not on the roster for is refused', async (t) => {
+  const db = await tmpDb(t);
+  db.createCampaign('G', 'Cipher', DM);
+  const theirs = db.createCampaign('G', 'Private Game', PLAYER);
+  db.addCampaignMember(db.defaultCampaignId('G'), 'newbie', DM);
+
+  assert.match(resolveJoinCampaign(joining('G', 'newbie', String(theirs)), db).error, /roster for here/);
+});

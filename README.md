@@ -212,6 +212,28 @@ whole stack on one machine for debugging.)*
 - `/transcribe meeting_id:<id> [when:<now|later|pi>]` — control when a queued session transcribes: `now` runs it on the PC as soon as the whisper server answers, `later` pushes it back a day, `pi` transcribes it locally on the Pi instead (slower, no GPU needed). Same three actions as the DM buttons
 - `/summarise meeting_id:<id> [provider:<gemini|anthropic>]` — force an immediate summarise retry. `provider:` picks who writes *this one* summary, overriding `SUMMARY_PROVIDER` without changing it
 - `/export meeting_id:<id>` — get the raw transcript as a `.txt` file
+### Starting a recording
+
+`/join` needs you to be on the campaign's roster. The roster is **the bot's
+own**, not Discord's member list: in a server the bot was merely invited to,
+being able to see a voice channel is not permission to record the game
+happening in it.
+
+You get on it by being added with `/dm character`, by claiming the campaign
+with `/campaign name:...`, or by having already spoken in a recorded session —
+everyone the bot had already heard was enrolled when this landed.
+
+`/join campaign:` picks between tables when you're at more than one in the
+same server. With one, which is the normal case, the option never has to be
+touched.
+
+> Creating a *second* campaign in one server is deliberately not possible yet.
+> The reads (`/recap`, `/stats`, the ledger, the roster) still resolve a guild
+> to its oldest campaign, so a second one would have its sessions mixed into
+> the first's records. Those move to campaign ids next; until they do, the
+> data model supports several tables per server and the command surface does
+> not.
+
 ### Referring to a session
 
 Commands take `Cipher_02` — the campaign, then the session number — matching
@@ -263,7 +285,7 @@ belong day to day.
 
 ### Players can install the app themselves
 
-Nine read-only commands are **user-installable**: a player adds Scriber to
+Nine read-only commands are **user-installable**: a player adds Quill to
 their own Discord account and can run them in any channel, on any server,
 including ones the bot has never been in. Discord shows those replies only to
 whoever ran them.
@@ -277,7 +299,7 @@ belongs to the table rather than to whoever installed the app.
 **This is a permission boundary, so it is enforced rather than assumed.**
 Anyone on Discord can add a user-installed app to their own account, so
 "which campaign" cannot be answered from the command's arguments — otherwise
-a stranger could install Scriber and read another table's transcripts by
+a stranger could install Quill and read another table's transcripts by
 naming their campaign. Outside a campaign's own server, the only campaigns
 reachable are the ones the CALLER has actually spoken in
 (`campaign/scope.js`). Inside the campaign's server nothing changes: being in
