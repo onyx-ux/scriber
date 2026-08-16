@@ -103,6 +103,22 @@
   form.inline { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
   form.inline input { flex: 1 1 110px; }
   .yes { color: var(--ok); } .no { color: var(--bad); } .maybe { color: var(--warn); }
+
+  /* Session notes. Read at a comfortable measure rather than stretched across
+     a 1100px card — this is the one part of the page that is prose, and prose
+     set the full width of a dashboard is prose nobody reads. */
+  #notes { display: none; }
+  #notes.open { display: block; }
+  .notes-body { max-width: 68ch; }
+  .notes-body .tldr { font-size: 16px; line-height: 1.65; margin: 6px 0 20px; }
+  .notes-body h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+                   color: var(--dim); margin: 22px 0 8px; font-weight: 600; }
+  .notes-body h4 { font-size: 14.5px; margin: 14px 0 5px; font-weight: 600; }
+  .notes-body ul { margin: 0; padding-left: 20px; }
+  .notes-body li { margin: 4px 0; line-height: 1.55; }
+  .notes-body .scene { border-left: 2px solid var(--line); padding-left: 14px; margin-bottom: 4px; }
+  .notes-body .funny li { color: #fde68a; }
+  .notes-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -123,6 +139,7 @@
   </div>
 
   <div class="card wide" id="detail"></div>
+  <div class="card wide" id="notes"></div>
 
   <div class="grid">
     <div class="card">
@@ -422,6 +439,7 @@ function sessionRow(view, s) {
         <div class="sub">${esc((s.startedAt || '').slice(0, 10))} · ${esc(s.status)}${s.lines ? ` · ${s.lines} lines` : ''}</div>
       </div>
       <div class="acts">
+        ${s.hasNotes ? `<button class="go" data-notes="${s.meetingId}">Notes</button>` : ''}
         ${done ? `<button data-download="${s.meetingId}">Transcript</button>` : ''}
         ${done ? `<button data-act="summary/again" data-meeting="${s.meetingId}" data-confirm="Write the notes for ${s.ref || `#${s.meetingId}`} again?">Re-summarise</button>` : ''}
       </div>
@@ -429,6 +447,10 @@ function sessionRow(view, s) {
 }
 
 function renderDetail(view) {
+  // Held so the notes reader can offer previous/next without another request.
+  // Newest first, matching the order they are listed in.
+  notesSessions = view.sessions.filter((s) => s.hasNotes);
+
   $('detail').className = 'card wide open';
   $('detail').innerHTML = `
     <div class="detail-head">
@@ -488,8 +510,97 @@ async function openCampaign(id) {
 
 function closeCampaign() {
   openCampaignId = null;
+  notesSessions = [];
   $('detail').className = 'card wide';
   $('detail').innerHTML = '';
+  // Notes belong to the campaign that was open; leaving them behind would
+  // leave one table's recap sitting under another table's roster.
+  closeNotes();
+}
+
+// --- reading a session's notes ---
+//
+// The recap used to be readable only where it was posted, in a Discord message
+// that scrolls away, or in the exported markdown on whichever machine the
+// vault syncs to. Neither is a way to look something up six weeks later.
+
+// Sessions of the open campaign that have notes, newest first — so the reader
+// gets previous/next without another request.
+let notesSessions = [];
+
+const bullets = (title, lines, cls = '') =>
+  lines.length ? `<h3>${title}</h3><ul class="${cls}">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : '';
+
+function renderNotes(n) {
+  const at = notesSessions.findIndex((s) => s.meetingId === n.meetingId);
+  const older = at >= 0 && at < notesSessions.length - 1 ? notesSessions[at + 1] : null;
+  const newer = at > 0 ? notesSessions[at - 1] : null;
+
+  const body = n.unreadable
+    ? `<div class="note">These notes are on disk but aren't readable — the stored summary isn't valid JSON.
+         Re-summarising the session will write them again.</div>`
+    : !n.written
+      ? empty('No notes yet — this session has not been summarised.')
+      : `
+        <div class="notes-body">
+          <div class="tldr">${esc(n.tldr) || '<i>No recap was written.</i>'}</div>
+          ${
+            n.scenes.length
+              ? `<h3>What happened</h3>` +
+                n.scenes
+                  .map(
+                    (s) => `
+                <div class="scene">
+                  <h4>${esc(s.title)}</h4>
+                  <ul>${s.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
+                </div>`
+                  )
+                  .join('')
+              : ''
+          }
+          ${bullets('Party decisions', n.partyDecisions)}
+          ${bullets('Still unresolved', n.unresolvedThreads)}
+          ${bullets('Follow-ups', n.followUps)}
+          ${bullets('NPCs introduced', n.npcsIntroduced)}
+          ${bullets('Locations', n.locationsVisited)}
+          ${bullets('Loot and rewards', n.lootAndRewards)}
+          ${bullets('Worth remembering', n.funnyMoments, 'funny')}
+        </div>`;
+
+  $('notes').className = 'card wide open';
+  $('notes').innerHTML = `
+    <div class="notes-nav">
+      <button data-notes="${older ? older.meetingId : ''}" ${older ? '' : 'disabled'}>← ${
+        older ? esc(older.ref || `#${older.meetingId}`) : 'earlier'
+      }</button>
+      <button data-notes="${newer ? newer.meetingId : ''}" ${newer ? '' : 'disabled'}>${
+        newer ? esc(newer.ref || `#${newer.meetingId}`) : 'later'
+      } →</button>
+      <span style="margin-left:auto"><button data-close-notes>Close</button></span>
+    </div>
+    <div class="detail-head">
+      <h2>${esc(n.ref || `Session #${n.meetingId}`)}</h2>
+      <span class="muted">${esc(n.campaign)} · ${esc((n.startedAt || '').slice(0, 10))}${
+        n.lines ? ` · ${n.lines} lines` : ''
+      }</span>
+    </div>
+    ${body}`;
+  $('notes').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function openNotes(meetingId) {
+  try {
+    const res = await fetch(`${API}/notes?meeting=${meetingId}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    renderNotes(await res.json());
+  } catch (err) {
+    toast(`Couldn't load those notes — ${err.message}`, false);
+  }
+}
+
+function closeNotes() {
+  $('notes').className = 'card wide';
+  $('notes').innerHTML = '';
 }
 
 // The transcript needs the auth header, which a plain <a href> cannot carry —
@@ -532,6 +643,10 @@ document.addEventListener('click', async (event) => {
   // Opening a campaign, closing it, and downloading a transcript are not
   // actions against the API's action table, so they are handled before it.
   if (event.target.closest('[data-close-detail]')) return closeCampaign();
+  if (event.target.closest('[data-close-notes]')) return closeNotes();
+
+  const notes = event.target.closest('button[data-notes]');
+  if (notes) return notes.dataset.notes ? openNotes(Number(notes.dataset.notes)) : undefined;
 
   const download = event.target.closest('button[data-download]');
   if (download) return downloadTranscript(download.dataset.download);

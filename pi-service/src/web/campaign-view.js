@@ -86,6 +86,12 @@ export function buildCampaignView({ db, campaignId }) {
       endedAt: m.ended_at,
       status: m.status,
       lines: db.countUtterances(m.id),
+      // Whether there is anything to READ, which is not the same as whether
+      // the session finished: a summary can fail, or be waiting for approval,
+      // long after the transcript exists. The notes button is offered on this
+      // rather than on status, so it is never offered for a session that would
+      // open empty.
+      hasNotes: Boolean(m.summary_json),
     })),
   };
 }

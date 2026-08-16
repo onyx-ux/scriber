@@ -204,3 +204,17 @@ test('an unknown path is a 404 rather than a stack trace', async (t) => {
   assert.equal((await fetch(`${base}/../etc/passwd`)).status, 404);
   assert.equal((await fetch(`${base}/admin`)).status, 404);
 });
+
+test('notes are readable over HTTP, and an unknown session is a 404', async (t) => {
+  const { db, base, campaignId } = await serving(t, { statusToken: 'sesame' });
+  const { meetingId } = parked(db, campaignId);
+  db.setSummary(meetingId, { tldr: 'They opened the door.', funnyMoments: ['Vex ate the lock'] });
+
+  const view = await (await fetch(`${base}/notes?meeting=${meetingId}&token=sesame`)).json();
+  assert.equal(view.written, true);
+  assert.equal(view.tldr, 'They opened the door.');
+  assert.equal(view.ref, 'Cipher_01');
+  assert.deepEqual(view.funnyMoments, ['Vex ate the lock']);
+
+  assert.equal((await fetch(`${base}/notes?meeting=9999&token=sesame`)).status, 404);
+});

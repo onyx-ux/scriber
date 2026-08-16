@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 
 import { buildStatus } from './status.js';
 import { buildCampaignView } from './campaign-view.js';
+import { buildNotesView } from './notes-view.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { sessionLabel } from '../export/naming.js';
@@ -161,6 +162,21 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
       const view = Number.isInteger(id) && id > 0 ? buildCampaignView({ db, campaignId: id }) : null;
       if (!view) {
         send(res, 404, { ok: false, message: 'No such campaign.' });
+        return;
+      }
+      send(res, 200, view);
+      return;
+    }
+
+    // One session's notes. The recap used to be readable only where it was
+    // posted — a Discord message that scrolls away — or in the exported
+    // markdown on whichever machine the vault syncs to. Neither is a way to
+    // look something up.
+    if (url.pathname === '/notes') {
+      const id = Number(url.searchParams.get('meeting'));
+      const view = Number.isInteger(id) && id > 0 ? buildNotesView({ db, meetingId: id }) : null;
+      if (!view) {
+        send(res, 404, { ok: false, message: 'No such session.' });
         return;
       }
       send(res, 200, view);
