@@ -120,14 +120,17 @@ const PLAYER_COMMANDS = new Set([
 // else has a reason to reach them in any server — the dashboard is where they
 // belong for day-to-day use, and these stay as the away-from-home fallback.
 export const OWNER_ONLY = new Set([
-  'approve', 'transcribe', 'summarise', 'pause', 'resume', 'import', 'export', 'status', 'pending',
+  'approve', 'transcribe', 'summarise', 'pause', 'resume', 'import', 'export', 'pending',
 ]);
 
 // A campaign's records. Held by whoever claimed the campaign with /campaign,
 // not by a Discord permission — see campaign/permissions.js. /campaign itself
 // is absent because an UNCLAIMED campaign has to be claimable by the person
 // setting it up; its handler does the check.
-export const MANAGER_ONLY = new Set(['dm', 'correct', 'uncorrect', 'corrections']);
+// /status is read-only — it says what is queued and whether the summariser is
+// reachable — so a manager waiting on their own session can check without
+// having to ask the owner.
+export const MANAGER_ONLY = new Set(['dm', 'correct', 'uncorrect', 'corrections', 'status']);
 
 function playerCommand(builder) {
   return builder

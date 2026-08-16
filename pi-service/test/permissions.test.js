@@ -139,10 +139,14 @@ test('the command surface splits into the three intended tiers', async () => {
 
   assert.deepEqual(
     [...OWNER_ONLY].sort(),
-    ['approve', 'export', 'import', 'pause', 'pending', 'resume', 'status', 'summarise', 'transcribe'],
+    ['approve', 'export', 'import', 'pause', 'pending', 'resume', 'summarise', 'transcribe'],
     'the pipeline'
   );
-  assert.deepEqual([...MANAGER_ONLY].sort(), ['correct', 'corrections', 'dm', 'uncorrect'], "the campaign's records");
+  assert.deepEqual(
+    [...MANAGER_ONLY].sort(),
+    ['correct', 'corrections', 'dm', 'status', 'uncorrect'],
+    "the campaign's records, plus the read-only /status"
+  );
 
   // What is left is what the table itself may run. /campaign is here because
   // an unclaimed campaign has to be claimable; its handler does that check.
@@ -161,4 +165,106 @@ test('the command surface splits into the three intended tiers', async () => {
     userInstallable.every((n) => !OWNER_ONLY.has(n) && !MANAGER_ONLY.has(n)),
     'a user-installed command cannot be a gated one'
   );
+});
+
+// --- campaigns as things in their own right ---
+
+test('a guild can hold more than one campaign', async (t) => {
+  const db = await tmpDb(t);
+  const a = db.createCampaign('G', 'Cipher', DM);
+  const b = db.createCampaign('G', 'Curse of Strahd', PLAYER);
+
+  assert.notEqual(a, b);
+  assert.deepEqual(db.listCampaignsInGuild('G').map((c) => c.name), ['Cipher', 'Curse of Strahd']);
+  assert.equal(db.getCampaign(a).manager_user_id, DM);
+  assert.equal(db.getCampaign(b).manager_user_id, PLAYER, 'each has its own manager');
+});
+
+// The guild-keyed methods have to keep working while the call sites still
+// speak in guild ids, so they resolve to the guild's OLDEST campaign.
+test('guild-keyed methods resolve to the oldest campaign in the guild', async (t) => {
+  const db = await tmpDb(t);
+  const first = db.createCampaign('G', 'Cipher', DM);
+  db.createCampaign('G', 'Second Game', PLAYER);
+
+  assert.equal(db.defaultCampaignId('G'), first);
+  assert.equal(db.getCampaignName('G'), 'Cipher');
+  assert.equal(db.getCampaignManager('G'), DM);
+});
+
+test('a guild with no campaign gets one on demand', async (t) => {
+  const db = await tmpDb(t);
+  const id = db.defaultCampaignId('BRAND-NEW');
+  assert.ok(id);
+  assert.equal(db.defaultCampaignId('BRAND-NEW'), id, 'and not a second one');
+});
+
+test('each campaign numbers its own sessions', async (t) => {
+  const db = await tmpDb(t);
+  const a = db.createCampaign('G', 'Cipher', DM);
+  const b = db.createCampaign('G', 'Second Game', DM);
+
+  const make = (campaignId) =>
+    db.getMeeting(
+      db.createMeeting({ guildId: 'G', campaignId, channelId: 'C', channelName: 'x', startedAt: 'now', audioDir: '/t' })
+    );
+
+  assert.equal(make(a).session_number, 1);
+  assert.equal(make(a).session_number, 2);
+  assert.equal(make(b).session_number, 1, 'the second campaign starts at one');
+  assert.equal(make(b).campaign_id, b);
+});
+
+// --- membership ---
+
+test('the manager is a member of their own campaign before speaking', async (t) => {
+  const db = await tmpDb(t);
+  const id = db.createCampaign('G', 'Cipher', DM);
+  assert.equal(db.isCampaignMember(id, DM), true);
+  assert.equal(db.isCampaignMember(id, PLAYER), false);
+});
+
+test('claiming a campaign enrols the claimer', async (t) => {
+  const db = await tmpDb(t);
+  db.claimCampaign('G', DM);
+  assert.equal(db.isCampaignMember(db.defaultCampaignId('G'), DM), true);
+});
+
+test('membership is per campaign, not per server', async (t) => {
+  const db = await tmpDb(t);
+  const a = db.createCampaign('G', 'Cipher', DM);
+  const b = db.createCampaign('G', 'Second Game', DM);
+  db.addCampaignMember(a, PLAYER, DM);
+
+  assert.equal(db.isCampaignMember(a, PLAYER), true);
+  assert.equal(db.isCampaignMember(b, PLAYER), false, 'same server, different table');
+});
+
+test('adding the same member twice is a no-op', async (t) => {
+  const db = await tmpDb(t);
+  const id = db.createCampaign('G', 'Cipher', DM);
+  assert.equal(db.addCampaignMember(id, PLAYER, DM), 1);
+  assert.equal(db.addCampaignMember(id, PLAYER, DM), 0);
+  assert.equal(db.listCampaignMembers(id).length, 2, 'manager + player');
+});
+
+// This is what /join offers. Deliberately different from listCampaignsForUser,
+// which is "has spoken" — a player added to a brand new campaign belongs to it
+// before they have said a word.
+test('listCampaignsForMember covers a player who has never spoken', async (t) => {
+  const db = await tmpDb(t);
+  const id = db.createCampaign('G', 'Cipher', DM);
+  db.addCampaignMember(id, PLAYER, DM);
+
+  assert.deepEqual(db.listCampaignsForMember(PLAYER).map((c) => c.name), ['Cipher']);
+  assert.deepEqual(db.listCampaignsForUser(PLAYER), [], 'and has still spoken in none');
+});
+
+test('a removed member is no longer offered the campaign', async (t) => {
+  const db = await tmpDb(t);
+  const id = db.createCampaign('G', 'Cipher', DM);
+  db.addCampaignMember(id, PLAYER, DM);
+
+  assert.equal(db.removeCampaignMember(id, PLAYER), 1);
+  assert.deepEqual(db.listCampaignsForMember(PLAYER), []);
 });

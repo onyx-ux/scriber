@@ -578,8 +578,23 @@ Reachability (whisper server, summariser) is refreshed on the bot's own
 probing the GPU box at that rate would put a permanent trickle of traffic on
 the LAN for no reason.
 
-`STATUS_TOKEN` adds a shared secret if the port is ever reachable from beyond
-the LAN; unset is fine at home. `STATUS_PORT=0` disables the API entirely.
+`STATUS_TOKEN` is required — the dashboard sends it as `X-Status-Token`.
+`STATUS_PORT=0` disables the API entirely.
+
+**The dashboard is the only thing meant to face a URL.** nginx proxies `/api`
+to the Pi and adds the token server-side, so the Pi's port can stay on the LAN
+even if the dashboard is published, and the token never reaches a browser. The
+page used to fetch the Pi directly, which meant every viewer needed to reach
+port 8090 themselves and any token would have sat in the page source.
+
+Access uses nginx's `satisfy any`: an address on `dashboard/config/allowed-ips.conf`
+passes straight through, anything else is asked for the username and password
+in `dashboard/config/.htpasswd`. Either is enough — without `satisfy any` the
+two would be ANDed and the house would be asked for a password as well.
+
+    docker run --rm httpd:alpine htpasswd -nbB matt 'a-long-password'       > dashboard/config/.htpasswd
+
+Both `.htpasswd` and `dashboard/.env` are gitignored.
 
 ## How notes are filed
 

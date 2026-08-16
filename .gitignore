@@ -20,3 +20,7 @@ Thumbs.db
 
 # Whisper model files for the PC-side GPU server (1.5GB+, downloaded locally)
 pc-whisper/models/
+
+# Dashboard credentials
+dashboard/config/.htpasswd
+dashboard/.env

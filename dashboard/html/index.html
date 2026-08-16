@@ -90,11 +90,17 @@
 </div>
 
 <script>
-// The status API's host. Overridable with ?api=http://host:port so the same
-// page works from a phone, or against a second bot, without a rebuild.
-const API = new URLSearchParams(location.search).get('api')
-  || window.SCRIBER_API
-  || 'http://pihouse.local:8090';
+// Same origin by default: nginx proxies /api to the Pi and adds the status
+// token on the way through.
+//
+// The page used to fetch the Pi directly from the browser, which meant the
+// Pi's port had to be reachable by every viewer and any token would have had
+// to live in this file, in plain sight. Proxying keeps the token server-side
+// and leaves the Pi's API on the LAN, so exposing the dashboard to a URL
+// exposes only the dashboard.
+//
+// ?api=http://host:port still overrides it, for pointing at a second bot.
+const API = new URLSearchParams(location.search).get('api') || window.SCRIBER_API || '/api';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));

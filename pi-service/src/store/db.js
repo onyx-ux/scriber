@@ -130,21 +130,13 @@ function migrate(db) {
   // A counter only ever goes up.
   db.exec(`
     CREATE TABLE IF NOT EXISTS campaigns (
-      guild_id TEXT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
       name TEXT,
       next_session INTEGER NOT NULL DEFAULT 1,
+      manager_user_id TEXT,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
-  `);
-
-  // Seed the counter past whatever already exists, so numbering continues
-  // rather than restarting on an established campaign.
-  db.exec(`
-    INSERT INTO campaigns (guild_id, next_session)
-    SELECT guild_id, COALESCE(MAX(session_number), 0) + 1
-      FROM meetings
-     GROUP BY guild_id
-    ON CONFLICT(guild_id) DO NOTHING
   `);
 
   // Who runs this campaign, as far as the bot is concerned.
@@ -159,6 +151,107 @@ function migrate(db) {
     db.exec(`ALTER TABLE campaigns ADD COLUMN manager_user_id TEXT`);
     console.log('[db] migrated: added campaigns.manager_user_id');
   }
+
+  // A campaign becomes a thing in its own right, rather than a synonym for a
+  // Discord server.
+  //
+  // One server commonly hosts two groups playing different games in different
+  // voice channels, and guild_id as the primary key cannot express that. So
+  // campaigns get an id, and a guild may hold several. SQLite cannot add a
+  // primary key by ALTER, hence the copy-and-rename.
+  //
+  // Everything keyed on a guild keeps working throughout: a guild's DEFAULT
+  // campaign is its oldest, which for every campaign that exists today is its
+  // only one. Call sites move over to campaign ids behind that.
+  if (!campaignColumns.includes('id')) {
+    db.exec('BEGIN');
+    try {
+      db.exec(`
+        CREATE TABLE campaigns_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          guild_id TEXT NOT NULL,
+          name TEXT,
+          next_session INTEGER NOT NULL DEFAULT 1,
+          manager_user_id TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO campaigns_new (guild_id, name, next_session, manager_user_id, updated_at)
+             SELECT guild_id, name, next_session, manager_user_id, updated_at FROM campaigns;
+        DROP TABLE campaigns;
+        ALTER TABLE campaigns_new RENAME TO campaigns;
+        CREATE INDEX IF NOT EXISTS idx_campaigns_guild ON campaigns(guild_id);
+      `);
+      db.exec('COMMIT');
+      console.log('[db] migrated: campaigns now have their own id');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  // A campaign row for any guild that has recorded sessions but was never
+  // named. The counter starts past whatever already exists, so numbering
+  // continues rather than restarting on an established campaign.
+  //
+  // No ON CONFLICT(guild_id): a guild may now hold several campaigns, so
+  // guild_id is no longer unique and there is nothing to conflict on.
+  db.exec(`
+    INSERT INTO campaigns (guild_id, next_session)
+    SELECT m.guild_id, COALESCE(MAX(m.session_number), 0) + 1
+      FROM meetings m
+     WHERE NOT EXISTS (SELECT 1 FROM campaigns c WHERE c.guild_id = m.guild_id)
+     GROUP BY m.guild_id
+  `);
+
+  const meetingCols = db.prepare(`PRAGMA table_info(meetings)`).all().map((c) => c.name);
+  if (!meetingCols.includes('campaign_id')) {
+    db.exec(`ALTER TABLE meetings ADD COLUMN campaign_id INTEGER`);
+    const filled = db
+      .prepare(
+        `UPDATE meetings
+            SET campaign_id = (SELECT MIN(c.id) FROM campaigns c WHERE c.guild_id = meetings.guild_id)
+          WHERE campaign_id IS NULL`
+      )
+      .run().changes;
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_meetings_campaign ON meetings(campaign_id)`);
+    console.log(`[db] migrated: added meetings.campaign_id (${filled} session(s) assigned)`);
+  }
+
+  // Who is at the table. Membership is what /join checks, so that a stranger
+  // in a public server cannot start a recording of somebody else's game.
+  //
+  // The manager adds people (setting a character enrols them); everyone the
+  // bot has already recorded is grandfathered in below, since they plainly
+  // belong to the campaign they have been speaking in.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_members (
+      campaign_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      added_by TEXT,
+      added_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (campaign_id, user_id)
+    )
+  `);
+
+  const grandfathered = db
+    .prepare(
+      `INSERT INTO campaign_members (campaign_id, user_id, added_by)
+       SELECT DISTINCT m.campaign_id, u.user_id, 'grandfathered'
+         FROM utterances u
+         JOIN meetings m ON m.id = u.meeting_id
+        WHERE m.campaign_id IS NOT NULL
+       ON CONFLICT(campaign_id, user_id) DO NOTHING`
+    )
+    .run().changes;
+  if (grandfathered) console.log(`[db] ${grandfathered} existing speaker(s) enrolled in their campaign`);
+
+  // The manager runs the campaign, so they are a member of it by definition —
+  // including before they have ever spoken in one.
+  db.exec(`
+    INSERT INTO campaign_members (campaign_id, user_id, added_by)
+    SELECT id, manager_user_id, 'manager' FROM campaigns WHERE manager_user_id IS NOT NULL
+    ON CONFLICT(campaign_id, user_id) DO NOTHING
+  `);
 }
 
 export function openDb(path) {
@@ -171,6 +264,18 @@ export function openDb(path) {
 }
 
 function wrap(db) {
+  // A guild's DEFAULT campaign — its oldest, which for every campaign that
+  // exists today is its only one. Guild-keyed methods resolve through here so
+  // they keep working while the campaign id spreads through the call sites.
+  //
+  // Creates one if the guild has none, because /join has to be able to record
+  // a server's first session before anybody has named the campaign.
+  const defaultCampaignId = db.transaction((guildId) => {
+    const row = db.prepare(`SELECT MIN(id) AS id FROM campaigns WHERE guild_id = ?`).get(guildId);
+    if (row?.id) return row.id;
+    return db.prepare(`INSERT INTO campaigns (guild_id) VALUES (?)`).run(guildId).lastInsertRowid;
+  });
+
   return {
     raw: db,
 
@@ -178,22 +283,22 @@ function wrap(db) {
       db.close();
     },
 
-    createMeeting: db.transaction(({ guildId, channelId, channelName, startedAt, audioDir }) => {
+    createMeeting: db.transaction(({ guildId, campaignId = null, channelId, channelName, startedAt, audioDir }) => {
       // Take the next number from the campaign's counter and advance it. The
       // counter never goes backwards, so a deleted session's number is never
       // handed out again — see the note on the campaigns table.
-      db.prepare(`INSERT INTO campaigns (guild_id) VALUES (?) ON CONFLICT(guild_id) DO NOTHING`).run(guildId);
+      const id = campaignId ?? defaultCampaignId(guildId);
       const { next_session: sessionNumber } = db
-        .prepare(`SELECT next_session FROM campaigns WHERE guild_id = ?`)
-        .get(guildId);
-      db.prepare(`UPDATE campaigns SET next_session = next_session + 1 WHERE guild_id = ?`).run(guildId);
+        .prepare(`SELECT next_session FROM campaigns WHERE id = ?`)
+        .get(id);
+      db.prepare(`UPDATE campaigns SET next_session = next_session + 1 WHERE id = ?`).run(id);
 
       const info = db
         .prepare(
-          `INSERT INTO meetings (guild_id, channel_id, channel_name, started_at, audio_dir, status, session_number)
-           VALUES (?, ?, ?, ?, ?, 'recording', ?)`
+          `INSERT INTO meetings (guild_id, campaign_id, channel_id, channel_name, started_at, audio_dir, status, session_number)
+           VALUES (?, ?, ?, ?, ?, ?, 'recording', ?)`
         )
-        .run(guildId, channelId, channelName, startedAt, audioDir, sessionNumber);
+        .run(guildId, id, channelId, channelName, startedAt, audioDir, sessionNumber);
       return info.lastInsertRowid;
     }),
 
@@ -203,10 +308,10 @@ function wrap(db) {
       // Must not reset next_session — the row may already exist because
       // sessions have been recorded, and clobbering the counter would restart
       // numbering over notes that already exist.
-      db.prepare(
-        `INSERT INTO campaigns (guild_id, name, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(guild_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`
-      ).run(guildId, name);
+      db.prepare(`UPDATE campaigns SET name = ?, updated_at = datetime('now') WHERE id = ?`).run(
+        name,
+        defaultCampaignId(guildId)
+      );
     },
 
     getCampaignName(guildId) {
@@ -225,20 +330,93 @@ function wrap(db) {
     // every /campaign without a separate "is it claimed?" round trip racing
     // against itself.
     claimCampaign: db.transaction((guildId, userId) => {
+      const id = defaultCampaignId(guildId);
       db.prepare(
-        `INSERT INTO campaigns (guild_id, manager_user_id, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(guild_id) DO UPDATE SET manager_user_id = COALESCE(campaigns.manager_user_id, excluded.manager_user_id)`
-      ).run(guildId, userId);
-      return db.prepare(`SELECT manager_user_id FROM campaigns WHERE guild_id = ?`).get(guildId).manager_user_id;
+        `UPDATE campaigns SET manager_user_id = COALESCE(manager_user_id, ?), updated_at = datetime('now') WHERE id = ?`
+      ).run(userId, id);
+      const manager = db.prepare(`SELECT manager_user_id FROM campaigns WHERE id = ?`).get(id).manager_user_id;
+      // The manager is a member of their own campaign by definition, before
+      // they have ever spoken in it.
+      db.prepare(
+        `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'manager')
+         ON CONFLICT(campaign_id, user_id) DO NOTHING`
+      ).run(id, manager);
+      return manager;
     }),
 
     // Handing a campaign over, and the backfill that gives existing campaigns
     // a manager on first boot after the column was added.
     setCampaignManager(guildId, userId) {
-      db.prepare(
-        `INSERT INTO campaigns (guild_id, manager_user_id, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(guild_id) DO UPDATE SET manager_user_id = excluded.manager_user_id, updated_at = excluded.updated_at`
-      ).run(guildId, userId);
+      db.prepare(`UPDATE campaigns SET manager_user_id = ?, updated_at = datetime('now') WHERE id = ?`).run(
+        userId,
+        defaultCampaignId(guildId)
+      );
+    },
+
+    // --- campaign identity and membership ---
+
+    defaultCampaignId(guildId) {
+      return defaultCampaignId(guildId);
+    },
+
+    listCampaignsInGuild(guildId) {
+      return db.prepare(`SELECT * FROM campaigns WHERE guild_id = ? ORDER BY id`).all(guildId);
+    },
+
+    getCampaign(campaignId) {
+      return db.prepare(`SELECT * FROM campaigns WHERE id = ?`).get(campaignId) ?? null;
+    },
+
+    createCampaign(guildId, name, managerUserId) {
+      const id = db
+        .prepare(`INSERT INTO campaigns (guild_id, name, manager_user_id) VALUES (?, ?, ?)`)
+        .run(guildId, name, managerUserId).lastInsertRowid;
+      db.prepare(`INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'manager')`).run(
+        id,
+        managerUserId
+      );
+      return id;
+    },
+
+    addCampaignMember(campaignId, userId, addedBy = null) {
+      return db
+        .prepare(
+          `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, ?)
+           ON CONFLICT(campaign_id, user_id) DO NOTHING`
+        )
+        .run(campaignId, userId, addedBy).changes;
+    },
+
+    removeCampaignMember(campaignId, userId) {
+      return db
+        .prepare(`DELETE FROM campaign_members WHERE campaign_id = ? AND user_id = ?`)
+        .run(campaignId, userId).changes;
+    },
+
+    isCampaignMember(campaignId, userId) {
+      return Boolean(
+        db.prepare(`SELECT 1 FROM campaign_members WHERE campaign_id = ? AND user_id = ?`).get(campaignId, userId)
+      );
+    },
+
+    listCampaignMembers(campaignId) {
+      return db.prepare(`SELECT * FROM campaign_members WHERE campaign_id = ? ORDER BY added_at`).all(campaignId);
+    },
+
+    // What /join offers: the campaigns this person is actually at the table
+    // for. Not the same as listCampaignsForUser, which is participation
+    // (has spoken) and answers a different question — a player added to a
+    // brand new campaign belongs to it before they have said a word.
+    listCampaignsForMember(userId) {
+      return db
+        .prepare(
+          `SELECT c.*
+             FROM campaign_members cm
+             JOIN campaigns c ON c.id = cm.campaign_id
+            WHERE cm.user_id = ?
+            ORDER BY c.guild_id, c.id`
+        )
+        .all(userId);
     },
 
     adoptUnmanagedCampaigns(userId) {

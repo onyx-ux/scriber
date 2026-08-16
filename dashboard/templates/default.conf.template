@@ -1,0 +1,48 @@
+# The dashboard, and the only thing that should ever face a URL.
+#
+# nginx:alpine runs envsubst over /etc/nginx/templates/*.template at start-up,
+# so ${PI_API} and ${STATUS_TOKEN} come from the environment rather than being
+# baked into an image or committed to git.
+
+server {
+    listen 80;
+    server_name _;
+
+    # `satisfy any` is the whole lockdown: a request passes if EITHER its
+    # address is on the allow list OR it carries valid credentials. So the LAN
+    # stays frictionless and anything arriving from outside it has to log in.
+    #
+    # Without `satisfy any` these two are ANDed, and the house would be asked
+    # for a password as well.
+    satisfy any;
+    include /etc/nginx/allowed-ips.conf;
+    deny all;
+
+    auth_basic "Scriber";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        root /usr/share/nginx/html;
+        index index.html;
+    }
+
+    # The status API, proxied so the token never reaches the browser.
+    #
+    # The page used to call the Pi directly, which meant every viewer needed
+    # to reach port 8090 themselves and any token would have been sitting in
+    # the page source. Here it is added server-side, and the Pi's API can stay
+    # bound to the LAN even when the dashboard is public.
+    location /api/ {
+        proxy_pass ${PI_API}/;
+        proxy_set_header X-Status-Token "${STATUS_TOKEN}";
+        proxy_set_header Host $host;
+
+        # A dashboard that hangs for a minute because the Pi is rebooting is
+        # worse than one that says "unreachable" in three seconds.
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 10s;
+
+        # The page polls; a cached status is a lie.
+        add_header Cache-Control "no-store" always;
+    }
+}
