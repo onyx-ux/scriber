@@ -1346,7 +1346,16 @@ async function handleSetCharacter(interaction, db) {
 }
 
 async function handleStatus(interaction, db, cfg) {
-  const jobs = db.listPendingJobs();
+  const target = campaign(interaction);
+
+  // A manager sees THEIR campaign's queue; the owner, who is responsible for
+  // the machine, sees everything. Before campaigns had ids this was the same
+  // list either way — with two tables it stops being, and a manager has no
+  // business reading the other game's session ids and error text.
+  const owner = isOwner(interaction.user.id, cfg);
+  const mine = (meetingId) => owner || db.getMeeting(meetingId)?.campaign_id === target.id;
+
+  const jobs = db.listPendingJobs().filter((j) => mine(j.meeting_id));
   const reachable = await isSummariserReachable(cfg);
   const reachableText = reachable ? '✅ reachable' : '❌ not reachable';
   const label = summariserLabel(cfg);
@@ -1355,7 +1364,9 @@ async function handleStatus(interaction, db, cfg) {
   // ground through on the Pi shows up here and nowhere else — this is the
   // one that can legitimately take hours and prompt "is it stuck?".
   const now = Date.now();
-  const transcribing = listTranscriptions().map((entry) => `- Meeting #${entry.meetingId}: ${describeTranscription(entry, now)}`);
+  const transcribing = listTranscriptions()
+    .filter((entry) => mine(entry.meetingId))
+    .map((entry) => `- Meeting #${entry.meetingId}: ${describeTranscription(entry, now)}`);
 
   if (jobs.length === 0 && transcribing.length === 0) {
     return interaction.reply({
@@ -1377,6 +1388,7 @@ async function handleStatus(interaction, db, cfg) {
   });
 
   const sections = [pick(STATUS_QUEUED_HEADER, { reachable: reachableText, label })];
+  if (!owner) sections.push(`_For **${campaignLabel(target)}**._`);
   if (transcribing.length > 0) sections.push(transcribing.join('\n'));
   if (lines.length > 0) sections.push(lines.join('\n'));
 
