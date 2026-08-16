@@ -202,6 +202,11 @@
     </div>
 
     <div class="card">
+      <h2>In the queue</h2>
+      <div id="queue"></div>
+    </div>
+
+    <div class="card">
       <h2>Servers</h2>
       <div id="servers"></div>
     </div>
@@ -345,11 +350,19 @@ function render(s) {
 
   // The decisions that used to be buttons in a Discord DM.
   //
-  // Ordered so the two that need an answer come first: a session waiting on
-  // you is the reason to open this page, and one that is merely queued is not.
+  // ONLY things that need an answer from you. The queued ones used to be in
+  // here too, under a heading that says "Waiting for you" — so a session that
+  // was approved and waiting on the PC appeared as something you had to act
+  // on, with no button to act with, which reads as a broken page rather than
+  // as "nothing to do". They live in their own card now.
   const waiting = [
     ...s.queue.awaitingTranscribe.map((q) => ({ ...q, what: 'needs your approval to transcribe', act: 'transcribe' })),
     ...s.queue.awaitingSummary.map((q) => ({ ...q, what: 'needs your approval to summarise', act: 'summary' })),
+  ];
+
+  // Approved, or moving on its own. Nothing here is yours to do — except when
+  // it has failed, which is the one case that does want a decision.
+  const inFlight = [
     ...s.queue.queuedTranscribe.map((q) => ({ ...q, what: 'approved — waiting for the PC' })),
     ...s.queue.queuedSummary.map((q) => ({ ...q, what: 'queued to summarise' })),
   ];
@@ -383,7 +396,10 @@ function render(s) {
   // it is the one click here that spends real money without naming what it
   // spent it on, so it should not sit in the same row as a single approval.
   const bulk = s.queue.awaitingSummary.length;
-  const needsYou = waiting.filter((q) => q.act).length;
+  // Everything in `waiting` needs an answer now that the queued ones have
+  // their own card, so this is just its length — kept named because the count
+  // badge and the tab title both mean "decisions outstanding", not "rows".
+  const needsYou = waiting.length;
 
   const queued = waiting.length
     ? `<div class="card attn">
@@ -404,6 +420,37 @@ function render(s) {
     : '';
 
   $('attention').innerHTML = live + queued;
+
+  // The queue, and the failures in it.
+  //
+  // A session that produced nothing usable retries on the schedule forever,
+  // because nothing that could happen would make it succeed — an empty
+  // recording stays empty. That is the one queued item that does want a
+  // decision, so it gets the only one that makes sense: throw it away. The
+  // API refuses to discard anything with a transcribed line in it, so the
+  // button cannot take a real session with it.
+  const flightRow = (q) => {
+    const failed = Boolean(q.lastError);
+    const empty = failed && !q.utterances;
+    return `
+      <div class="item">
+        <div class="title">#${q.meetingId} — ${esc(q.channel)}</div>
+        <div class="sub">
+          ${failed ? '<span class="no">failed</span> · ' : ''}${esc(q.what)}${q.utterances ? ` · ${q.utterances} lines` : ''}
+          ${q.attempts ? ` · attempt ${q.attempts}` : ''}
+          ${q.lastError ? `<br><span class="no">${esc(q.lastError)}</span>` : ''}
+          ${empty ? '<br>Nothing was recorded, so retrying cannot help.' : ''}
+        </div>
+        ${
+          empty && canAct
+            ? `<div class="acts"><button class="warn" data-act="session/discard" data-meeting="${q.meetingId}"
+                 data-confirm="Discard empty session #${q.meetingId}? It has no transcript, and this stops it retrying.">Discard</button></div>`
+            : ''
+        }
+      </div>`;
+  };
+
+  $('queue').innerHTML = inFlight.length ? inFlight.map(flightRow).join('') : empty('Nothing queued.');
 
   // The tab title carries the same two facts, so a dashboard left open in a
   // background tab can still say a session ended and is waiting on you.

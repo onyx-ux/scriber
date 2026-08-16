@@ -16,6 +16,7 @@ import {
   approveAllSummaries,
   parkSummary,
   resummarise,
+  discardSession,
   transcribeAction,
   setPaused,
   addCorrection,
@@ -85,6 +86,12 @@ export const ACTIONS = {
     const id = positiveInt(body?.meetingId);
     if (!id) return badRequest('A numeric meetingId is required.');
     return { status: 200, payload: resummarise(db, cfg, { meetingId: id, provider: body.provider ?? null }) };
+  },
+
+  'session/discard': (db, cfg, body) => {
+    const id = positiveInt(body?.meetingId);
+    if (!id) return badRequest('A numeric meetingId is required.');
+    return { status: 200, payload: discardSession(db, { meetingId: id }) };
   },
 
   // --- a campaign's records ---

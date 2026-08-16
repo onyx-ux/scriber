@@ -259,6 +259,46 @@ export function forgetCharacter(db, { campaignId, userId } = {}) {
     : { ok: false, message: '⚠️ They had no character name set.' };
 }
 
+// --- throwing away a session that never had anything in it ---
+
+// A recording where nobody was recordable — everyone declined, or the bot sat
+// in an empty channel — produces a meeting with no audio and no transcript.
+// It then queues, fails with "transcription produced nothing usable", and
+// retries on the schedule forever, because there is nothing that could ever
+// make it succeed. Until now the only cure was surgery on the database.
+//
+// The guard is what makes this safe rather than a delete button: a session
+// with even one transcribed line cannot be discarded here, whatever its
+// status. So this can throw away an empty recording and can never throw away
+// somebody's evening.
+export function discardSession(db, { meetingId } = {}) {
+  const meeting = db.getMeeting(meetingId);
+  if (!meeting) return { ok: false, message: '⚠️ No such session.' };
+
+  const lines = db.countUtterances(meetingId);
+  if (lines > 0) {
+    return {
+      ok: false,
+      message:
+        `⚠️ Session #${meetingId} has ${lines} transcribed line${lines === 1 ? '' : 's'}, so it is not empty. ` +
+        'Only a session that never produced anything can be discarded.',
+    };
+  }
+
+  const removed = db.discardEmptyMeeting(meetingId);
+  if (!removed) {
+    return { ok: false, message: `⚠️ Session #${meetingId} was not discarded — it is no longer empty.` };
+  }
+
+  return {
+    ok: true,
+    meetingId,
+    message:
+      `🗑️ Discarded empty session #${meetingId} and stopped it retrying. ` +
+      'Its audio folder is left for the retention sweep to clear.',
+  };
+}
+
 // --- the two pause switches ---
 
 // Named as they are stored, so the caller cannot invent a third queue by

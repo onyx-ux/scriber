@@ -82,6 +82,7 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'pause',
       'roster/character',
       'roster/forget',
+      'session/discard',
       'summary/again',
       'summary/approve',
       'summary/approve-all',
@@ -438,4 +439,44 @@ test('an import is accepted and left running rather than awaited', async (t) => 
   assert.equal(started.length, 1);
   assert.equal(started[0].speakerLabel, 'The Table');
   assert.equal(started[0].guildId, 'guild-1', 'filed against the campaign it was named for');
+});
+
+// --- discarding a session that never had anything in it ---
+//
+// A recording where nobody was recordable produces a meeting with no audio, no
+// transcript, and a job that fails with "produced nothing usable" and retries
+// on the schedule forever — because nothing that could happen would make it
+// succeed. The guard is what makes a delete button safe: emptiness is part of
+// the DELETE's own WHERE, so there is no gap between checking and deleting in
+// which a real session could appear.
+
+test('an empty failed session can be thrown away, and stops retrying', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { meetingId, jobId } = parked(db, 'transcribe', campaignId);
+
+  const res = runAction({ pathname: '/actions/session/discard', body: { meetingId }, db, cfg });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(db.getMeeting(meetingId), undefined, 'the meeting is gone');
+  assert.equal(db.getJob(jobId), undefined, 'and so is the job that kept retrying it');
+});
+
+test('a session with a transcript cannot be discarded, whatever its status', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const { meetingId } = parked(db, 'summarize', campaignId);
+  db.setMeetingStatus(meetingId, 'transcription_failed');
+
+  const res = runAction({ pathname: '/actions/session/discard', body: { meetingId }, db, cfg });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /not empty/);
+  assert.ok(db.getMeeting(meetingId), "somebody's evening is not a delete button's business");
+  assert.equal(db.listUtterances(meetingId).length, 1);
+});
+
+test('discarding something that does not exist says so', async (t) => {
+  const { db, cfg } = await harness(t);
+  const res = runAction({ pathname: '/actions/session/discard', body: { meetingId: 4242 }, db, cfg });
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /No such session/);
 });

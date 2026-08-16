@@ -1012,6 +1012,28 @@ function wrap(db) {
       return db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(jobId);
     },
 
+    // Throw away a meeting that never produced a transcript, and the jobs
+    // that keep retrying it.
+    //
+    // The NOT EXISTS is the safety, and it lives in the SQL rather than in the
+    // caller on purpose: checking "is it empty?" and then deleting are two
+    // statements, and a transcription finishing between them would delete a
+    // real session. Here the emptiness is part of the delete's own WHERE, so
+    // there is no gap to lose a session in.
+    //
+    // Returns 0 when the meeting was not empty, so the caller can say so.
+    discardEmptyMeeting: db.transaction((meetingId) => {
+      const gone = db
+        .prepare(
+          `DELETE FROM meetings
+            WHERE id = ?
+              AND NOT EXISTS (SELECT 1 FROM utterances u WHERE u.meeting_id = meetings.id)`
+        )
+        .run(meetingId).changes;
+      if (gone) db.prepare(`DELETE FROM jobs WHERE meeting_id = ?`).run(meetingId);
+      return gone;
+    }),
+
     listPendingJobs() {
       return db
         .prepare(
