@@ -1982,6 +1982,7 @@ function modelsScreen() {
               peak ${n(peak)} tokens in a day
             </div>
           </div>
+          ${backupCard()}
           <div class="card">
             <div class="cap">Questions</div>
             <div class="quiet" style="margin-top:10px">
@@ -2008,6 +2009,49 @@ function modelsScreen() {
             <div class="r mono ${row.limited ? 'waiting' : ''}">${row.limited ? n(row.limited) : '—'}</div>
           </div>`).join('')
           : '<div class="quiet" style="padding:16px 0">No calls in the last week.</div>'}
+      </div>
+    </div>`;
+}
+
+// Whether the newest snapshot has ever been opened.
+//
+// "Never checked" renders as its own state rather than as either good or bad,
+// because it is neither — and a green tick on a backup nobody has opened is
+// exactly the reassurance that gets somebody into trouble.
+function backupCard() {
+  const b = status?.backup;
+
+  if (!b) {
+    return `<div class="card">
+      <div class="cap">Backup</div>
+      <div class="quiet" style="margin-top:10px">
+        Not checked yet. The snapshot is verified right after it is taken, so this fills in the next time one runs.
+      </div>
+    </div>`;
+  }
+
+  const lines = b.counts
+    ? Object.entries(b.counts).map(([table, c]) =>
+        `<div style="display:flex;justify-content:space-between;font-size:12.5px">
+           <span class="muted">${esc(table)}</span><span class="mono">${n(c.backed)}</span>
+         </div>`).join('')
+    : '';
+
+  return `
+    <div class="card" ${b.ok ? '' : 'style="border-color:var(--red-br)"'}>
+      <div class="cap" style="${b.ok ? '' : 'color:var(--red-lit)'}">Backup</div>
+      <h4 style="${b.ok ? '' : 'color:var(--red-lit)'}">
+        ${b.ok ? 'Opens and reads correctly' : 'Not restorable'}
+      </h4>
+      <div class="quiet" style="margin-top:8px">
+        ${b.ok
+          ? `Verified ${b.ageHours != null ? `${b.ageHours < 1 ? 'less than an hour' : `${Math.round(b.ageHours)}h`} after it was taken` : ''}
+             — opened as a database, integrity checked, row counts compared to live.`
+          : esc(b.reason ?? 'The newest snapshot could not be opened.')}
+      </div>
+      ${lines ? `<div style="margin-top:12px;display:flex;flex-direction:column;gap:4px">${lines}</div>` : ''}
+      <div class="quiet" style="margin-top:12px;font-size:12px">
+        This proves the file is a database, not that a Pi will boot from it. Only restoring one does that.
       </div>
     </div>`;
 }

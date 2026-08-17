@@ -76,6 +76,7 @@ export function scopeStatus(status, viewer) {
     scoped.totals = status.totals;
     // The API bill, and which model is spending it. One person's business.
     scoped.models = status.models;
+    scoped.backup = status.backup;
   }
 
   return scoped;

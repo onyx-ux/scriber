@@ -3,6 +3,7 @@ import { basename, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { checkAndRecordBackup } from '../maintenance/backup-check.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -124,6 +125,10 @@ export async function backupAndSyncDatabase(db, cfg) {
     await db.raw.backup(snapshotPath);
     await rcloneCopy(snapshotPath, remotePath(cfg, 'db-backups'));
     console.log(`[drive-sync] uploaded db snapshot ${snapshotPath}`);
+
+    // Opened and checked, not just written. A snapshot nobody has ever
+    // opened is a hypothesis — see maintenance/backup-check.js.
+    await checkAndRecordBackup(db, cfg);
   } catch (err) {
     console.error(`[drive-sync] db backup/upload failed: ${err.message}`);
   } finally {

@@ -3,6 +3,7 @@ import { nextAutoWindowStart } from '../pipeline/transcribe-schedule.js';
 import { detectOpusBackend } from '../voice/opus-backend.js';
 import { configuredProviders } from '../pipeline/model-client.js';
 import { topModel, ladderFor, knownModels } from '../pipeline/model-choice.js';
+import { lastBackupCheck } from '../maintenance/backup-check.js';
 
 // The snapshot the dashboard renders.
 //
@@ -264,6 +265,11 @@ export function buildStatus({
     // Stripped for everyone below dev by web/scope.js along with the rest of
     // the machinery — this is the API bill, and it is one person's business.
     models: modelReport({ db, cfg }),
+
+    // Whether the newest snapshot has ever been opened, and what it said.
+    // Machinery, so dev only — and null until something has checked, which
+    // the page must render as "unknown" rather than as "fine".
+    backup: lastBackupCheck(db),
     // Whether this bot will accept actions at all. Without it a dashboard with
     // no STATUS_TOKEN configured looks merely broken: every button returns 403
     // and the cause, one unset variable on the Pi, is invisible from the page.
