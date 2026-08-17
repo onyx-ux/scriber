@@ -479,6 +479,11 @@ let notesKey = null;    // the session and job those notes were fetched for
 let script = null;      // last /transcript?…&format=json
 let lastSeen = null;
 
+// The member search on the table tab. `results: null` means "not searched
+// yet", which renders as nothing — distinct from `[]`, which is the honest
+// and different statement that nobody matched.
+const people = { query: '', results: null, error: '', busy: false };
+
 const PROVIDERS = { gemini: 'Gemini', anthropic: 'Claude' };
 const providerName = (p) => PROVIDERS[p] || p;
 
@@ -1321,12 +1326,14 @@ function rosterTab() {
             </span></div>
             <div class="r" style="display:flex;justify-content:flex-end;align-items:center;gap:10px">
               <span class="as-val ${p.consent.withdrawn ? 'declined' : CONSENT_CLASS[p.consent.state] || 'never'}">${esc(p.consent.label)}</span>
-              ${p.consent.mayRecord || p.consent.withdrawn ? '' : '<button class="btn sm" data-invite>Invite</button>'}
+              ${askable(p) ? `<button class="btn sm" data-act="roster/invite" data-campaign="${detail.id}"
+                data-user="${esc(p.userId)}">${p.consent.state === 'pending' ? 'Ask again' : 'Invite'}</button>` : ''}
             </div>
           </div>`;
         }).join('')}
       </div>
       ${roster.length ? '' : '<div class="quiet" style="padding:20px 0">Nobody at this table yet.</div>'}
+      ${can() ? invitePanel() : ''}
       ${roster.some((p) => p.consent.withdrawn) ? `
         <div style="border-left:2px solid var(--edge);padding-left:16px;margin-top:26px;max-width:70ch">
           <div class="quiet">
@@ -1338,12 +1345,78 @@ function rosterTab() {
     </div>`;
 }
 
+// Who it makes sense to ask.
+//
+// Not someone who already agreed, and never someone who turned recording off
+// themselves — re-asking them is the one thing this screen must not offer,
+// because it turns their own decision into something to be nagged about.
+const askable = (p) => can() && !p.consent.mayRecord && !p.consent.withdrawn && p.consent.state !== 'declined';
+
 const listNames = (people) => {
   const names = people.map(whoIs);
   if (names.length === 1) return names[0];
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 };
+
+// Ask somebody who is not on the roster yet.
+//
+// Typed, not pasted: the operator knows their table by the name in the channel,
+// and a screen that demanded a Discord snowflake would send them back to the
+// client to right-click somebody — which is exactly the errand this page exists
+// to save. A pasted id still works, for a nickname the search cannot match.
+function invitePanel() {
+  const found = people.results;
+
+  return `
+    <div style="margin-top:34px;max-width:760px">
+      <div class="cap" style="margin-bottom:12px">Ask someone new</div>
+      <form class="row-btns" data-people-search>
+        <input class="in" id="people-q" name="query" style="flex:0 0 280px"
+               placeholder="a Discord name, or a pasted user id" value="${esc(people.query)}"
+               aria-label="Search this server for a person">
+        <button class="btn go" type="submit" ${people.busy ? 'disabled' : ''}>
+          ${people.busy ? 'Looking…' : 'Search'}</button>
+        ${people.query || found ? '<button class="btn ghost" type="button" data-people-clear>Clear</button>' : ''}
+      </form>
+
+      ${people.error ? `<div class="quiet" style="margin-top:12px;color:var(--brass-lit)">${esc(people.error)}</div>` : ''}
+
+      ${found ? (found.length ? `
+        <div class="grid" style="margin-top:18px">
+          ${found.map((m) => {
+            const already = detail.roster.find((p) => p.userId === m.userId);
+            return `<div class="tr" style="grid-template-columns:36px 1fr 1fr auto">
+              <div>${m.avatar
+                ? `<img src="${esc(m.avatar)}" alt="" width="28" height="28" style="border-radius:50%">`
+                : '<span class="dot" style="width:28px;height:28px;border-radius:50%"></span>'}</div>
+              <div>
+                <div style="font-size:14.5px">${esc(m.displayName)}</div>
+                <div class="mono" style="font-size:11px;color:var(--dim);margin-top:2px">@${esc(m.username)}</div>
+              </div>
+              <div class="quiet">${already
+                ? (already.consent.mayRecord ? 'already agreed'
+                   : already.consent.withdrawn ? 'turned recording off themselves'
+                   : already.consent.state === 'pending' ? 'asked, waiting'
+                   : 'on the roster, not asked')
+                : 'not at this table yet'}</div>
+              <div class="r">${already?.consent.mayRecord || already?.consent.withdrawn
+                ? ''
+                : `<button class="btn sm go" data-act="roster/invite" data-campaign="${detail.id}"
+                     data-user="${esc(m.userId)}">Ask them</button>`}</div>
+            </div>`;
+          }).join('')}
+        </div>` : `<div class="quiet" style="margin-top:14px">
+          Nobody in this server matches “${esc(people.query)}”. Discord matches on username and server nickname —
+          or paste their user id (right-click them in Discord, Copy User ID).
+        </div>`) : ''}
+
+      <div class="quiet" style="margin-top:16px;max-width:70ch">
+        They get a DM explaining what is recorded, where it goes and how long it is kept, with the buttons to
+        agree or refuse. Nothing of theirs is captured until they say yes.
+      </div>
+    </div>`;
+}
 
 // Click the name to change it, rather than a form under every row. A roster of
 // six players was six always-open text boxes, which read as a data-entry
@@ -1515,7 +1588,9 @@ function settingsTab() {
             <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Asked, waiting</span><span class="mono waiting">${asked}</span></div>
             <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Never asked</span><span class="mono never">${never}</span></div>
           </div>
-          ${asked + never ? '<div class="quiet" style="margin-top:14px">Invitations are a DM, so they are sent with <code>/campaign invite</code>.</div>' : ''}
+          ${asked + never ? `<button class="btn wide" style="margin-top:16px" data-tab="table">
+            Ask the ${asked + never === 1 ? 'one who has not answered' : `${asked + never} who have not answered`}
+          </button>` : ''}
         </div>
         <div class="card">
           <div class="cap">Reading it elsewhere</div>
@@ -1841,6 +1916,9 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
   notes = null;
   notesKey = null;
   script = null;
+  // A search is scoped to one server; carrying its results to the next
+  // campaign would offer to invite people who are not in that Discord.
+  people.query = ''; people.results = null; people.error = '';
   if (!keepScreen) view.screen = 'campaign';
   try {
     detail = await get(`/campaign?id=${id}`);
@@ -2067,8 +2145,9 @@ document.addEventListener('click', async (event) => {
   const edit = t.closest('[data-edit]');
   if (edit) { view.editing = edit.dataset.edit; return paint(); }
 
-  if (t.closest('[data-invite]')) {
-    return copy('/campaign invite', 'Invitations are a DM, so they are sent from Discord — /campaign invite copied.');
+  if (t.closest('[data-people-clear]')) {
+    people.query = ''; people.results = null; people.error = '';
+    return paint();
   }
   if (t.closest('[data-copy-notes]')) {
     return copy(notesAsMarkdown(), 'Notes copied as markdown.');
@@ -2132,6 +2211,41 @@ document.addEventListener('click', async (event) => {
 
 // Forms wherever there is something to type: Enter-to-submit and required-field
 // validation for free, and both matter for the things typed most often here.
+// Searching for a person is the one form whose answer is not a toast: it
+// returns a list to choose from, so it renders into the page rather than
+// disappearing after a second and a half.
+document.addEventListener('submit', async (event) => {
+  const form = event.target.closest('form[data-people-search]');
+  if (!form) return;
+  event.preventDefault();
+
+  people.query = $('people-q')?.value.trim() ?? '';
+  people.error = '';
+  if (people.query.length < 2) {
+    people.error = 'Type at least two characters.';
+    return paint();
+  }
+
+  people.busy = true;
+  paint();
+  try {
+    const res = await fetch(`${API}/actions/roster/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaignId: detail.id, query: people.query }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    people.results = payload.people ?? [];
+    people.error = payload.ok === false ? payload.message || `HTTP ${res.status}` : '';
+    if (payload.ok === false) people.results = null;
+  } catch (err) {
+    people.results = null;
+    people.error = `Couldn't reach the bot — ${err.message}`;
+  }
+  people.busy = false;
+  paint();
+});
+
 document.addEventListener('submit', async (event) => {
   const form = event.target.closest('form[data-act]');
   if (!form) return;

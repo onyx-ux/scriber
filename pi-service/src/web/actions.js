@@ -144,6 +144,52 @@ export const ACTIONS = {
     return { status: 200, payload: setOutput(db, { campaignId: id, mode: body.mode }) };
   },
 
+  // Who in this campaign's server matches what was typed.
+  //
+  // A POST rather than a GET, and that is a security decision rather than a
+  // REST one: reads on this API are open when no STATUS_TOKEN is set, which is
+  // a defensible default for "how many sessions have been recorded" and an
+  // indefensible one for "list me the members of this Discord". Actions fail
+  // closed, so this inherits the right posture by being one.
+  'roster/search': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+
+    const campaign = db.getCampaign(id);
+    if (!campaign) return badRequest('No such campaign.');
+    if (typeof ctx?.discord?.findPeople !== 'function') {
+      return { status: 200, payload: { ok: false, message: '⚠️ This bot cannot look people up right now.' } };
+    }
+
+    return ctx.discord
+      .findPeople({ guildId: campaign.guild_id, query: body.query })
+      .then((result) => ({ status: result.ok ? 200 : 400, payload: result }));
+  },
+
+  // Ask somebody whether they may be recorded.
+  //
+  // The one dashboard action whose effect is a message to a human being, so it
+  // is the one that must not report success before Discord has accepted it —
+  // see discord-bridge.js, where the DM is sent before the invite is recorded.
+  'roster/invite': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    const who = userId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    if (!who) return badRequest('A Discord user id is required — that is a number, not a username.');
+    if (typeof ctx?.discord?.invite !== 'function') {
+      return { status: 200, payload: { ok: false, message: '⚠️ This bot cannot send invitations right now.' } };
+    }
+
+    return ctx.discord
+      .invite({
+        campaignId: id,
+        userId: who,
+        characterName: String(body.name ?? '').trim() || null,
+        inviterName: 'the dashboard',
+      })
+      .then((result) => ({ status: result.ok ? 200 : 400, payload: result }));
+  },
+
   'roster/character': (db, cfg, body) => {
     const id = campaignId(body);
     const who = userId(body);
@@ -245,17 +291,32 @@ export function findAction(pathname) {
 // import. Passed in rather than imported so this module stays testable without
 // a running bot, and so the list of what an action can reach stays short and
 // visible.
+// Most actions are a database write and answer immediately. The few that talk
+// to Discord — inviting somebody, looking a name up — cannot, so this returns
+// whatever the handler returned: a result, or a promise of one.
+//
+// Deliberately not `async`. Every existing caller and every existing test reads
+// the result synchronously, and making them all `await` a value that is not a
+// promise would be a large diff whose only purpose is to accommodate two new
+// handlers. `await` on a plain object is a no-op, so the server can await
+// unconditionally and both shapes work.
 export function runAction({ pathname, body, db, cfg, ctx = {} }) {
   const action = findAction(pathname);
   if (!action) return { status: 404, payload: { ok: false, message: 'No such action.' } };
 
-  try {
-    const result = action.run(db, cfg, body ?? {}, ctx);
-    return { ...result, action: action.name };
-  } catch (err) {
+  const failed = (err) => {
     // A failed action must never take the bot down, and must never hand the
     // caller a stack trace — this port can be published.
     console.error(`[actions] ${action.name} failed:`, err);
     return { status: 500, payload: { ok: false, message: 'That action failed. Check the bot log.' }, action: action.name };
+  };
+
+  try {
+    const result = action.run(db, cfg, body ?? {}, ctx);
+    return typeof result?.then === 'function'
+      ? result.then((settled) => ({ ...settled, action: action.name }), failed)
+      : { ...result, action: action.name };
+  } catch (err) {
+    return failed(err);
   }
 }

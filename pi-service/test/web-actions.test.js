@@ -85,6 +85,8 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'pause',
       'roster/character',
       'roster/forget',
+      'roster/invite',
+      'roster/search',
       'session/discard',
       'summary/again',
       'summary/approve',
@@ -575,4 +577,111 @@ test('discarding something that does not exist says so', async (t) => {
   const res = runAction({ pathname: '/actions/session/discard', body: { meetingId: 4242 }, db, cfg });
   assert.equal(res.payload.ok, false);
   assert.match(res.payload.message, /No such session/);
+});
+
+// --- inviting somebody from the dashboard ---
+//
+// The one action whose effect is a message to a human being. It must not
+// report success before Discord has accepted the DM, and it must not record an
+// invite that nobody can see.
+
+const bridge = (overrides = {}) => ({
+  discord: {
+    findPeople: async () => ({ ok: true, people: [] }),
+    invite: async () => ({ ok: true, message: 'sent' }),
+    ...overrides,
+  },
+});
+
+test('an invite refuses anything that is not a Discord id', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+
+  for (const who of ['matthew', '', 'user#1234', '12']) {
+    const res = await runAction({
+      pathname: '/actions/roster/invite',
+      body: { campaignId, userId: who },
+      db, cfg, ctx: bridge(),
+    });
+    assert.equal(res.status, 400, `${JSON.stringify(who)} should be refused`);
+  }
+});
+
+test('an invite reports the DM failing rather than claiming it was sent', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = await runAction({
+    pathname: '/actions/roster/invite',
+    body: { campaignId, userId: '175407464513011713' },
+    db, cfg,
+    ctx: bridge({ invite: async () => ({ ok: false, message: "📪 I couldn't DM them" }) }),
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /couldn't DM/);
+});
+
+test('a bot with no Discord connection says so instead of failing silently', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = await runAction({
+    pathname: '/actions/roster/invite',
+    body: { campaignId, userId: '175407464513011713' },
+    db, cfg, ctx: {},
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /cannot send invitations/);
+});
+
+test('searching for people needs a real campaign', async (t) => {
+  const { db, cfg } = await harness(t);
+  const res = await runAction({
+    pathname: '/actions/roster/search',
+    body: { campaignId: 9999, query: 'saf' },
+    db, cfg, ctx: bridge(),
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.payload.message, /No such campaign/);
+});
+
+test('a search is scoped to the campaign\'s own server', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  let askedFor = null;
+
+  await runAction({
+    pathname: '/actions/roster/search',
+    body: { campaignId, query: 'saf' },
+    db, cfg,
+    ctx: bridge({
+      findPeople: async (args) => { askedFor = args; return { ok: true, people: [] }; },
+    }),
+  });
+
+  assert.equal(askedFor.guildId, 'guild-1', 'never a server the campaign does not belong to');
+  assert.equal(askedFor.query, 'saf');
+});
+
+// An async handler that rejects must be caught by the same net as a sync one:
+// this port can be published and must never return a stack trace.
+test('an async action that rejects answers 500 without leaking the error', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = await runAction({
+    pathname: '/actions/roster/invite',
+    body: { campaignId, userId: '175407464513011713' },
+    db, cfg,
+    ctx: bridge({ invite: async () => { throw new Error('DiscordAPIError: token 4nT0k3n invalid'); } }),
+  });
+
+  assert.equal(res.status, 500);
+  assert.doesNotMatch(res.payload.message, /4nT0k3n|DiscordAPIError/);
+});
+
+// Synchronous actions must keep working exactly as they did — the whole point
+// of not making runAction async was that every existing caller stays valid.
+test('a synchronous action still returns without a promise', async (t) => {
+  const { db, cfg } = await harness(t);
+  const res = runAction({ pathname: '/actions/pause', body: { queue: 'summarize', paused: true }, db, cfg });
+
+  assert.equal(typeof res.then, 'undefined', 'still a plain result');
+  assert.equal(res.payload.ok, true);
 });

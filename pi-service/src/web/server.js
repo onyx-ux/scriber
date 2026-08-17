@@ -4,6 +4,7 @@ import { buildStatus } from './status.js';
 import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
 import { buildTranscriptView } from './transcript-view.js';
+import { createDiscordBridge } from './discord-bridge.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -120,6 +121,10 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
     // Fire-and-forget: the answer arrives in the next status poll, not in the
     // response to the click.
     probeNow: () => { probe(); },
+    // The two things an action needs Discord itself for — finding a person by
+    // the name their table knows them by, and asking them whether they may be
+    // recorded. See web/discord-bridge.js.
+    discord: createDiscordBridge({ client, db, cfg }),
     // Started, not awaited. Downloading, converting and transcribing an
     // hours-long recording takes hours; the HTTP response says "started" and
     // progress shows up in the status snapshot like any other transcription.
@@ -181,7 +186,9 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
         send(res, 400, { ok: false, message: err.message });
         return;
       }
-      const { status, payload, action } = runAction({ pathname: url.pathname, body, db, cfg, ctx });
+      // Awaited unconditionally: most actions answer synchronously and `await`
+      // on a plain object is a no-op, but the ones that talk to Discord cannot.
+      const { status, payload, action } = await runAction({ pathname: url.pathname, body, db, cfg, ctx });
       // Logged because these are the operations that used to leave an audit
       // trail in a Discord DM. Losing that when they moved would mean a job
       // could change state with nothing anywhere recording who did it.
