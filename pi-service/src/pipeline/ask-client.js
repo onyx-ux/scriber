@@ -80,14 +80,53 @@ export function gatherContext(db, campaignId, question, cfg) {
 
 // callModel is injectable so the grounding/context-trimming logic can be
 // tested without standing up a provider; the default is the real thing.
+//
+// The `ask` role is what routes this to a cheap model rather than the
+// summariser's — see pipeline/model-choice.js for the measured reason.
 export async function askCampaign({
   question,
   summaries,
   excerpts,
   cfg,
+  db = null,
   timeoutMs = 5 * 60 * 1000,
   callModel = defaultCallModel,
 }) {
-  const answer = await callModel(DND_ASK_PROMPT, buildAskUserMessage(question, summaries, excerpts), cfg, timeoutMs);
+  const answer = await callModel(
+    DND_ASK_PROMPT,
+    buildAskUserMessage(question, summaries, excerpts),
+    cfg,
+    timeoutMs,
+    { role: 'ask', db }
+  );
   return answer.trim();
+}
+
+// Whether this person has any questions left today.
+//
+// /campaign ask is the only place in the bot where somebody who is not the
+// owner can spend the owner's API budget. It had no ceiling at all, which was
+// fine for one table of friends and is not a property worth keeping.
+//
+// Counted before the call rather than after, so a question that fails still
+// costs a slot — otherwise a failing model is an unlimited one.
+export function askAllowance(db, cfg, userId) {
+  const limit = Number(cfg?.askDailyLimit ?? 0);
+  if (!limit || limit <= 0) return { allowed: true, limit: 0, used: 0, left: Infinity };
+
+  const used = db?.countAsksToday?.(userId) ?? 0;
+  const left = Math.max(0, limit - used);
+
+  return {
+    allowed: left > 0,
+    limit,
+    used,
+    left,
+    message:
+      left > 0
+        ? null
+        : `You have asked ${limit} question${limit === 1 ? '' : 's'} today, which is the daily limit — ` +
+          'each one costs the person running the bot an API call. It resets at midnight, and `/campaign recap`, ' +
+          '`/campaign search` and `/campaign history` are free.',
+  };
 }

@@ -28,6 +28,7 @@ import {
 } from '../pipeline/job-actions.js';
 import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
 import { applyCorrections } from '../campaign/corrections.js';
+import { ROLES } from '../pipeline/model-choice.js';
 
 // An id arriving over HTTP is a string from a JSON body written by a page that
 // could have been edited. "12abc" must not become 12.
@@ -264,6 +265,51 @@ export const ACTIONS = {
     return {
       status: 202,
       payload: { ok: true, message: '📡 Checking the transcriber and the summariser now — the dots update in a moment.' },
+    };
+  },
+
+  // Which model does which job, without a redeploy.
+  //
+  // Machinery, so dev only — it moves the owner's API spend. Stored in
+  // settings rather than the env file because the reason to change a model is
+  // usually that something is failing right now, and editing .env on the Pi
+  // and restarting is not a thing anybody does mid-session.
+  'model/choose': (db, cfg, body) => {
+    const role = String(body?.role ?? '');
+    if (!ROLES.includes(role)) {
+      return badRequest(`Unknown role "${role}". Expected one of: ${ROLES.join(', ')}.`);
+    }
+
+    const model = String(body?.model ?? '').trim();
+    // Cleared rather than set to a name, which puts the env file back in
+    // charge — there has to be a way back to the default.
+    if (!model) {
+      db.setSetting(`model_${role}`, '');
+      return {
+        status: 200,
+        payload: { ok: true, message: `↩️ ${role} is back to whatever the config says.` },
+      };
+    }
+
+    // Deliberately not validated against a list of "real" model names. A bot
+    // cannot know what a provider offers without asking, the answer changes
+    // under you, and refusing a model that exists is worse than accepting one
+    // that does not — a wrong name fails loudly on the next call and can be
+    // corrected in the same place it was typed.
+    if (!/^[a-z0-9.\-]{3,60}$/i.test(model)) {
+      return badRequest('That does not look like a model name.');
+    }
+
+    db.setSetting(`model_${role}`, model);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        model,
+        message:
+          `🧠 ${role === 'ask' ? 'Questions' : 'Session notes'} will use **${model}** from the next call on.` +
+          (role === 'summary' ? ' Anything already queued keeps the model it was queued with.' : ''),
+      },
     };
   },
 

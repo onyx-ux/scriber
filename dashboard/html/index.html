@@ -650,6 +650,8 @@ function renderRail() {
       <button class="navlink${view.screen === 'servers' ? ' on' : ''}" data-screen="servers">
         Servers ${servers ? `<span class="n">${servers}</span>` : ''}
       </button>` : ''}
+    ${cap('models') ? `
+      <button class="navlink${view.screen === 'models' ? ' on' : ''}" data-screen="models">Models</button>` : ''}
     <button class="navlink${view.screen === 'access' ? ' on' : ''}" data-screen="access">Access</button>`;
 
   // Who the bot thinks you are, and the way out. Shown even when sign-in is
@@ -902,6 +904,7 @@ function renderScreen() {
 
   if (view.screen === 'transcript') { el.className = 'split'; el.innerHTML = transcriptScreen(); return; }
   if (view.screen === 'servers')    { el.className = ''; el.innerHTML = serversScreen(); return; }
+  if (view.screen === 'models')     { el.className = ''; el.innerHTML = modelsScreen(); return; }
   if (view.screen === 'access')     { el.className = ''; el.innerHTML = accessScreen(); return; }
 
   if (status && !status.campaigns?.length) { el.className = ''; el.innerHTML = firstRun(); return; }
@@ -1889,6 +1892,123 @@ function serversScreen() {
           </div>`;
       }).join('')}
       ${servers.length ? '' : '<div class="quiet" style="margin-top:24px">Quill is not in any server yet.</div>'}
+    </div>`;
+}
+
+// What the models have cost, and which one does which job.
+//
+// Dev only, because it is the API bill. The framing is deliberate and matches
+// what the server sends: these are tokens THIS BOT counted as it spent them.
+// Anthropic reports a remaining balance in a header and Google reports none at
+// all, so a page that drew a "quota remaining" gauge would be inventing the
+// most important number on it.
+function modelsScreen() {
+  const m = status?.models;
+  if (!m) {
+    return `<div class="pane-main pane-wide">
+      <h1 class="display sm">Nothing measured yet.</h1>
+      <div class="say-2">This bot has not recorded any model calls. They appear here as soon as something is
+      summarised or somebody asks a question.</div>
+    </div>`;
+  }
+
+  const bar = (fraction) => `
+    <div class="bar" style="height:8px"><i style="width:${Math.round((fraction ?? 0) * 100)}%"></i></div>`;
+
+  const peak = Math.max(1, ...m.byDay.map((d) => d.tokens ?? 0));
+
+  return `
+    <div class="pane-main pane-wide">
+      <div class="kicker">The API bill</div>
+      <h1 class="display" style="margin-top:14px">${n(m.today.tokens)} tokens today</h1>
+      <div class="say-2">
+        ${plural(m.today.calls, 'call')}${m.today.rateLimited ? `, ${m.today.rateLimited} refused for quota` : ''}.
+        Counted by this bot as it spent them — ${esc(m.counted.split('—')[1]?.trim() ?? '')}.
+      </div>
+
+      ${m.today.budget > 0 ? `
+        <div style="max-width:520px;margin-top:20px">
+          ${bar(m.today.fraction)}
+          <div class="mono" style="font-size:11.5px;color:var(--dim);margin-top:8px">
+            ${n(m.today.tokens)} of your ${n(m.today.budget)} daily ceiling
+          </div>
+        </div>` : `
+        <div class="quiet" style="margin-top:16px;max-width:70ch">
+          No daily ceiling set, so there is nothing to draw a bar against. Set
+          <code>MODEL_DAILY_TOKEN_BUDGET</code> to whatever your plan allows and this becomes a gauge.
+        </div>`}
+
+      <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;margin-top:40px">
+        <div style="flex:1;min-width:340px">
+          <div class="cap">Which model does what</div>
+          ${['summary', 'ask'].map((role) => `
+            <div class="set-row" style="align-items:flex-start">
+              <div>
+                <div class="what">${role === 'summary' ? 'Writing up a session' : 'Answering a question'}</div>
+                <div class="sub">${role === 'summary'
+                  ? 'The thing the bot exists to do well. Worth the best model available.'
+                  : 'A lookup over recaps already written. The flash models think even when the question needs none — measured at 109 tokens against 8 for the same prompt.'}</div>
+                ${m.roles[role].ladder.length > 1 ? `<div class="mono" style="font-size:11px;color:var(--dim);margin-top:7px">
+                  falls back to ${m.roles[role].ladder.slice(1).map(esc).join(' → ')} when quota runs out
+                </div>` : ''}
+              </div>
+              <form class="row-btns" data-act="model/choose" data-role="${role}">
+                <input class="in mono" name="model" style="width:200px;font-size:13px"
+                       value="${esc(m.roles[role].model ?? '')}" list="model-choices"
+                       aria-label="Model for ${role}">
+                <button class="btn sm go" type="submit">Use</button>
+              </form>
+            </div>`).join('')}
+          <datalist id="model-choices">
+            ${m.choices.map((c) => `<option value="${esc(c)}"></option>`).join('')}
+          </datalist>
+          <div class="quiet" style="margin-top:14px;max-width:68ch">
+            Typed rather than picked from a list, because a bot cannot know what a provider offers without
+            asking, and the answer changes underneath you. A name that does not exist fails loudly on the
+            next call and can be corrected here. Clear the box to go back to <code>pi-service/.env</code>.
+          </div>
+        </div>
+
+        <div class="aside">
+          <div class="card">
+            <div class="cap">Last fortnight</div>
+            <div style="display:flex;align-items:flex-end;gap:3px;height:64px;margin-top:14px">
+              ${m.byDay.length ? m.byDay.map((d) => `
+                <i title="${esc(d.day)}: ${n(d.tokens)} tokens" style="flex:1;min-width:4px;background:var(--brass);
+                   opacity:.75;border-radius:1px;height:${Math.max(2, Math.round(((d.tokens ?? 0) / peak) * 100))}%"></i>
+              `).join('') : '<span class="quiet">nothing yet</span>'}
+            </div>
+            <div class="mono" style="font-size:11px;color:var(--dim);margin-top:10px">
+              peak ${n(peak)} tokens in a day
+            </div>
+          </div>
+          <div class="card">
+            <div class="cap">Questions</div>
+            <div class="quiet" style="margin-top:10px">
+              ${m.askLimit > 0
+                ? `Each person may ask ${plural(m.askLimit, 'question')} a day. It is the only place somebody
+                   who is not you can spend your API budget.`
+                : 'No daily limit per person. <code>/campaign ask</code> is the only place somebody who is not you can spend your API budget.'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cap" style="margin:44px 0 0">By model, last seven days</div>
+      <div class="grid" style="margin-top:14px;max-width:900px">
+        <div class="hd" style="grid-template-columns:1.6fr 90px 90px 1fr 110px">
+          <div>Model</div><div>Role</div><div class="r">Calls</div><div class="r">Tokens</div><div class="r">Refused</div>
+        </div>
+        ${m.byModel.length ? m.byModel.map((row) => `
+          <div class="tr" style="grid-template-columns:1.6fr 90px 90px 1fr 110px">
+            <div class="mono" style="font-size:13px">${esc(row.model)}</div>
+            <div class="quiet">${esc(row.role)}</div>
+            <div class="r mono">${n(row.calls)}</div>
+            <div class="r mono">${n(row.total_tokens)}</div>
+            <div class="r mono ${row.limited ? 'waiting' : ''}">${row.limited ? n(row.limited) : '—'}</div>
+          </div>`).join('')
+          : '<div class="quiet" style="padding:16px 0">No calls in the last week.</div>'}
+      </div>
     </div>`;
 }
 

@@ -142,6 +142,43 @@ export const config = validate({
   geminiApiKey: optional('GEMINI_API_KEY', null),
   geminiModel: optional('GEMINI_MODEL', 'gemini-3.6-flash'),
 
+  // --- which model does which job ---
+  //
+  // Writing up three hours of transcript deserves the best model available.
+  // Answering "who was the notary again" is a lookup over recaps that have
+  // already been written, and does not.
+  //
+  // Measured against a live key on 2026-08-18: a seven-token prompt costs 109
+  // total tokens on gemini-3.6-flash and 8 on gemini-3.1-flash-lite, because
+  // the flash models emit thinking tokens whether the question needs any or
+  // not. Thirteen times the spend, for a lookup — which is why /ask has its own
+  // model rather than borrowing the summariser's.
+  //
+  // The fallbacks are walked ONLY when the provider says it is out of quota,
+  // never on an ordinary failure: a refusal or a timeout is the request's
+  // fault and would fail again, one model cheaper. Probed on the same date;
+  // gemini-3.7-flash is deliberately absent because it was answering 503
+  // ("high demand"), and gemini-3.1-flash does not exist — only the lite.
+  geminiModelFallbacks: optional('GEMINI_MODEL_FALLBACKS', 'gemini-3.5-flash,gemini-3.1-flash-lite'),
+  geminiAskModel: optional('GEMINI_ASK_MODEL', 'gemini-3.1-flash-lite'),
+  anthropicModelFallbacks: optional('ANTHROPIC_MODEL_FALLBACKS', 'claude-sonnet-5'),
+  anthropicAskModel: optional('ANTHROPIC_ASK_MODEL', 'claude-haiku-4-5'),
+
+  // What one person may spend of yours in a day.
+  //
+  // /campaign ask is the only place in the bot where somebody who is not the
+  // owner can spend the owner's API budget, and it had no ceiling at all.
+  // Twenty is far above what a curious table uses in an evening and far below
+  // what a bored one could run up. 0 removes the limit.
+  askDailyLimit: parseInt(optional('ASK_DAILY_LIMIT', '20'), 10),
+
+  // A daily token ceiling, for the dashboard's gauge only — nothing refuses a
+  // call because of it. Neither provider reports how much allowance is left
+  // (Anthropic sends a header, Google sends nothing), so a bar needs a number
+  // to be a fraction of, and only the operator knows what theirs is. 0 shows
+  // the count without a ceiling.
+  modelDailyTokenBudget: parseInt(optional('MODEL_DAILY_TOKEN_BUDGET', '0'), 10),
+
   // --- the dashboard's API ---
   // The bot otherwise makes only outbound connections, so this is the one
   // inbound port it opens. Serves operational data only — no tokens, no keys.

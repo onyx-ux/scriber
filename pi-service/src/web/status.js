@@ -2,6 +2,7 @@ import { listTranscriptions, describeTranscription } from '../pipeline/progress.
 import { nextAutoWindowStart } from '../pipeline/transcribe-schedule.js';
 import { detectOpusBackend } from '../voice/opus-backend.js';
 import { configuredProviders } from '../pipeline/model-client.js';
+import { topModel, ladderFor, knownModels } from '../pipeline/model-choice.js';
 
 // The snapshot the dashboard renders.
 //
@@ -12,6 +13,47 @@ import { configuredProviders } from '../pipeline/model-client.js';
 //
 // Nothing secret goes in here. No tokens, no API keys, no file paths outside
 // the data directory — it is served unauthenticated on the LAN by default.
+
+// What the models have cost, and what is doing what.
+//
+// The honest framing matters here. Neither provider will tell you how much of
+// your allowance is left — Anthropic sends a header on each response, Google
+// sends nothing at all — so every number below is what THIS bot counted as it
+// spent it. It is not a reading off Google's meter and must not be shown as
+// one, because the difference matters the day they disagree.
+function modelReport({ db, cfg }) {
+  try {
+    const today = db.modelUsageToday();
+    const budget = Number(cfg.modelDailyTokenBudget ?? 0);
+
+    return {
+      // Which model actually runs for each job, after the operator's own
+      // choice on the dashboard beats the env file.
+      roles: {
+        summary: { model: topModel(cfg, 'summary', db), ladder: ladderFor(cfg, 'summary', db) },
+        ask: { model: topModel(cfg, 'ask', db), ladder: ladderFor(cfg, 'ask', db) },
+      },
+      choices: knownModels(cfg, db),
+      today: {
+        tokens: today.tokens ?? 0,
+        calls: today.calls ?? 0,
+        rateLimited: today.limited ?? 0,
+        budget,
+        // Only a fraction when there is something to be a fraction of.
+        fraction: budget > 0 ? Math.min(1, (today.tokens ?? 0) / budget) : null,
+      },
+      byModel: db.modelUsage(7),
+      byDay: db.modelUsageByDay(14),
+      askLimit: Number(cfg.askDailyLimit ?? 0),
+      // Said out loud in the payload so the page cannot forget to say it.
+      counted: 'by this bot, as it spent them — neither provider reports a remaining balance',
+    };
+  } catch (err) {
+    // A metering failure must never take the status snapshot down with it.
+    console.warn('[status] model usage unavailable:', err.message);
+    return null;
+  }
+}
 
 // host:port from a configured URL, with any userinfo dropped. A malformed or
 // absent URL becomes null rather than being echoed back verbatim — this is
@@ -216,6 +258,12 @@ export function buildStatus({
     // the moment of approval instead of guessing — and can leave the choice
     // out entirely when there is only one. Names only; no keys.
     providers: configuredProviders(cfg),
+
+    // What the models have cost, and which one does which job.
+    //
+    // Stripped for everyone below dev by web/scope.js along with the rest of
+    // the machinery — this is the API bill, and it is one person's business.
+    models: modelReport({ db, cfg }),
     // Whether this bot will accept actions at all. Without it a dashboard with
     // no STATUS_TOKEN configured looks merely broken: every button returns 403
     // and the cause, one unset variable on the Pi, is invisible from the page.

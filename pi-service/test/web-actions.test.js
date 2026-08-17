@@ -82,6 +82,7 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'corrections/replay',
       'health/probe',
       'import',
+      'model/choose',
       'pause',
       'roster/character',
       'roster/forget',

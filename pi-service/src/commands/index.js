@@ -6,7 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import { startCapture } from '../voice/capture.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { isSummariserReachable, summariserLabel } from '../pipeline/model-client.js';
-import { askCampaign, gatherContext } from '../pipeline/ask-client.js';
+import { askCampaign, askAllowance, gatherContext } from '../pipeline/ask-client.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
 import { campaignFolder, campaignFolderFor } from '../export/naming.js';
 import { TRANSCRIBE_PREFIX } from '../pipeline/transcribe-schedule.js';
@@ -1315,6 +1315,14 @@ async function handleAsk(interaction, db, cfg) {
     });
   }
 
+  // The one place somebody who is not the owner can spend the owner's API
+  // budget. Checked before the defer so a refusal is a plain ephemeral reply
+  // rather than a "thinking…" that turns into a no.
+  const allowance = askAllowance(db, cfg, interaction.user.id);
+  if (!allowance.allowed) {
+    return interaction.reply({ content: `🔮 ${allowance.message}`, flags: MessageFlags.Ephemeral });
+  }
+
   // Answering means a full model round-trip; Discord needs the ack inside 3s.
   await interaction.deferReply();
 
@@ -1325,7 +1333,11 @@ async function handleAsk(interaction, db, cfg) {
     );
   }
 
-  const answer = await askCampaign({ question, summaries, excerpts, cfg });
+  // Counted before the call, not after: a question that fails still costs a
+  // slot, or a failing model is an unlimited one.
+  db.countAsk(interaction.user.id);
+
+  const answer = await askCampaign({ question, summaries, excerpts, cfg, db });
   const body = `🔮 **${question}**\n\n${answer}`;
   await interaction.editReply(body.length > 1990 ? `${body.slice(0, 1980)}…` : body);
 }

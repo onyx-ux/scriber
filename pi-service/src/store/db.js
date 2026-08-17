@@ -117,6 +117,51 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+
+-- What the models have actually cost.
+--
+-- Neither provider will tell you how much of your allowance is left: Anthropic
+-- reports it in a response header, Google reports nothing at all. So the only
+-- way to answer "how close am I" is to count every call as it happens, which
+-- is what this is.
+--
+-- One row per attempt, including the failures — a call that was refused for
+-- quota is exactly the event worth seeing, and it costs nothing to store.
+CREATE TABLE IF NOT EXISTS model_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Kept alongside the timestamp so a day's total is an index lookup rather than a
+  -- scan with date arithmetic on every dashboard poll.
+  day TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  role TEXT NOT NULL,
+  meeting_id INTEGER,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  -- Not input + output on the flash models: the difference is thinking, which
+  -- is billed, and which is the whole reason /ask moved to a lite model.
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  ms INTEGER,
+  -- ok | rate_limited | failed
+  outcome TEXT NOT NULL DEFAULT 'ok',
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_model_usage_day ON model_usage(day, model);
+
+-- How many questions each person has asked today.
+--
+-- Kept apart from model_usage on purpose. That table is a cost record shown on
+-- a dashboard; this one is about a named player, and in a bot whose whole
+-- posture is that people's data stays where it belongs, "who asked what" does
+-- not belong in the billing view. A count and a date, and the row is dropped
+-- when the day rolls over.
+CREATE TABLE IF NOT EXISTS ask_quota (
+  user_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  asks INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
 `;
 
 // CREATE TABLE IF NOT EXISTS won't add a column to a table that already
@@ -1297,6 +1342,98 @@ function wrap(db) {
       const codes = db.prepare(`DELETE FROM auth_codes WHERE expires_at <= ?`).run(nowIso).changes;
       const sessions = db.prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(nowIso).changes;
       return { codes, sessions };
+    },
+
+    // --- what the models have cost ---
+
+    recordModelUsage({ provider, model, role, meetingId = null, inputTokens = 0, outputTokens = 0,
+                       totalTokens = 0, ms = null, outcome = 'ok', error = null } = {}) {
+      db.prepare(
+        `INSERT INTO model_usage
+           (day, provider, model, role, meeting_id, input_tokens, output_tokens, total_tokens, ms, outcome, error)
+         VALUES (date('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        String(provider), String(model), String(role), meetingId,
+        inputTokens | 0, outputTokens | 0, totalTokens | 0, ms == null ? null : ms | 0,
+        String(outcome), error ? String(error).slice(0, 300) : null
+      );
+    },
+
+    // Per model, for the last N days. Grouped in SQL rather than in JavaScript
+    // because this is read on a dashboard poll and the table only grows.
+    modelUsage(days = 7) {
+      return db
+        .prepare(
+          `SELECT model, provider, role,
+                  COUNT(*)                                     AS calls,
+                  SUM(outcome = 'ok')                          AS ok,
+                  SUM(outcome = 'rate_limited')                AS limited,
+                  SUM(outcome = 'failed')                      AS failed,
+                  SUM(input_tokens)                            AS input_tokens,
+                  SUM(output_tokens)                           AS output_tokens,
+                  SUM(total_tokens)                            AS total_tokens,
+                  MAX(at)                                      AS last_at
+             FROM model_usage
+            WHERE day >= date('now', ?)
+            GROUP BY model, provider, role
+            ORDER BY total_tokens DESC`
+        )
+        .all(`-${Math.max(0, days | 0)} days`);
+    },
+
+    // Today alone, which is the number that matters against a daily ceiling.
+    modelUsageToday() {
+      return db
+        .prepare(
+          `SELECT COALESCE(SUM(total_tokens), 0) AS tokens,
+                  COUNT(*)                       AS calls,
+                  SUM(outcome = 'rate_limited')  AS limited
+             FROM model_usage WHERE day = date('now')`
+        )
+        .get();
+    },
+
+    // A sparkline's worth of history: one row per day, oldest first.
+    modelUsageByDay(days = 14) {
+      return db
+        .prepare(
+          `SELECT day, SUM(total_tokens) AS tokens, COUNT(*) AS calls
+             FROM model_usage
+            WHERE day >= date('now', ?)
+            GROUP BY day ORDER BY day ASC`
+        )
+        .all(`-${Math.max(0, days | 0)} days`);
+    },
+
+    // How many questions one person has asked today.
+    //
+    // Its own table rather than a user_id column on model_usage, deliberately.
+    // model_usage is a cost record and is shown on a dashboard; who asked what
+    // is personal data about a player, and this bot's whole posture is that
+    // those two things stay apart. This holds a count and a date, nothing else,
+    // and the row is dropped when the day rolls over.
+    countAsksToday(userId) {
+      return (
+        db.prepare(`SELECT asks FROM ask_quota WHERE user_id = ? AND day = date('now')`).get(userId)?.asks ?? 0
+      );
+    },
+
+    // Counted BEFORE the model is called, so a question that fails still costs
+    // the asker a slot. Otherwise a failing model is an unlimited one.
+    countAsk: db.transaction((userId) => {
+      db.prepare(
+        `INSERT INTO ask_quota (user_id, day, asks) VALUES (?, date('now'), 1)
+         ON CONFLICT(user_id, day) DO UPDATE SET asks = asks + 1`
+      ).run(userId);
+      db.prepare(`DELETE FROM ask_quota WHERE day < date('now')`).run();
+      return db.prepare(`SELECT asks FROM ask_quota WHERE user_id = ? AND day = date('now')`).get(userId).asks;
+    }),
+
+    // Old rows are noise: the dashboard shows a fortnight and nothing reads
+    // further back. Swept with the auth tables.
+    pruneModelUsage(days = 90) {
+      return db.prepare(`DELETE FROM model_usage WHERE day < date('now', ?)`).run(`-${Math.max(1, days | 0)} days`)
+        .changes;
     },
 
     // --- persistent operator settings ---
