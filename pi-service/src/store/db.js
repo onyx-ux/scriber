@@ -83,6 +83,40 @@ CREATE TABLE IF NOT EXISTS jobs (
   provider TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, next_attempt_at);
+
+-- Signing in to the dashboard.
+--
+-- There is no password column here and there never will be one. You type the
+-- Discord name the bot already knows you by, the bot DMs you a six-digit code,
+-- and proving you can read that DM is the whole of the authentication — which
+-- is exactly as strong as "you control that Discord account", and that is the
+-- only identity this bot has ever cared about.
+--
+-- Neither table stores anything a leak would make worse: a Discord id and the
+-- username attached to it, both of which are public in any server you are in.
+-- No email, no real name, no password, not even a reversible copy of the code.
+CREATE TABLE IF NOT EXISTS auth_codes (
+  user_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  -- HMAC of the six digits, never the digits. A ten-minute window and five
+  -- attempts is what makes six digits enough; the HMAC is what stops a stolen
+  -- database file turning into a working code inside that window.
+  code_hash TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  -- The HMAC of the cookie, so the row cannot be turned back into a session.
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen_at TEXT,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 `;
 
 // CREATE TABLE IF NOT EXISTS won't add a column to a table that already
@@ -1199,6 +1233,70 @@ function wrap(db) {
       });
       tx();
       return changed;
+    },
+
+    // --- signing in to the dashboard ---
+    //
+    // Deliberately dumb storage. Every decision about what a code or a session
+    // MEANS lives in web/auth.js; this only writes rows and deletes them, so
+    // there is one place to read to know how sign-in works.
+
+    putAuthCode: db.transaction((userId, username, codeHash, expiresAt) => {
+      // One live code per person. Asking for a second replaces the first
+      // rather than leaving two valid — otherwise every request widens the
+      // window instead of restarting it.
+      db.prepare(
+        `INSERT INTO auth_codes (user_id, username, code_hash, attempts, expires_at, created_at)
+         VALUES (?, ?, ?, 0, ?, datetime('now'))
+         ON CONFLICT(user_id) DO UPDATE SET
+           username = excluded.username, code_hash = excluded.code_hash,
+           attempts = 0, expires_at = excluded.expires_at, created_at = datetime('now')`
+      ).run(userId, username, codeHash, expiresAt);
+    }),
+
+    getAuthCode(userId) {
+      return db.prepare(`SELECT * FROM auth_codes WHERE user_id = ?`).get(userId) ?? null;
+    },
+
+    countAuthAttempt(userId) {
+      return db.prepare(`UPDATE auth_codes SET attempts = attempts + 1 WHERE user_id = ?`).run(userId).changes;
+    },
+
+    dropAuthCode(userId) {
+      return db.prepare(`DELETE FROM auth_codes WHERE user_id = ?`).run(userId).changes;
+    },
+
+    openAuthSession(tokenHash, userId, username, expiresAt) {
+      db.prepare(
+        `INSERT INTO auth_sessions (token_hash, user_id, username, expires_at, last_seen_at)
+         VALUES (?, ?, ?, ?, datetime('now'))`
+      ).run(tokenHash, userId, username, expiresAt);
+    },
+
+    getAuthSession(tokenHash) {
+      return db.prepare(`SELECT * FROM auth_sessions WHERE token_hash = ?`).get(tokenHash) ?? null;
+    },
+
+    touchAuthSession(tokenHash) {
+      db.prepare(`UPDATE auth_sessions SET last_seen_at = datetime('now') WHERE token_hash = ?`).run(tokenHash);
+    },
+
+    closeAuthSession(tokenHash) {
+      return db.prepare(`DELETE FROM auth_sessions WHERE token_hash = ?`).run(tokenHash).changes;
+    },
+
+    // Signing out everywhere. Offered because the honest answer to "I think
+    // somebody else has my session" is to end all of them, not to guess which.
+    closeAllAuthSessions(userId) {
+      return db.prepare(`DELETE FROM auth_sessions WHERE user_id = ?`).run(userId).changes;
+    },
+
+    // Expired rows are not merely ignored, they are deleted: a table of dead
+    // sessions is a table of things that could come back if a clock moved.
+    sweepAuth(nowIso = new Date().toISOString()) {
+      const codes = db.prepare(`DELETE FROM auth_codes WHERE expires_at <= ?`).run(nowIso).changes;
+      const sessions = db.prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(nowIso).changes;
+      return { codes, sessions };
     },
 
     // --- persistent operator settings ---

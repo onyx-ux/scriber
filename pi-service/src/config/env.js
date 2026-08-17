@@ -155,6 +155,30 @@ export const config = validate({
   // "no credential configured" as "everyone is welcome". See web/server.js.
   statusToken: optional('STATUS_TOKEN', null),
 
+  // The key sign-in codes and session cookies are hashed with.
+  //
+  // Defaults to STATUS_TOKEN, because an install that has one already has a
+  // secret the operator chose and keeps out of git — and adding a second thing
+  // to configure is how people end up running with whatever the default was.
+  // Set this only to keep the two separate.
+  //
+  // A bot with neither cannot sign anybody in and says so. There is
+  // deliberately no fallback constant: a hardcoded key here would mean every
+  // Quill install in the world could mint sessions for every other one.
+  authSecret: optional('AUTH_SECRET', null),
+
+  // Whether the dashboard demands a Discord sign-in before showing anything.
+  //
+  // Off by default, and that default is load-bearing rather than lazy: with it
+  // off, reaching the dashboard means what it has always meant — you are the
+  // operator, on your own LAN, behind nginx. With it on, the shared token stops
+  // being an identity and everybody is only what their own Discord account
+  // entitles them to be (see web/viewer.js).
+  //
+  // Turn it on AFTER signing in successfully once. Turning it on first is how
+  // you lock yourself out of your own Pi.
+  dashboardRequireLogin: optional('DASHBOARD_REQUIRE_LOGIN', 'false') === 'true',
+
   // Where to find the dashboard, for the notification DMs to link to.
   //
   // The owner's DMs used to carry the approve/park buttons themselves. They

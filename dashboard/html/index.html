@@ -472,6 +472,7 @@ const view = {
   speaker: null,        // transcript filter, a user id
 };
 
+let me = null;          // last /me — who the bot thinks is looking
 let status = null;      // last /status
 let detail = null;      // last /campaign?id=
 let notes = null;       // last /notes?meeting=
@@ -483,6 +484,9 @@ let lastSeen = null;
 // yet", which renders as nothing — distinct from `[]`, which is the honest
 // and different statement that nobody matched.
 const people = { query: '', results: null, error: '', busy: false };
+
+// The sign-in card's own state: which of the two steps, and what it last said.
+const login = { stage: 'name', name: '', message: '', failed: false, busy: false };
 
 const PROVIDERS = { gemini: 'Gemini', anthropic: 'Claude' };
 const providerName = (p) => PROVIDERS[p] || p;
@@ -553,7 +557,25 @@ function splitEntry(entry) {
 
 const dotFor = (state) => `<span class="dot ${state === true ? 'ok' : state === false ? 'bad' : ''}"></span>`;
 
-const can = () => status?.actionsEnabled !== false;
+// What this viewer may do.
+//
+// The server has already cut the payload to match — see web/scope.js — so
+// nothing here is a security control. It is what stops the page rendering a
+// row of buttons that would all answer 403, which is a worse way to learn what
+// you are allowed to do than not being offered it.
+//
+// Defaults to true against a bot too old to answer /me, so an out-of-step
+// deploy degrades to the behaviour that existed before levels did.
+const cap = (name) => (me?.can ? Boolean(me.can[name]) : true);
+
+// Whether actions are possible at all: the bot must accept them, and this
+// viewer must be allowed to make them.
+const can = () => status?.actionsEnabled !== false && cap('approvals');
+
+// Managing one campaign is a different question from the machinery — a
+// campaign's own creator may edit its roster without being able to pause a
+// queue that belongs to somebody else's hardware.
+const canManage = () => status?.actionsEnabled !== false && (detail?.viewerCan?.manage ?? cap('manage'));
 
 // Where this campaign's notes end up, in words.
 //
@@ -621,16 +643,30 @@ function renderRail() {
        </div>`;
 
   const servers = status?.servers?.length ?? 0;
+  // The Servers view is a list of Discords and their permissions — only
+  // meaningful, and only anybody's business, if you own one.
   $('rail-nav').innerHTML = `
-    <button class="navlink${view.screen === 'servers' ? ' on' : ''}" data-screen="servers">
-      Servers ${servers ? `<span class="n">${servers}</span>` : ''}
-    </button>
+    ${cap('servers') ? `
+      <button class="navlink${view.screen === 'servers' ? ' on' : ''}" data-screen="servers">
+        Servers ${servers ? `<span class="n">${servers}</span>` : ''}
+      </button>` : ''}
     <button class="navlink${view.screen === 'access' ? ' on' : ''}" data-screen="access">Access</button>`;
 
+  // Who the bot thinks you are, and the way out. Shown even when sign-in is
+  // not required, because "you are seeing this as the operator" is worth
+  // knowing before you press something that spends money.
   const b = status?.bot;
-  $('rail-foot').innerHTML = b
-    ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}<br><span id="stamp" style="opacity:.75"></span>`
-    : 'connecting…';
+  $('rail-foot').innerHTML = `
+    ${me?.signedIn ? `
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
+        <span style="color:var(--text-2)">${esc(me.username)}</span>
+        <span class="pill" style="margin-left:auto;padding:1px 7px">${esc(me.level)}</span>
+      </div>
+      <div style="margin-bottom:10px">sees ${esc(me.sees ?? '')}</div>
+      <button class="btn sm" data-logout style="width:100%">Sign out</button>
+      <div style="margin-top:12px"></div>` : ''}
+    ${b ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}<br><span id="stamp" style="opacity:.75"></span>`
+        : 'connecting…'}`;
 }
 
 // ==========================================================================
@@ -665,20 +701,28 @@ function renderTop() {
     : view.screen === 'access' ? 'Access'
     : campaign()?.name || campaign()?.channel || (status?.campaigns?.length ? 'Quill' : 'Setup');
 
-  const health = status
-    ? [
-        `<span class="${h.whisperServer === false ? 'down' : ''}">${dotFor(h.whisperServer)}whisper server</span>`,
-        `<span class="${h.summariser === false ? 'down' : ''}">${dotFor(h.summariser)}${esc(h.summariserName || 'summariser')}</span>`,
-        h.transcribePaused ? '<span class="held"><span class="dot warn"></span>transcribing paused</span>' : '',
-        h.summarisePaused ? '<span class="held"><span class="dot warn"></span>summarising paused</span>' : '',
-      ].filter(Boolean).join('')
-    : '';
+  // Below dev the health line names nothing. Which transcriber, which model
+  // and whose GPU are facts about the owner's machine and their bill; whether
+  // the bot can currently turn speech into notes at all is not, and it is the
+  // answer to "why hasn't last night appeared".
+  const health = !status
+    ? ''
+    : cap('models')
+      ? [
+          `<span class="${h.whisperServer === false ? 'down' : ''}">${dotFor(h.whisperServer)}whisper server</span>`,
+          `<span class="${h.summariser === false ? 'down' : ''}">${dotFor(h.summariser)}${esc(h.summariserName || 'summariser')}</span>`,
+          h.transcribePaused ? '<span class="held"><span class="dot warn"></span>transcribing paused</span>' : '',
+          h.summarisePaused ? '<span class="held"><span class="dot warn"></span>summarising paused</span>' : '',
+        ].filter(Boolean).join('')
+      : `<span class="${h.working === false ? 'down' : ''}">${dotFor(h.working)}${
+          h.working === false ? 'writing up is delayed' : h.paused ? 'writing up is paused' : 'writing up is working'
+        }</span>`;
 
   // Each button says the state it moves TO, so it is the same click whatever
   // the page last managed to render — a toggle sent twice by a double-click,
   // or by two tabs open on this page, lands on the opposite of what the person
   // who clicked it saw.
-  const buttons = can() && status
+  const buttons = can() && cap('machinery') && status
     ? `<button class="btn" data-act="pause" data-queue="transcribe" data-paused="${!h.transcribePaused}"
          ${h.transcribePaused ? '' : 'data-confirm="Pause transcription? Nothing new will start."'}>
          ${h.transcribePaused ? 'Resume transcribing' : 'Pause transcribing'}</button>
@@ -699,7 +743,9 @@ function renderTop() {
 
 function renderBanner() {
   const h = status?.health ?? {};
-  if (!status || h.whisperServer !== false || view.screen === 'transcript') {
+  // The degraded banner is a machine problem with a machine fix, and every
+  // control on it belongs to whoever owns the machine.
+  if (!status || !cap('machinery') || h.whisperServer !== false || view.screen === 'transcript') {
     $('banner').innerHTML = '';
     return;
   }
@@ -780,8 +826,79 @@ function diagnosis() {
 // Screens
 // ==========================================================================
 
+// Signing in.
+//
+// Two steps and no password. You type the Discord name the bot knows you by,
+// it DMs you six digits, you type those back. Proving you can read that
+// account's DMs is the whole of it — which is exactly as strong as "you
+// control that Discord account", and that is the only identity this bot has
+// ever had a use for.
+function signInScreen() {
+  const stage = login.stage;
+
+  return `
+    <div class="center" style="max-width:520px;margin:0 auto;padding-top:12vh">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z" stroke="#C9A227" stroke-width="1.3" stroke-linejoin="round"/>
+        <path d="M5.1 19.6 2.6 22.2" stroke="#C9A227" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <h1 class="display" style="font-size:34px;margin-top:20px">
+        ${stage === 'code' ? 'Check your Discord DMs.' : 'Sign in to Quill.'}
+      </h1>
+      <div class="say-2" style="max-width:46ch">
+        ${stage === 'code'
+          ? `Quill sent six digits to <b>${esc(login.name)}</b>. They last ten minutes and work once.`
+          : 'Type the Discord name you use at the table. Quill will DM you a code — there is no password to set or remember.'}
+      </div>
+
+      ${stage === 'code' ? `
+        <form data-signin-verify style="margin-top:26px">
+          <input class="in mono" id="signin-code" name="code" inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="6" placeholder="000000" aria-label="The six digit code"
+                 style="font-size:26px;letter-spacing:.4em;text-align:center;padding:14px">
+          <div class="row-btns" style="margin-top:16px">
+            <button class="btn go big" type="submit" ${login.busy ? 'disabled' : ''}>
+              ${login.busy ? 'Checking…' : 'Sign in'}</button>
+            <button class="btn big" type="button" data-signin-back>Use a different name</button>
+          </div>
+        </form>` : `
+        <form data-signin-request style="margin-top:26px">
+          <input class="in" id="signin-name" name="name" placeholder="your Discord name"
+                 autocomplete="username" value="${esc(login.name)}" aria-label="Your Discord name"
+                 style="font-size:16px;padding:12px 14px">
+          <div class="row-btns" style="margin-top:16px">
+            <button class="btn go big" type="submit" ${login.busy ? 'disabled' : ''}>
+              ${login.busy ? 'Sending…' : 'Send me a code'}</button>
+          </div>
+        </form>`}
+
+      ${login.message ? `<div class="quiet" style="margin-top:18px;color:${
+        login.failed ? 'var(--red-lit)' : 'var(--brass-lit)'}">${esc(login.message)}</div>` : ''}
+
+      ${me && !me.signInAvailable ? `<div class="quiet" style="margin-top:18px;color:var(--red-lit)">
+        This bot has no sign-in secret set, so nobody can sign in. Set <code>STATUS_TOKEN</code> or
+        <code>AUTH_SECRET</code> in <code>pi-service/.env</code>.
+      </div>` : ''}
+
+      <div class="quiet" style="margin-top:34px;max-width:52ch">
+        Quill stores your Discord id and the name attached to it, and nothing else — no email, no real name,
+        and no password, because there is not one. What you can see is worked out from what that account owns,
+        runs and plays in.
+      </div>
+    </div>`;
+}
+
 function renderScreen() {
   const el = $('screen');
+
+  // Nobody home. Shown instead of the app rather than over it: a dashboard
+  // that renders its chrome and then refuses every request is a worse way to
+  // learn you are signed out than being asked to sign in.
+  if (me && me.loginRequired && !me.signedIn) {
+    el.className = '';
+    el.innerHTML = signInScreen();
+    return;
+  }
 
   if (view.screen === 'transcript') { el.className = 'split'; el.innerHTML = transcriptScreen(); return; }
   if (view.screen === 'servers')    { el.className = ''; el.innerHTML = serversScreen(); return; }
@@ -798,7 +915,7 @@ function renderScreen() {
       </div>
       ${sessionColumn()}
       <div class="foot">
-        <button class="btn wide" data-import>${detail?.sessions?.length ? 'Import a recording' : 'Import a recording instead'}</button>
+        ${cap('machinery') ? `<button class="btn wide" data-import>${detail?.sessions?.length ? 'Import a recording' : 'Import a recording instead'}</button>` : ''}
       </div>
     </div>
     <div class="pane">
@@ -1013,7 +1130,7 @@ function notesPane(s) {
       </div>
       <div class="row-btns" style="margin-top:22px">
         ${can() ? `<button class="btn go" data-act="summary/again" data-meeting="${s.meetingId}">Write them again</button>` : ''}
-        <button class="btn" data-transcript="${s.meetingId}">Read the transcript</button>
+        ${cap('transcripts') ? `<button class="btn" data-transcript="${s.meetingId}">Read the transcript</button>` : ''}
       </div>`;
   }
   if (!notes.written) {
@@ -1023,7 +1140,7 @@ function notesPane(s) {
       <div class="say-2">This session has a transcript but no notes. Summarising posts them the usual way.</div>
       <div class="row-btns" style="margin-top:22px">
         ${can() ? `<button class="btn go" data-act="summary/again" data-meeting="${s.meetingId}">Summarise it</button>` : ''}
-        <button class="btn" data-transcript="${s.meetingId}">Read the transcript</button>
+        ${cap('transcripts') ? `<button class="btn" data-transcript="${s.meetingId}">Read the transcript</button>` : ''}
       </div>`;
   }
 
@@ -1036,7 +1153,7 @@ function notesPane(s) {
     <div style="display:flex;align-items:flex-end;gap:20px;margin-top:12px;flex-wrap:wrap">
       <h1 class="display">${esc(heading)}</h1>
       <div class="row-btns" style="margin-left:auto;padding-bottom:6px">
-        <button class="btn sm" data-transcript="${s.meetingId}">Transcript</button>
+        ${cap('transcripts') ? `<button class="btn sm" data-transcript="${s.meetingId}">Transcript</button>` : ''}
         ${can() ? `<button class="btn sm" data-act="summary/again" data-meeting="${s.meetingId}"
              data-confirm="Write the notes for ${esc(s.ref)} again?">Re-summarise</button>` : ''}
         <button class="btn sm ghost" data-copy-notes>Copy for Obsidian</button>
@@ -1333,7 +1450,7 @@ function rosterTab() {
         }).join('')}
       </div>
       ${roster.length ? '' : '<div class="quiet" style="padding:20px 0">Nobody at this table yet.</div>'}
-      ${can() ? invitePanel() : ''}
+      ${canManage() ? invitePanel() : ''}
       ${roster.some((p) => p.consent.withdrawn) ? `
         <div style="border-left:2px solid var(--edge);padding-left:16px;margin-top:26px;max-width:70ch">
           <div class="quiet">
@@ -1341,7 +1458,7 @@ function rosterTab() {
             <code>/campaign consent</code> themselves — asking on their behalf is a conversation, not a button.
           </div>
         </div>` : ''}
-      ${can() ? '' : disabledNote()}
+      ${canManage() ? '' : disabledNote()}
     </div>`;
 }
 
@@ -1350,7 +1467,7 @@ function rosterTab() {
 // Not someone who already agreed, and never someone who turned recording off
 // themselves — re-asking them is the one thing this screen must not offer,
 // because it turns their own decision into something to be nagged about.
-const askable = (p) => can() && !p.consent.mayRecord && !p.consent.withdrawn && p.consent.state !== 'declined';
+const askable = (p) => canManage() && !p.consent.mayRecord && !p.consent.withdrawn && p.consent.state !== 'declined';
 
 const listNames = (people) => {
   const names = people.map(whoIs);
@@ -1422,7 +1539,7 @@ function invitePanel() {
 // six players was six always-open text boxes, which read as a data-entry
 // screen for something you set once.
 function characterCell(p, who) {
-  if (!can()) return p.characterName ? esc(p.characterName) : '<span class="unset">not set</span>';
+  if (!canManage()) return p.characterName ? esc(p.characterName) : '<span class="unset">not set</span>';
   if (view.editing === p.userId) {
     return `<form class="row-btns" data-act="roster/character" data-campaign="${detail.id}" data-user="${esc(p.userId)}">
       <input class="in" name="name" style="width:140px" value="${esc(p.characterName || '')}"
@@ -1462,10 +1579,10 @@ function correctionsTab() {
               <div class="mono" style="font-size:14px;color:var(--text-2)">“${esc(c.wrong)}”</div>
               <div style="font-size:15px;font-weight:500">${esc(c.right)}</div>
               <div class="r mono" style="font-size:13px;color:var(--dim)">${c.lines == null ? '—' : `${n(c.lines)} lines`}</div>
-              <div class="r">${can() ? `<button class="btn sm" data-act="corrections/remove"
+              <div class="r">${canManage() ? `<button class="btn sm" data-act="corrections/remove"
                 data-campaign="${detail.id}" data-wrong="${esc(c.wrong)}">Remove</button>` : ''}</div>
             </div>`).join('')}
-          ${can() ? `
+          ${canManage() ? `
             <form class="tr" data-act="corrections/add" data-campaign="${detail.id}" style="border-bottom:0;padding-top:18px">
               <input class="in" name="wrong" placeholder="what Whisper hears" required aria-label="Misheard text">
               <input class="in" name="right" placeholder="what it should say" required aria-label="Correct text">
@@ -1474,7 +1591,7 @@ function correctionsTab() {
             </form>` : ''}
         </div>
         ${list.length ? '' : '<div class="quiet" style="padding-top:18px">No corrections saved yet.</div>'}
-        ${can() ? '' : disabledNote()}
+        ${canManage() ? '' : disabledNote()}
       </div>
 
       <div class="aside">
@@ -1485,7 +1602,7 @@ function correctionsTab() {
             Adding a correction already rewrites this campaign's transcripts. Replay is for the sessions
             that arrived afterwards from somewhere else — an import, or anything recovered from a crash.
           </div>
-          ${can() && list.length ? `<button class="btn wide" style="margin-top:16px" data-act="corrections/replay"
+          ${canManage() && list.length ? `<button class="btn wide" style="margin-top:16px" data-act="corrections/replay"
             data-campaign="${detail.id}"
             data-confirm="Replay every correction over this campaign's transcripts?">Replay over everything again</button>` : ''}
         </div>
@@ -1533,11 +1650,11 @@ function settingsTab() {
           // campaign posting to a chosen channel could then never be moved.
           `<div class="seg" data-seg="output">
              <button class="${mode === 'default' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
-                     data-mode="default" ${can() ? '' : 'disabled'}>Where we played</button>
+                     data-mode="default" ${canManage() ? '' : 'disabled'}>Where we played</button>
              <button class="${mode === 'channel' ? 'on' : ''}" disabled
                      title="Set with /campaign output in Discord, where the channels can be listed">A chosen channel</button>
              <button class="${mode === 'dm' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
-                     data-mode="dm" ${can() && detail.claimed ? '' : 'disabled'}>DM to me</button>
+                     data-mode="dm" ${canManage() && detail.claimed ? '' : 'disabled'}>DM to me</button>
            </div>`)}
         ${row('Last recorded in', 'The voice channel Quill most recently joined for this campaign',
           `<span class="val">${esc(detail.channel || 'never recorded')}</span>`)}
@@ -2003,6 +2120,20 @@ const typing = () => ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagN
 
 async function tick() {
   try {
+    // Who the bot thinks is asking, before anything else — it decides both
+    // what the rest of the payloads will contain and whether there is an app
+    // to draw at all. A bot too old to answer it leaves `me` null, and cap()
+    // then defaults to the behaviour that existed before levels did.
+    me = await get('/me').catch(() => me);
+
+    if (me?.loginRequired && !me.signedIn) {
+      lastSeen = Date.now();
+      document.body.classList.remove('stale');
+      status = null;
+      paint();
+      return;
+    }
+
     status = await get('/status');
     lastSeen = Date.now();
     document.body.classList.remove('stale');
@@ -2149,6 +2280,20 @@ document.addEventListener('click', async (event) => {
     people.query = ''; people.results = null; people.error = '';
     return paint();
   }
+
+  if (t.closest('[data-signin-back]')) {
+    login.stage = 'name'; login.message = ''; login.failed = false;
+    return paint();
+  }
+
+  if (t.closest('[data-logout]')) {
+    try {
+      await post('/auth/logout', {});
+    } catch { /* the cookie is dead either way once the row is gone */ }
+    me = null; status = null; detail = null; notes = null; script = null;
+    view.campaignId = null; view.meetingId = null;
+    return tick();
+  }
   if (t.closest('[data-copy-notes]')) {
     return copy(notesAsMarkdown(), 'Notes copied as markdown.');
   }
@@ -2211,6 +2356,61 @@ document.addEventListener('click', async (event) => {
 
 // Forms wherever there is something to type: Enter-to-submit and required-field
 // validation for free, and both matter for the things typed most often here.
+// Signing in. Two POSTs, and the only two requests on the page that work
+// without a credential — everything else is behind one.
+async function post(path, body) {
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { ok: res.ok, payload: await res.json().catch(() => ({})) };
+}
+
+document.addEventListener('submit', async (event) => {
+  const asking = event.target.closest('form[data-signin-request]');
+  const verifying = event.target.closest('form[data-signin-verify]');
+  if (!asking && !verifying) return;
+  event.preventDefault();
+
+  login.busy = true;
+  login.message = '';
+  paint();
+
+  try {
+    if (asking) {
+      login.name = $('signin-name')?.value.trim() ?? '';
+      const { payload } = await post('/auth/request', { name: login.name });
+      login.failed = payload.ok === false;
+      login.message = payload.message ?? '';
+      // The step advances whatever the answer was, because the answer is
+      // deliberately the same whether or not the account exists — see
+      // web/auth-routes.js. Anything else here would leak who plays what.
+      if (payload.ok !== false) login.stage = 'code';
+    } else {
+      const code = $('signin-code')?.value.trim() ?? '';
+      const { payload } = await post('/auth/verify', { name: login.name, code });
+      login.failed = payload.ok === false;
+      login.message = payload.message ?? '';
+      if (payload.ok) {
+        login.stage = 'name';
+        login.name = '';
+        login.message = '';
+        me = null;
+        await tick();
+        return;
+      }
+    }
+  } catch (err) {
+    login.failed = true;
+    login.message = `Couldn't reach the bot — ${err.message}`;
+  } finally {
+    login.busy = false;
+  }
+  paint();
+  $(asking ? 'signin-code' : 'signin-code')?.focus();
+});
+
 // Searching for a person is the one form whose answer is not a toast: it
 // returns a list to choose from, so it renders into the page rather than
 // disappearing after a second and a half.

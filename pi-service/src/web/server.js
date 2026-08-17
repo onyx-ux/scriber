@@ -5,6 +5,10 @@ import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
 import { buildTranscriptView } from './transcript-view.js';
 import { createDiscordBridge } from './discord-bridge.js';
+import { buildViewer, OPERATOR, maySee, mayManage, atLeast, LEVEL_WORDS } from './viewer.js';
+import { cookieFrom, readSession, closeSession, sessionCookie, clearedCookie } from './auth.js';
+import { handleAuthRoute, createRequestLimiter } from './auth-routes.js';
+import { scopeStatus, scopeCampaign } from './scope.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -58,6 +62,88 @@ function authorise({ req, url, cfg, mutating }) {
   return given === cfg.statusToken ? null : { status: 401, message: 'bad token' };
 }
 
+// WHO is asking, which is a different question from whether they may ask.
+//
+// The token above is a door key shared by everyone who can reach the dashboard;
+// this is the name on the person walking through it. Both exist because they
+// answer different things, and the order matters:
+//
+//   1. a signed-in Discord account, if there is one. Its level comes from what
+//      that account owns, runs and plays in — see web/viewer.js.
+//   2. otherwise the operator's own console, which is what the token has always
+//      meant and still does.
+//
+// Sign-in therefore NARROWS what a request can see rather than widening it,
+// which is the safe direction: a bug here shows somebody too little.
+//
+// DASHBOARD_REQUIRE_LOGIN flips (2) off, so an install that has invited its
+// players in stops handing anyone with the token the keys to the machinery. It
+// is off by default on purpose — turning it on before you have signed in once
+// would lock you out of your own Pi.
+function identify({ req, db, cfg, client }) {
+  const token = cookieFrom(req.headers.cookie);
+  const session = token ? readSession(db, cfg, token) : null;
+
+  if (session) {
+    const guildsOwned = [...(client?.guilds?.cache?.values?.() ?? [])]
+      .filter((g) => g.ownerId === session.userId)
+      .map((g) => g.id);
+    return buildViewer({ db, cfg, userId: session.userId, username: session.username, guildsOwned });
+  }
+
+  return cfg.dashboardRequireLogin ? buildViewer({ db, cfg, userId: null }) : OPERATOR;
+}
+
+// What each action costs, and therefore who may fire it.
+//
+// Grouped by what is actually at stake rather than by what it is called:
+//
+//   machinery — spends the owner's GPU, API budget or disk, or stops the queue
+//               for everybody. The owner's hardware, so the owner's decision.
+//   manage    — reshapes one campaign's records. Whoever runs that table.
+//
+// Anything not listed is machinery. That default is the point: a new action
+// added later is locked to dev until somebody deliberately decides otherwise,
+// which is the failure direction that does not hand a player the pause button.
+const ACTION_NEEDS = {
+  'roster/search': 'manage',
+  'roster/invite': 'manage',
+  'roster/character': 'manage',
+  'roster/forget': 'manage',
+  'corrections/add': 'manage',
+  'corrections/remove': 'manage',
+  'corrections/replay': 'manage',
+  'campaign/output': 'manage',
+};
+
+function mayAct({ pathname, body, viewer, db }) {
+  const name = /^\/actions\/(.+?)\/?$/.exec(pathname)?.[1];
+  if (!name) return null; // unknown path — runAction 404s it properly
+
+  const needs = ACTION_NEEDS[name] ?? 'machinery';
+
+  if (needs === 'machinery') {
+    return viewer.can.machinery && viewer.can.approvals
+      ? null
+      : { status: 403, message: 'That is the bot owner\'s to decide — it spends their hardware or their API budget.' };
+  }
+
+  if (!viewer.can.manage) {
+    return { status: 403, message: 'You can read this campaign, but not change it.' };
+  }
+
+  // Manage actions name a campaign, and a campaign you may manage is not the
+  // same set as a campaign you may see. Resolved from the body rather than
+  // trusted from it: an id you cannot manage is refused whatever else is true.
+  const id = Number(body?.campaignId);
+  if (!Number.isInteger(id) || id <= 0) return null; // the action's own validator will say so better
+  if (!db.getCampaign(id)) return null;
+
+  return mayManage(viewer, id)
+    ? null
+    : { status: 403, message: 'That is not a campaign you run.' };
+}
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -85,10 +171,19 @@ function readJsonBody(req) {
   });
 }
 
-export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs = Date.now() }) {
+// `discord` is injectable so the HTTP layer can be tested without a logged-in
+// bot. It defaults to the real bridge; nothing in production passes it.
+export function startStatusServer({
+  db, cfg, client, activeSessions, startedAtMs = Date.now(),
+  discord = null,
+}) {
   if (!cfg.statusPort) return null;
 
   const reachability = { whisperServer: null, summariser: null, checkedAt: null };
+
+  // Owned here rather than by the auth module, so two servers in one process
+  // do not share one limiter — see createRequestLimiter.
+  const tooSoon = createRequestLimiter();
 
   // Guarded against overlap: the on-demand probe below is a button anyone can
   // hold down, and each call opens two sockets with their own timeouts.
@@ -110,6 +205,20 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
   const probeTimer = setInterval(probe, PROBE_INTERVAL_MS);
   probeTimer.unref?.();
 
+  // Expired codes and sessions are deleted rather than merely ignored: a table
+  // of dead credentials is a table of things that could come back if a clock
+  // moved. Swept hourly and checked again on every use, the same belt-and-
+  // braces the consent invites get.
+  db.sweepAuth();
+  const sweepTimer = setInterval(() => {
+    try {
+      db.sweepAuth();
+    } catch (err) {
+      console.error('[auth] sweep failed:', err.message);
+    }
+  }, 60 * 60 * 1000);
+  sweepTimer.unref?.();
+
   const send = (res, status, payload) =>
     res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
 
@@ -121,10 +230,10 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
     // Fire-and-forget: the answer arrives in the next status poll, not in the
     // response to the click.
     probeNow: () => { probe(); },
-    // The two things an action needs Discord itself for — finding a person by
-    // the name their table knows them by, and asking them whether they may be
-    // recorded. See web/discord-bridge.js.
-    discord: createDiscordBridge({ client, db, cfg }),
+    // The things an action needs Discord itself for — finding a person by the
+    // name their table knows them by, asking them whether they may be
+    // recorded, and delivering a sign-in code. See web/discord-bridge.js.
+    discord: discord ?? createDiscordBridge({ client, db, cfg }),
     // Started, not awaited. Downloading, converting and transcribing an
     // hours-long recording takes hours; the HTTP response says "started" and
     // progress shows up in the status snapshot like any other transcription.
@@ -172,11 +281,46 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
       return;
     }
 
-    const refusal = authorise({ req, url, cfg, mutating });
-    if (refusal) {
-      send(res, refusal.status, { ok: false, message: refusal.message });
+    // Signing in still goes through the door.
+    //
+    // These three routes are how somebody without an IDENTITY gets one, which
+    // is a different thing from being allowed to reach the API at all — and
+    // the proxy adds the token to every request, so a browser on the dashboard
+    // has it either way. Skipping the check here would leave a bot on an
+    // exposed port able to be told "DM this person a code" by a stranger, at
+    // whatever rate the limiter allowed.
+    const doorman = authorise({ req, url, cfg, mutating });
+    if (doorman) {
+      send(res, doorman.status, { ok: false, message: doorman.message });
       return;
     }
+
+    if (mutating && url.pathname.startsWith('/auth/')) {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch (err) {
+        send(res, 400, { ok: false, message: err.message });
+        return;
+      }
+      const answer = await handleAuthRoute({
+        pathname: url.pathname, body, req, db, cfg, ctx, tooSoon,
+        // Only set Secure when the page really is on https, or the browser
+        // silently discards the cookie and nobody can ever sign in on a LAN.
+        secure: (req.headers['x-forwarded-proto'] ?? '') === 'https',
+      });
+      if (!answer) {
+        send(res, 404, { ok: false, message: 'No such route.' });
+        return;
+      }
+      if (answer.cookie) res.setHeader('Set-Cookie', answer.cookie);
+      send(res, answer.status, answer.payload);
+      return;
+    }
+
+    // Who is asking. Everything below is filtered by this rather than by the
+    // token, so a signed-in player sees their games and nothing else.
+    const viewer = identify({ req, db, cfg, client });
 
     if (mutating) {
       let body;
@@ -186,13 +330,25 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
         send(res, 400, { ok: false, message: err.message });
         return;
       }
+
+      const denial = mayAct({ pathname: url.pathname, body, viewer, db });
+      if (denial) {
+        send(res, denial.status, { ok: false, message: denial.message });
+        return;
+      }
+
       // Awaited unconditionally: most actions answer synchronously and `await`
       // on a plain object is a no-op, but the ones that talk to Discord cannot.
       const { status, payload, action } = await runAction({ pathname: url.pathname, body, db, cfg, ctx });
       // Logged because these are the operations that used to leave an audit
       // trail in a Discord DM. Losing that when they moved would mean a job
       // could change state with nothing anywhere recording who did it.
-      if (action) console.log(`[actions] ${action} -> ${payload.ok ? 'ok' : 'refused'}: ${payload.message}`);
+      if (action) {
+        console.log(
+          `[actions] ${action} by ${viewer.username ?? 'operator'} (${viewer.level}) -> ` +
+            `${payload.ok ? 'ok' : 'refused'}: ${payload.message}`
+        );
+      }
       send(res, status, payload);
       return;
     }
@@ -202,17 +358,38 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
       return;
     }
 
+    // Who the page is talking to, so it can draw itself for them before it
+    // asks for anything else.
+    if (url.pathname === '/me') {
+      send(res, 200, {
+        signedIn: Boolean(viewer.userId),
+        username: viewer.username,
+        level: viewer.level,
+        sees: LEVEL_WORDS[viewer.level],
+        can: viewer.can,
+        campaigns: viewer.campaignIds.length,
+        loginRequired: Boolean(cfg.dashboardRequireLogin),
+        // Whether signing in is even possible on this install, so the page can
+        // say "not configured" instead of failing at the code step.
+        signInAvailable: Boolean(cfg.authSecret || cfg.statusToken),
+      });
+      return;
+    }
+
     // One campaign in full — roster, corrections, sessions. Kept out of
     // /status because that is polled every few seconds by everyone with the
     // page open, and this changes a few times a month. See web/campaign-view.js.
     if (url.pathname === '/campaign') {
       const id = Number(url.searchParams.get('id'));
       const view = Number.isInteger(id) && id > 0 ? buildCampaignView({ db, campaignId: id }) : null;
-      if (!view) {
+      // A campaign this viewer may not see answers 404, not 403. "You are not
+      // allowed to see campaign 7" tells a stranger that campaign 7 exists,
+      // which is the thing they were trying to find out.
+      if (!view || !maySee(viewer, id)) {
         send(res, 404, { ok: false, message: 'No such campaign.' });
         return;
       }
-      send(res, 200, view);
+      send(res, 200, scopeCampaign(view, viewer));
       return;
     }
 
@@ -223,7 +400,7 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
     if (url.pathname === '/notes') {
       const id = Number(url.searchParams.get('meeting'));
       const view = Number.isInteger(id) && id > 0 ? buildNotesView({ db, meetingId: id }) : null;
-      if (!view) {
+      if (!view || !maySee(viewer, view.campaignId)) {
         send(res, 404, { ok: false, message: 'No such session.' });
         return;
       }
@@ -238,8 +415,15 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
     if (url.pathname === '/transcript') {
       const id = Number(url.searchParams.get('meeting'));
       const meeting = Number.isInteger(id) && id > 0 ? db.getMeeting(id) : null;
-      if (!meeting) {
+      if (!meeting || !maySee(viewer, meeting.campaign_id)) {
         send(res, 404, { ok: false, message: 'No such session.' });
+        return;
+      }
+      // A recap is the table's shared account of an evening. A transcript is
+      // every word five people said, and being at the table is not the same as
+      // being handed that — so players get the notes and not this.
+      if (!viewer.can.transcripts) {
+        send(res, 403, { ok: false, message: 'You can read the notes for this session, but not the transcript.' });
         return;
       }
 
@@ -271,7 +455,7 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
 
     try {
       const body = JSON.stringify(
-        buildStatus({ db, cfg, client, activeSessions, reachability, startedAtMs })
+        scopeStatus(buildStatus({ db, cfg, client, activeSessions, reachability, startedAtMs }), viewer)
       );
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(body);
     } catch (err) {
@@ -300,6 +484,7 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
     server,
     close: () => {
       clearInterval(probeTimer);
+      clearInterval(sweepTimer);
       server.close();
     },
   };

@@ -116,7 +116,74 @@ export function createDiscordBridge({ client, db, cfg }) {
           `${characterName ? `, as **${characterName}**` : ''}. Nothing of theirs is captured until they say yes.`,
       };
     },
+
+    // Find the one account a sign-in name refers to. See findAcrossGuilds.
+    findKnownMember: ({ query }) => findAcrossGuilds(client, query),
+
+    // Deliver a sign-in code.
+    //
+    // The DM says what it is for and that nobody asked them for a password,
+    // because an unexpected six-digit code is exactly the shape of a phishing
+    // message and the honest version has to look different from one.
+    async sendCode({ userId, code, username }) {
+      const user = await client?.users?.fetch?.(userId).catch(() => null);
+      if (!user) return { ok: false };
+
+      const channel = await user.createDM().catch(() => null);
+      const sent = channel
+        ? await channel
+            .send(
+              `🪶 **${code}** is your code for the Quill dashboard.\n\n` +
+                'It lasts ten minutes and works once. Type it on the sign-in page along with the name ' +
+                `**${username}**.\n\n` +
+                '_If you did not just try to sign in, ignore this — nothing has happened to your account, and ' +
+                'Quill will never ask you for a password._'
+            )
+            .catch(() => null)
+        : null;
+
+      return { ok: Boolean(sent) };
+    },
   };
+}
+
+// --- signing in ---
+
+// One person, found across every server the bot is in.
+//
+// Used only by the sign-in flow, and scoped hard on purpose: a name that
+// matches nobody the bot shares a server with resolves to nothing, so this
+// cannot become a way to make the bot DM a stranger. An exact username match
+// wins over a nickname, and an ambiguous match resolves to nothing rather than
+// guessing — sending somebody else's sign-in code to the wrong account is the
+// one outcome worth refusing over.
+async function findAcrossGuilds(client, query) {
+  const term = String(query ?? '').trim().toLowerCase();
+  if (term.length < 2) return null;
+
+  const hits = new Map();
+  for (const guild of client?.guilds?.cache?.values?.() ?? []) {
+    let found;
+    try {
+      found = await guild.members.search({ query: term, limit: 8 });
+    } catch {
+      continue;
+    }
+    for (const member of found.values()) {
+      if (member.user.bot) continue;
+      hits.set(member.id, { userId: member.id, username: member.user.username, nick: member.displayName });
+    }
+  }
+
+  const people = [...hits.values()];
+  const exact = people.filter((p) => p.username.toLowerCase() === term);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+
+  const byNick = people.filter((p) => (p.nick ?? '').toLowerCase() === term);
+  if (byNick.length === 1) return byNick[0];
+
+  return people.length === 1 ? people[0] : null;
 }
 
 // What the dashboard needs to show a row: who they are, what the table calls
