@@ -76,6 +76,13 @@ export function buildInviteMessage({ campaignName, inviterName, retentionDays, e
       '• Your recording is never sent anywhere else.\n\n' +
       "**You don't have to.** Decline and Quill will not record you at all: it skips your audio entirely rather than " +
       'recording and discarding it. You can still play — you just will not be in the transcript.\n\n' +
+      // Said here, at the moment of agreeing, because it is the part somebody
+      // would most reasonably feel misled about later. "You can change your
+      // mind" is true and is not the whole truth: the switch is forward-only,
+      // and a session you were recorded in stays recorded.
+      '**You can change your mind any time** with `/campaign consent`, without asking anyone. That stops future ' +
+      'recording — sessions already written up stay as they are, because they are the whole table’s record of an ' +
+      'evening everyone played.\n\n' +
       `This invite expires ${discordTime(expiresAt)}.`,
     components: [buildConsentButtons(undefined)],
   };
@@ -90,7 +97,7 @@ export function buildInviteDm({ campaignId, campaignName, inviterName, retention
 export function acceptedMessage(campaignName) {
   return (
     `✅ Thanks — you're on the roster for **${campaignName}** and Quill will include you in the transcripts.\n` +
-    'Changed your mind? `/campaign consent` turns it back off, any time, without asking anyone.'
+    'Changed your mind? `/campaign consent` turns it back off from that moment on, any time, without asking anyone.'
   );
 }
 
@@ -122,18 +129,19 @@ export const WITHDRAW_PREFIX = 'withdraw:';
 // people received months ago, and a parser that got cleverer about one would
 // have to stay right about the other forever.
 export function parseWithdrawButton(customId) {
-  const match = /^withdraw:(stop|erase|confirm|cancel|resume):(\d+)$/.exec(String(customId ?? ''));
+  const match = /^withdraw:(stop|resume):(\d+)$/.exec(String(customId ?? ''));
   return match ? { action: match[1], campaignId: Number(match[2]) } : null;
 }
 
 const button = (action, campaignId, label, style) =>
   new ButtonBuilder().setCustomId(`${WITHDRAW_PREFIX}${action}:${campaignId}`).setLabel(label).setStyle(style);
 
-// Where you stand, and the three things you can do about it.
+// Where you stand, and the one switch you control.
 //
-// The order is deliberate and is the opposite of a dark pattern: the option
-// that changes nothing comes first and is the one you land on, and the
-// irreversible one is last and is the only one styled as dangerous.
+// The switch is forward-looking, and the message says so in the same breath as
+// offering it. Somebody pressing "stop" who believes it also unwrites eleven
+// sessions has not been told the truth by the interface, and would find out at
+// the worst possible moment — reading a recap that still has them in it.
 export function buildStandingMessage(standing, campaignName) {
   const { state, lines, sessions, characterName, displayName, decidedAt, retentionDays, hasRecord } = standing;
 
@@ -144,8 +152,12 @@ export function buildStandingMessage(standing, campaignName) {
     : state === 'expired' ? 'You were asked, and the invitation ran out.'
     : 'Nobody has asked you yet.';
 
+  const onFile = hasRecord
+    ? `${lines.toLocaleString()} line${lines === 1 ? '' : 's'} across ${sessions} transcript${sessions === 1 ? '' : 's'}`
+    : 'nothing';
+
   const facts = [
-    `**On file** — ${hasRecord ? `${lines.toLocaleString()} line${lines === 1 ? '' : 's'} across ${sessions} transcript${sessions === 1 ? '' : 's'}` : 'nothing'}`,
+    `**On file** — ${onFile}`,
     `**As** — ${characterName || displayName || 'your Discord name'}`,
     `**Audio** — ${
       retentionDays > 0
@@ -154,75 +166,39 @@ export function buildStandingMessage(standing, campaignName) {
     }`,
   ];
 
-  const rows = [];
-  if (state === 'granted') {
-    rows.push(button('stop', standing.campaignId, 'Stop recording me from now on', ButtonStyle.Secondary));
-    if (hasRecord) {
-      rows.push(button('erase', standing.campaignId, 'Stop, and take out what you have', ButtonStyle.Danger));
-    }
-  } else {
-    rows.push(button('resume', standing.campaignId, 'Record me from now on', ButtonStyle.Success));
-    if (hasRecord) {
-      rows.push(button('erase', standing.campaignId, 'Take out what you already have', ButtonStyle.Danger));
-    }
-  }
+  const granted = state === 'granted';
+  const control = granted
+    ? button('stop', standing.campaignId, 'Stop recording me from now on', ButtonStyle.Secondary)
+    : button('resume', standing.campaignId, 'Record me from now on', ButtonStyle.Success);
+
+  // Said before the button is pressed rather than after. The sessions on file
+  // are a record several people agreed to and still want; this switch does not
+  // reach into them, and pretending otherwise would be the one thing that could
+  // make a consent screen dishonest.
+  const scope = hasRecord
+    ? `\nThe ${sessions} session${sessions === 1 ? '' : 's'} above ${sessions === 1 ? 'stays' : 'stay'} as ${sessions === 1 ? 'it is' : 'they are'} either way — ` +
+      'you agreed to be recorded at the time, and they are the table\'s record of an evening everyone played. ' +
+      'This only decides what happens next.\n'
+    : '';
 
   return {
     content:
       `🪶 **${campaignName}** — ${headline}\n` +
       (decidedAt ? `You answered on ${discordTime(decidedAt, 'D')}.\n` : '') +
-      `\n${facts.join('\n')}\n\n` +
-      '_Only you can see this. `/campaign consent` any time._',
-    components: [new ActionRowBuilder().addComponents(...rows)],
+      `\n${facts.join('\n')}\n` +
+      scope +
+      '\n_Only you can see this. `/campaign consent` any time._',
+    components: [new ActionRowBuilder().addComponents(control)],
   };
 }
 
-// Exactly what erasing does, before it happens.
-//
-// The `cannot` line is not a disclaimer at the bottom in small print — it is
-// part of the list, in the same voice as the rest, because it is the thing
-// somebody would most reasonably be angry about discovering afterwards.
-export function buildErasePlan(plan, campaignName) {
-  const names = plan.names.length ? plan.names.map((n) => `**${n}**`).join(' and ') : 'your name';
-
-  return {
-    content:
-      `⚠️ **This cannot be undone.** Here is exactly what I will do in **${campaignName}**:\n\n` +
-      `**Remove** — ${plan.lines.toLocaleString()} of your line${plan.lines === 1 ? '' : 's'}, from all ` +
-      `${plan.sessions} transcript${plan.sessions === 1 ? '' : 's'}\n` +
-      (plan.notes
-        ? `**Remove** — ${names} from ${plan.notes} set${plan.notes === 1 ? '' : 's'} of notes, replaced with "${plan.replacement}"\n`
-        : '**Remove** — your character name from this campaign\n') +
-      `**Keep** — ${plan.keeps}\n` +
-      plan.cannot.map((c) => `**Cannot** — ${c}`).join('\n') +
-      '\n\nWhoever runs the game will be told that you left the record, not why.',
-    components: [
-      new ActionRowBuilder().addComponents(
-        button('confirm', plan.campaignId, 'Take me out', ButtonStyle.Danger),
-        button('cancel', plan.campaignId, 'Keep me in', ButtonStyle.Secondary)
-      ),
-    ],
-  };
-}
-
-export function buildErasedMessage(result, campaignName) {
-  return (
-    `✅ **You are out of the record** in **${campaignName}**.\n\n` +
-    `**Lines removed** — ${result.lines.toLocaleString()}\n` +
-    `**Transcripts rewritten** — ${result.sessions}\n` +
-    `**Notes edited** — ${result.notes}\n` +
-    '**Audio** — was already deleted\n\n' +
-    'I will not record you again. You can still play — I skip your microphone and write down everyone else.\n' +
-    'Changed your mind? `/campaign consent` turns it back on.'
-  );
-}
-
-export function buildStoppedMessage(campaignName, { hasRecord }) {
+export function buildStoppedMessage(campaignName, { hasRecord, sessions = 0 }) {
   return (
     `🔇 **Quill will not record you** in **${campaignName}** from now on.\n` +
-    'Your microphone is skipped rather than recorded and discarded, so nothing new of yours is captured.\n\n' +
+    'Your microphone is skipped rather than recorded and discarded, so nothing new of yours is captured. ' +
+    'You can still play — I write down everyone else.\n\n' +
     (hasRecord
-      ? 'What you said before is still on file. `/campaign consent` again if you want that taken out too.\n'
+      ? `The ${sessions} session${sessions === 1 ? '' : 's'} already on file ${sessions === 1 ? 'stays' : 'stay'} as ${sessions === 1 ? 'it is' : 'they are'}.\n`
       : '') +
     'Changed your mind? `/campaign consent` turns it back on.'
   );
@@ -231,23 +207,23 @@ export function buildStoppedMessage(campaignName, { hasRecord }) {
 export function buildResumedMessage(campaignName) {
   return (
     `✅ **Quill will record you** in **${campaignName}** again, from the next session on.\n` +
-    'Nothing that was taken out comes back — that was permanent.\n' +
     'You can stop again at any time with `/campaign consent`.'
   );
 }
 
 // What the person running the game is told.
 //
-// The fact, not the reason. They need to know their transcripts changed under
-// them — a recap that no longer matches what they remember is otherwise a bug
-// they will spend an evening chasing — and they are owed nothing beyond that.
-export function buildManagerNotice({ campaignName, result }) {
+// The fact, and named — the bot already announces who it is skipping every
+// time it joins a channel, so pretending to anonymise it here would protect
+// nobody and would leave the DM to work it out from a short transcript.
+//
+// Sent because it changes what the next transcript will contain, which is the
+// DM's problem to plan around. Nothing that already exists has moved.
+export function buildManagerNotice({ campaignName, who }) {
   return (
-    `🪶 Someone has left the record in **${campaignName}**.\n\n` +
-    `${result.lines.toLocaleString()} line${result.lines === 1 ? '' : 's'} came out of ${result.sessions} ` +
-    `transcript${result.sessions === 1 ? '' : 's'}, and ${result.notes} set${result.notes === 1 ? '' : 's'} of ` +
-    'notes were rewritten to take their name out. Everything everyone else said is untouched, and your session ' +
-    'count and hours are unchanged — the games happened, one voice just came out of them.\n\n' +
+    `🪶 **${who}** has turned off recording in **${campaignName}**.\n\n` +
+    'From the next session on, their microphone is skipped and everyone else is written down as normal. ' +
+    'Every transcript and every set of notes you already have is unchanged.\n\n' +
     'There is no way for you to put them back. If they want to be recorded again they run `/campaign consent` ' +
     'themselves — asking on their behalf is a conversation, not a button.'
   );
@@ -255,12 +231,33 @@ export function buildManagerNotice({ campaignName, result }) {
 
 // Who in the voice channel the bot is about to ignore, so the DM finds out
 // before the session rather than when the transcript comes back short.
-export function describeUnrecorded(names) {
-  if (names.length === 0) return '';
-  const who = names.map((n) => `**${n}**`).join(', ');
-  return (
-    `\n\n🔇 Not being recorded: ${who} — ` +
-    (names.length === 1 ? 'they have' : 'they have') +
-    " not agreed to be recorded in this campaign. `/campaign invite` asks them."
-  );
+//
+// Split by why, because the two halves need opposite things. Someone who has
+// never been asked is waiting on an invite. Someone who used /campaign consent
+// to turn recording off has already answered, and telling the DM to invite them
+// turns a decision they made for themselves into something to be nagged about.
+//
+// Accepts a bare array too — it was one for a long time, and a DM's channel
+// message is not worth breaking over a signature.
+export function describeUnrecorded(who) {
+  const { unasked = [], declined = [] } = Array.isArray(who) ? { unasked: who } : (who ?? {});
+  if (unasked.length === 0 && declined.length === 0) return '';
+
+  const list = (names) => names.map((n) => `**${n}**`).join(', ');
+  const parts = [];
+
+  if (unasked.length) {
+    parts.push(
+      `🔇 Not being recorded: ${list(unasked)} — they have not agreed to be recorded in this campaign. ` +
+        '`/campaign invite` asks them.'
+    );
+  }
+  if (declined.length) {
+    parts.push(
+      `🔇 Recording off by their own choice: ${list(declined)}. ` +
+        'They can turn it back on themselves with `/campaign consent` — that one is theirs, not yours.'
+    );
+  }
+
+  return `\n\n${parts.join('\n')}`;
 }

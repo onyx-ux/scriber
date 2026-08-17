@@ -5,14 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
-import { standing, stopRecording, resumeRecording, describePlan, erase, ANONYMOUS } from '../src/campaign/withdrawal.js';
+import { standing, stopRecording, resumeRecording } from '../src/campaign/withdrawal.js';
 
 // Taking consent back.
 //
-// These tests are about blast radius and about honesty. Erasing is the one
-// operation in the whole bot that destroys somebody's data on purpose, and the
-// two ways it can be wrong are destroying more than was asked for, and telling
-// the person it did something it did not do.
+// Consent here is forward-looking, and only forward-looking: withdrawing stops
+// the microphone, and every session already recorded stays exactly as it is.
+// Half of these tests are about the switch working; the other half are about
+// that boundary holding, because a transcript is four or five people's record
+// of a shared evening and one of them must not be able to reach back through
+// it afterwards.
 
 async function harness(t) {
   const dir = await mkdtemp(join(tmpdir(), 'quill-withdraw-'));
@@ -80,13 +82,10 @@ test('someone who already accepted can stop, with no invitation open', async (t)
   db.decideConsent(campaignId, SAF, true);
   assert.equal(db.mayRecord(campaignId, SAF), true);
 
-  assert.equal(db.decideConsent(campaignId, SAF, false) && db.mayRecord(campaignId, SAF), false,
-    'sanity: the old path can decline an open invite');
-
-  db.decideConsent(campaignId, SAF, true);
   const result = stopRecording(db, { campaignId, userId: SAF });
 
   assert.equal(result.ok, true);
+  assert.equal(result.alreadyStopped, false);
   assert.equal(db.mayRecord(campaignId, SAF), false);
 });
 
@@ -99,16 +98,28 @@ test('someone never invited at all can still switch recording off', async (t) =>
   assert.equal(db.mayRecord(campaignId, SAF), false);
 });
 
-test('stopping is reversible and resuming does not resurrect anything', async (t) => {
+// Pressing it twice must be idempotent AND say so, because the second press is
+// what decides whether the DM gets a second notification.
+test('stopping twice is harmless and reports that nothing changed', async (t) => {
+  const { db, campaignId } = await harness(t);
+  stopRecording(db, { campaignId, userId: SAF });
+
+  const again = stopRecording(db, { campaignId, userId: SAF });
+  assert.equal(again.ok, true);
+  assert.equal(again.alreadyStopped, true);
+  assert.equal(db.mayRecord(campaignId, SAF), false);
+});
+
+test('stopping is reversible, and resuming is forward-looking too', async (t) => {
   const { db, campaignId } = await harness(t);
   played(db, campaignId, LINES);
 
   stopRecording(db, { campaignId, userId: SAF });
-  erase(db, { campaignId, userId: SAF });
-  resumeRecording(db, { campaignId, userId: SAF });
+  assert.equal(db.mayRecord(campaignId, SAF), false);
 
-  assert.equal(db.mayRecord(campaignId, SAF), true, 'they can be recorded again');
-  assert.equal(standing(db, { campaignId, userId: SAF }).lines, 0, 'what was removed stays removed');
+  resumeRecording(db, { campaignId, userId: SAF });
+  assert.equal(db.mayRecord(campaignId, SAF), true);
+  assert.equal(standing(db, { campaignId, userId: SAF }).lines, 2, 'and the record was never touched by either');
 });
 
 // Declining must not un-enrol them: being on the roster is not being recorded,
@@ -121,151 +132,119 @@ test('stopping leaves them on the roster', async (t) => {
   assert.equal(db.isCampaignMember(campaignId, SAF), true);
 });
 
-// --- the plan, before anything happens ---
-
-test('the plan is counted, not estimated', async (t) => {
+test('one person stopping does not affect anybody else', async (t) => {
   const { db, campaignId } = await harness(t);
-  db.setCharacterName(campaignId, SAF, 'Sáfriel');
-  played(db, campaignId, LINES, { tldr: 'Sáfriel paid a bribe nobody voted on.', scenes: [] });
-  played(db, campaignId, [{ userId: OTHER, displayName: 'Brett', startMs: 0, endMs: 1, text: 'x' }],
-    { tldr: 'A quiet night at the docks.', scenes: [] });
+  db.setConsent(campaignId, OTHER, true);
 
-  const plan = describePlan(db, { campaignId, userId: SAF });
-  assert.equal(plan.lines, 2);
-  assert.equal(plan.sessions, 1);
-  assert.equal(plan.notes, 1, 'only the recap that actually names them');
-  assert.deepEqual(plan.names, ['Sáfriel', 'Saf']);
-  assert.ok(plan.cannot.some((c) => /message ids/.test(c)), 'it says what it cannot reach');
+  stopRecording(db, { campaignId, userId: SAF });
+
+  assert.equal(db.mayRecord(campaignId, SAF), false);
+  assert.equal(db.mayRecord(campaignId, OTHER), true);
 });
 
-// A two-letter name would match half the words in a recap; shredding the notes
-// is worse than leaving a name in.
-test('a name too short to redact safely is not redacted', async (t) => {
-  const { db, campaignId } = await harness(t);
-  played(db, campaignId, [{ userId: SAF, displayName: 'Jo', startMs: 0, endMs: 1, text: 'hi' }],
-    { tldr: 'Jo joined the party.', scenes: [] });
-
-  assert.deepEqual(describePlan(db, { campaignId, userId: SAF }).names, []);
-});
-
-// --- erasing ---
-
-test('erasing removes their lines and nobody else’s', async (t) => {
-  const { db, campaignId } = await harness(t);
-  const meetingId = played(db, campaignId, LINES);
-
-  const result = erase(db, { campaignId, userId: SAF });
-  assert.equal(result.lines, 2);
-  assert.equal(result.sessions, 1);
-
-  const left = db.listUtterances(meetingId);
-  assert.equal(left.length, 1);
-  assert.equal(left[0].user_id, OTHER, 'what everyone else said is untouched');
-});
-
-// The single most important test here. Agreeing at one table and withdrawing at
-// another are separate decisions, and crossing that line would destroy a record
-// nobody asked to have destroyed.
-test('erasing at one table does not touch the same person at another', async (t) => {
+// Consent is per campaign. Stopping at one table says nothing about another.
+test('stopping at one table leaves the same person recordable at another', async (t) => {
   const { db, campaignId } = await harness(t);
   const other = db.createCampaign('guild-1', 'Strahd', 'dm-2');
-  const mine = played(db, campaignId, LINES);
-  const theirs = played(db, other, LINES, { tldr: 'Saf did a thing.', scenes: [] });
+  db.setConsent(campaignId, SAF, true);
+  db.setConsent(other, SAF, true);
 
-  erase(db, { campaignId, userId: SAF });
+  stopRecording(db, { campaignId, userId: SAF });
 
-  assert.equal(db.listUtterances(mine).length, 1);
-  assert.equal(db.listUtterances(theirs).length, 3, 'the other campaign is whole');
-  assert.match(JSON.parse(db.getMeeting(theirs).summary_json).tldr, /Saf/, 'and its notes still name them');
+  assert.equal(db.mayRecord(campaignId, SAF), false);
+  assert.equal(db.mayRecord(other, SAF), true, 'a different table is a different decision');
 });
 
-test('the session itself survives — the evening happened', async (t) => {
+// --- what withdrawal must never do ---
+//
+// The guarantee, pinned. Everything below would have to be deliberately
+// undone for a withdrawal to start destroying the table's record.
+
+test('stopping leaves every transcript exactly as it was', async (t) => {
   const { db, campaignId } = await harness(t);
-  const meetingId = played(db, campaignId, LINES);
+  const first = played(db, campaignId, LINES);
+  const second = played(db, campaignId, LINES);
+  const before = [first, second].map((id) => db.listUtterances(id).map((u) => `${u.user_id}:${u.text}`));
 
-  erase(db, { campaignId, userId: SAF });
+  stopRecording(db, { campaignId, userId: SAF });
 
-  const meeting = db.getMeeting(meetingId);
-  assert.ok(meeting, 'the meeting row is still there');
-  assert.equal(db.listRecentMeetings(campaignId, 10).length, 1, 'and it still counts as a session');
+  const after = [first, second].map((id) => db.listUtterances(id).map((u) => `${u.user_id}:${u.text}`));
+  assert.deepEqual(after, before, 'the sessions they consented to are untouched');
+  assert.equal(standing(db, { campaignId, userId: SAF }).lines, 4, 'two lines in each of two sessions');
 });
 
-test('their names come out of the recaps, and the sentence still reads', async (t) => {
+test('stopping leaves the notes naming them exactly as they were', async (t) => {
   const { db, campaignId } = await harness(t);
-  db.setCharacterName(campaignId, SAF, 'Sáfriel');
-  const meetingId = played(db, campaignId, LINES, {
-    tldr: 'Sáfriel paid the fee out of party funds unasked.',
+  const summary = {
+    tldr: 'Sáfriel paid the queue-jumping fee out of party funds unasked.',
     scenes: [{ title: 'The queue', points: ['Saf argued with the clerk.'] }],
-    npcsIntroduced: ['Wren Halloway: the clerk'],
-  });
-
-  const result = erase(db, { campaignId, userId: SAF });
-  assert.equal(result.notes, 1);
-
-  const notes = JSON.parse(db.getMeeting(meetingId).summary_json);
-  assert.equal(notes.tldr, 'A player paid the fee out of party funds unasked.');
-  assert.equal(notes.scenes[0].points[0], 'A player argued with the clerk.');
-  assert.equal(notes.npcsIntroduced[0], 'Wren Halloway: the clerk', 'an NPC nobody withdrew is untouched');
-  assert.match(notes.tldr, new RegExp(ANONYMOUS, 'i'), 'and it is the documented replacement');
-});
-
-// A recap that no longer parses is a recap nothing can read — notes-view.js
-// renders it as "unreadable" and the Obsidian export skips it. Redaction must
-// go through the parsed structure, never a regex over the serialised blob.
-test('redaction leaves the stored recap valid JSON', async (t) => {
-  const { db, campaignId } = await harness(t);
-  const meetingId = played(db, campaignId, LINES, {
-    tldr: 'Saf said "we are moving up the queue" and meant it.\nThen he left.',
-    scenes: [],
-  });
-
-  erase(db, { campaignId, userId: SAF });
-  const raw = db.getMeeting(meetingId).summary_json;
-  assert.doesNotThrow(() => JSON.parse(raw));
-  assert.match(JSON.parse(raw).tldr, /^A player said "we are moving up the queue"/);
-});
-
-test('the character mapping goes too — it was the link they asked to remove', async (t) => {
-  const { db, campaignId } = await harness(t);
+  };
+  const meetingId = played(db, campaignId, LINES, summary);
   db.setCharacterName(campaignId, SAF, 'Sáfriel');
+  const before = db.getMeeting(meetingId).summary_json;
+
+  stopRecording(db, { campaignId, userId: SAF });
+
+  assert.equal(db.getMeeting(meetingId).summary_json, before, 'the recap is a record of what happened');
+});
+
+test('stopping keeps their character name, so old transcripts still read right', async (t) => {
+  const { db, campaignId } = await harness(t);
   played(db, campaignId, LINES);
+  db.setCharacterName(campaignId, SAF, 'Sáfriel');
 
-  erase(db, { campaignId, userId: SAF });
-  assert.equal(db.getCharacterName(campaignId, SAF), null);
+  stopRecording(db, { campaignId, userId: SAF });
+
+  assert.equal(db.getCharacterName(campaignId, SAF), 'Sáfriel',
+    'dropping it would relabel every line they already agreed to');
 });
 
-test('erasing when there is nothing on file says so rather than claiming work', async (t) => {
-  const { db, campaignId } = await harness(t);
-  const result = erase(db, { campaignId, userId: SAF });
+// The bluntest possible statement of the boundary: there is no method on the
+// database that deletes one speaker's lines, so no future caller can reach for
+// one by accident.
+test('the database exposes no way to delete a speaker', async (t) => {
+  const { db } = await harness(t);
 
-  assert.equal(result.ok, true);
-  assert.equal(result.lines, 0);
-  assert.match(result.message, /nothing of yours/);
+  for (const name of ['eraseSpeaker', 'redactSummaries', 'deleteUtterancesBy', 'forgetSpeaker']) {
+    assert.equal(typeof db[name], 'undefined', `db.${name} must not exist`);
+  }
 });
 
-test('an unreadable recap is left alone rather than reported as redacted', async (t) => {
-  const { db, campaignId } = await harness(t);
-  const meetingId = played(db, campaignId, LINES);
-  db.raw.prepare(`UPDATE meetings SET summary_json = ? WHERE id = ?`).run('{not json', meetingId);
+// --- what the DM is told when the bot joins ---
 
-  const result = erase(db, { campaignId, userId: SAF });
-  assert.equal(result.notes, 0, 'it cannot promise to have redacted what it cannot parse');
-  assert.equal(db.getMeeting(meetingId).summary_json, '{not json');
-  assert.equal(result.lines, 2, 'the lines still go');
+import { describeUnrecorded } from '../src/campaign/consent.js';
+
+test('the join message tells the DM to invite only the people who were never asked', () => {
+  const said = describeUnrecorded({ unasked: ['Priya'], declined: ['Saf'] });
+
+  assert.match(said, /Priya.*\/campaign invite/s, 'the unasked one gets an invite');
+  assert.match(said, /their own choice: \*\*Saf\*\*/, 'the one who chose is described as having chosen');
+  assert.doesNotMatch(said.split('Recording off')[1], /campaign invite/,
+    'and the DM is never pointed at a button to re-ask them');
 });
 
-// A recap full of "a player paid the fee." reads as broken, which quietly
-// punishes the person who withdrew by making their absence look like damage.
-test('the replacement is capitalised where a sentence starts', async (t) => {
-  const { db, campaignId } = await harness(t);
-  const meetingId = played(db, campaignId, LINES, {
-    tldr: 'Saf paid the fee. Brett objected. Then Saf left, and Saf did not come back.',
-    scenes: [{ title: 'x', points: ['Saf argued.', 'Nobody backed Saf up.'] }],
+test('nobody unrecorded means nothing is said at all', () => {
+  assert.equal(describeUnrecorded({ unasked: [], declined: [] }), '');
+  assert.equal(describeUnrecorded([]), '');
+});
+
+// The signature grew; a caller that has not been updated must not silently
+// produce an empty line where a warning belongs.
+test('the old array form still names people', () => {
+  assert.match(describeUnrecorded(['Priya']), /Priya.*campaign invite/s);
+});
+
+// Informed consent means being told what agreeing commits you to, at the moment
+// of agreeing. "You can change your mind" is true and is not the whole truth:
+// the switch is forward-only, and that is the part somebody would most
+// reasonably feel misled about a year later.
+test('the invite says withdrawal is forward-looking before anyone agrees', async () => {
+  const { buildInviteMessage } = await import('../src/campaign/consent.js');
+  const { content } = buildInviteMessage({
+    campaignName: 'Cipher', inviterName: 'Kez', retentionDays: 14, expiresAt: new Date(),
   });
 
-  erase(db, { campaignId, userId: SAF });
-  const notes = JSON.parse(db.getMeeting(meetingId).summary_json);
-
-  assert.equal(notes.tldr, 'A player paid the fee. Brett objected. Then a player left, and a player did not come back.');
-  assert.deepEqual(notes.scenes[0].points, ['A player argued.', 'Nobody backed a player up.']);
+  assert.match(content, /campaign consent/, 'it names the command that turns it off');
+  assert.match(content, /stops future recording/i, 'and says what that does');
+  assert.match(content, /stay as they are/i, 'and what it does not');
 });
