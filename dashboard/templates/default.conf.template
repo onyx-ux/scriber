@@ -36,6 +36,15 @@ server {
         proxy_pass ${PI_API}/;
         proxy_set_header X-Status-Token "${STATUS_TOKEN}";
         proxy_set_header Host $host;
+        # Whether the browser is actually on https, which decides whether the
+        # session cookie may carry Secure. Setting Secure on a LAN http page
+        # would mean the browser silently discards it and nobody can sign in;
+        # not setting it once this is behind TLS would be sloppier than
+        # necessary. nginx knows, so nginx says.
+        #
+        # Cookies themselves need no configuration here: nginx forwards the
+        # request Cookie header and passes Set-Cookie back by default.
+        proxy_set_header X-Forwarded-Proto $scheme;
 
         # A dashboard that hangs for a minute because the Pi is rebooting is
         # worse than one that says "unreachable" in three seconds.

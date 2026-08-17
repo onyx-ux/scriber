@@ -228,3 +228,23 @@ test('the sweep deletes what has expired and keeps what has not', async (t) => {
   assert.equal(swept.sessions, 1);
   assert.ok(readSession(db, cfg, alive), 'a live session is not swept');
 });
+
+// The dashboard polls every few seconds and every poll carries the cookie. A
+// naive touch-on-read is a database write every five seconds, for ever, onto
+// the SD card of a Raspberry Pi.
+test('reading a session does not write on every poll', async (t) => {
+  const { db, cfg } = await harness(t);
+  const { token } = openSession(db, cfg, WHO);
+
+  let writes = 0;
+  const realTouch = db.touchAuthSession.bind(db);
+  db.touchAuthSession = (hash) => { writes += 1; return realTouch(hash); };
+
+  for (let i = 0; i < 20; i += 1) readSession(db, cfg, token);
+  assert.equal(writes, 0, 'a fresh session was just written; twenty reads need no more');
+
+  // An hour later it is worth recording that somebody is still there.
+  db.raw.prepare(`UPDATE auth_sessions SET last_seen_at = datetime('now','-1 hour')`).run();
+  readSession(db, cfg, token);
+  assert.equal(writes, 1);
+});

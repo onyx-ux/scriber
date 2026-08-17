@@ -127,6 +127,15 @@ export function openSession(db, cfg, { userId, username, now = Date.now() } = {}
   return { token, expiresAt };
 }
 
+// How stale "last seen" is allowed to get before it is worth a write.
+//
+// The dashboard polls every few seconds, and every poll carries the cookie. A
+// naive touch-on-read is therefore a database write every five seconds for as
+// long as anybody has the page open — for ever, onto the SD card of a
+// Raspberry Pi. The field exists so somebody can see whether a session is still
+// in use; five minutes is far finer than that question needs.
+const TOUCH_AFTER_MS = 5 * 60 * 1000;
+
 export function readSession(db, cfg, token, { now = Date.now() } = {}) {
   const secret = authSecret(cfg);
   if (!secret || !token) return null;
@@ -139,7 +148,9 @@ export function readSession(db, cfg, token, { now = Date.now() } = {}) {
     return null;
   }
 
-  db.touchAuthSession(row.token_hash);
+  const seen = row.last_seen_at ? new Date(`${row.last_seen_at}Z`).getTime() : 0;
+  if (!Number.isFinite(seen) || now - seen > TOUCH_AFTER_MS) db.touchAuthSession(row.token_hash);
+
   return { userId: row.user_id, username: row.username, expiresAt: row.expires_at };
 }
 
