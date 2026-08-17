@@ -96,6 +96,9 @@ export function buildStatus({
     claimed: Boolean(c.manager_user_id),
     output: c.output_mode ?? 'default',
     recording: activeSessions.has(c.guild_id),
+    // Sessions of this campaign stopped waiting for a decision, so the
+    // campaign list can say which table needs you without being opened.
+    awaiting: c.awaiting ?? 0,
   }));
 
   return {

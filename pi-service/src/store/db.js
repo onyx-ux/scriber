@@ -1391,7 +1391,15 @@ function wrap(db) {
                             (julianday(m.ended_at) - julianday(m.started_at)) * 86400000
                           ), 0)
                      FROM meetings m
-                    WHERE m.campaign_id = c.id AND m.ended_at IS NOT NULL)         AS total_ms
+                    WHERE m.campaign_id = c.id AND m.ended_at IS NOT NULL)         AS total_ms,
+                  -- How many of this campaign's sessions are stopped waiting
+                  -- for a decision. The dashboard's campaign list carries it as
+                  -- a badge, so "which table needs me?" is answered before you
+                  -- click into one — with three campaigns that is the
+                  -- difference between reading a list and opening three.
+                  (SELECT COUNT(*) FROM jobs j
+                     JOIN meetings m ON m.id = j.meeting_id
+                    WHERE m.campaign_id = c.id AND j.status = 'awaiting_approval') AS awaiting
              FROM campaigns c
             ORDER BY (last_session_at IS NULL), last_session_at DESC, c.id`
         )

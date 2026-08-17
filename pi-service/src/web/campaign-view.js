@@ -39,12 +39,55 @@ function consentFor(row) {
   };
 }
 
+// What a session looks like in a list: one line of what happened, and the
+// shape of what was found. Read from the stored recap rather than recomputed,
+// and tolerant in the same way notes-view.js is — the blob is model output
+// that has been through several prompt revisions, so a session summarised a
+// year ago must still produce a row.
+function facetsOf(summaryJson) {
+  if (!summaryJson) return { tldr: '', npcs: 0, locations: 0, threads: 0 };
+  let notes;
+  try {
+    notes = JSON.parse(summaryJson);
+  } catch {
+    return { tldr: '', npcs: 0, locations: 0, threads: 0, unreadable: true };
+  }
+  const count = (v) => (Array.isArray(v) ? v.length : v ? 1 : 0);
+  return {
+    tldr: typeof notes?.tldr === 'string' ? notes.tldr.trim() : '',
+    npcs: count(notes?.npcsIntroduced),
+    locations: count(notes?.locationsVisited),
+    threads: count(notes?.unresolvedThreads),
+  };
+}
+
+// The one word for where a session has got to.
+//
+// Derived from the meeting AND its live job together, because neither answers
+// it alone: a meeting sitting at 'awaiting_summary' is waiting for the owner
+// or waiting for the queue depending entirely on the job beside it, and those
+// are opposite things to show someone.
+function stateOf(meeting, job) {
+  if (meeting.status === 'recording') return 'recording';
+  if (meeting.status?.endsWith('_failed')) return 'failed';
+  if (job?.status === 'awaiting_approval') return 'approval';
+  if (job?.status === 'running') return 'working';
+  if (job) return 'queued';
+  if (meeting.status === 'done') return 'posted';
+  return meeting.status ?? 'unknown';
+}
+
 export function buildCampaignView({ db, campaignId }) {
   const campaign = db.getCampaign(campaignId);
   if (!campaign) return null;
 
   const consent = new Map(db.listConsent(campaignId).map((row) => [row.user_id, row]));
   const label = campaignLabel(campaign);
+
+  // One query for every live job rather than one per session: a campaign with
+  // forty sessions would otherwise mean forty round trips to answer a question
+  // about the two that are actually moving.
+  const jobs = new Map(db.listPendingJobs().map((j) => [j.meeting_id, j]));
 
   return {
     id: campaign.id,
@@ -74,24 +117,37 @@ export function buildCampaignView({ db, campaignId }) {
       right: c.correct_text,
     })),
 
-    sessions: db.listRecentMeetings(campaignId, 40).map((m) => ({
-      meetingId: m.id,
-      sessionNumber: m.session_number,
-      // What every other surface calls this session, and what the vault names
-      // the file. A bare meeting id is an implementation detail nobody has to
-      // learn twice.
-      ref: sessionRef(label, m.session_number),
-      channel: m.channel_name,
-      startedAt: m.started_at,
-      endedAt: m.ended_at,
-      status: m.status,
-      lines: db.countUtterances(m.id),
-      // Whether there is anything to READ, which is not the same as whether
-      // the session finished: a summary can fail, or be waiting for approval,
-      // long after the transcript exists. The notes button is offered on this
-      // rather than on status, so it is never offered for a session that would
-      // open empty.
-      hasNotes: Boolean(m.summary_json),
-    })),
+    sessions: db.listRecentMeetings(campaignId, 40).map((m) => {
+      const job = jobs.get(m.id) ?? null;
+      const lines = db.countUtterances(m.id);
+      return {
+        meetingId: m.id,
+        sessionNumber: m.session_number,
+        // What every other surface calls this session, and what the vault
+        // names the file. A bare meeting id is an implementation detail nobody
+        // has to learn twice.
+        ref: sessionRef(label, m.session_number),
+        channel: m.channel_name,
+        startedAt: m.started_at,
+        endedAt: m.ended_at,
+        status: m.status,
+        lines,
+        state: stateOf(m, job),
+        // The job carried alongside, so the session list can offer the
+        // decision on the session it belongs to rather than making you find
+        // the same session again in a separate queue.
+        job: job ? { id: job.id, type: job.type, status: job.status, lastError: job.last_error ?? null } : null,
+        // Whether there is anything to READ, which is not the same as whether
+        // the session finished: a summary can fail, or be waiting for
+        // approval, long after the transcript exists. The notes button is
+        // offered on this rather than on status, so it is never offered for a
+        // session that would open empty.
+        hasNotes: Boolean(m.summary_json),
+        // Empty and failed is the one state with no way forward, so the list
+        // can offer to throw it away — see discardSession.
+        discardable: lines === 0 && m.status !== 'recording',
+        ...facetsOf(m.summary_json),
+      };
+    }),
   };
 }

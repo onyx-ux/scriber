@@ -8,261 +8,340 @@
      request — and so a tab left open is findable by its icon rather than by
      reading titles. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%AA%B6%3C/text%3E%3C/svg%3E">
+<!-- Three faces, each doing one job: Plex Sans for interface, Plex Mono for
+     anything you read as data (timers, counts, refs), Spectral for the prose
+     the summariser wrote. Every one has a system fallback, so the page still
+     reads properly when the browser is offline — which on a LAN dashboard
+     pointed at a Raspberry Pi is a real state, not a hypothetical. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 <style>
+  /* Quill's own palette: brass on near-black, sage for what worked, red for
+     what is live or broken. Warm greys throughout — the ground is not neutral,
+     it leans slightly blue and the text leans slightly warm, which is what
+     stops a dark interface reading as a terminal. */
   :root {
-    --bg: #10131a; --card: #171b24; --line: #262c3a;
-    --text: #e6e9ef; --dim: #8b93a7;
-    --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --live: #f472b6; --accent: #60a5fa;
+    --ink: #0E1014;         /* the page */
+    --panel: #12151A;       /* rails and columns */
+    --raise: #15181E;       /* cards on the panel */
+    --raise-2: #1B1F26;     /* rows, inputs */
+    --line: #232730;        /* borders */
+    --line-2: #2C313B;      /* borders that need to be seen */
+
+    --text: #E9E5DC;        /* primary, warm off-white */
+    --text-2: #C6C1B6;      /* secondary */
+    --dim: #8A8578;         /* labels, metadata */
+    --dimmer: #6E6A5E;      /* the quietest thing that is still legible */
+
+    --brass: #C9A227;       /* the accent: attention, and anything primary */
+    --brass-dim: #3A3529;   /* its tint, for fills and borders */
+    --sage: #7BA05B;        /* done, healthy */
+    --sage-lit: #A7C48F;
+    --sage-dim: #3C4A33;
+    --red: #D0453C;         /* recording, and failure */
+    --red-lit: #E4A9A4;
+
+    --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    --serif: 'Spectral', Georgia, 'Times New Roman', serif;
+
+    --rail: 270px;
   }
+
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    margin: 0; padding: 24px;
-    background: var(--bg); color: var(--text);
-    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0; background: var(--ink); color: var(--text);
+    font: 400 14px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; }
-  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
-  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
-  .muted { color: var(--dim); font-size: 13px; }
-  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 12px; font-weight: 600; }
-  .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
-  .row:last-child { border-bottom: 0; }
-  .row .k { color: var(--dim); }
-  .val { font-variant-numeric: tabular-nums; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
-  .ok { background: var(--ok); } .bad { background: var(--bad); } .warn { background: var(--warn); }
-  .unknown { background: var(--dim); }
-  .live { background: var(--live); animation: pulse 1.6s ease-in-out infinite; }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
-  .empty { color: var(--dim); font-style: italic; padding: 6px 0; }
-  .item { padding: 10px 0; border-bottom: 1px solid var(--line); }
-  .item:last-child { border-bottom: 0; }
-  .item .title { font-weight: 600; }
-  .item .sub { color: var(--dim); font-size: 13px; margin-top: 3px; }
-  .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 8px; }
-  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
-  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
-  .pill.act { color: var(--warn); border-color: var(--warn); }
-  #err { display: none; background: #2a1418; border: 1px solid var(--bad); color: #fecaca;
-         padding: 12px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; }
-  code { background: #0d1017; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  h1, h2, h3 { margin: 0; font-weight: 500; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--brass); }
 
-  /* The owner's overview: totals across every table the bot serves, then one
-     row per campaign. Above the operational cards because "what is this bot
-     actually carrying" is the question you open the page with. */
-  .totals { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); margin-bottom: 14px; }
-  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  .stat .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.5px; }
-  .stat .l { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .07em; margin-top: 2px; }
-  .card.wide { margin-bottom: 14px; }
-  .camp { display: grid; gap: 4px 12px; grid-template-columns: 1fr auto; padding: 11px 0; border-bottom: 1px solid var(--line); }
-  .camp:last-child { border-bottom: 0; }
-  .camp .name { font-weight: 600; }
-  .camp .meta, .camp .num { color: var(--dim); font-size: 13px; }
-  .camp .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); margin-left: 6px; }
-  .tag.warn { color: var(--warn); border-color: var(--warn); }
-  .tag.live { color: var(--live); border-color: var(--live); }
+  /* Anything you read as a value rather than a sentence: timers, counts,
+     session refs, labels. Tabular figures so a column of numbers lines up and
+     a ticking timer does not jitter. */
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
+           text-transform: uppercase; color: var(--dim); }
+  .prose { font-family: var(--serif); }
 
-  /* Anything that acts. These used to be buttons in a Discord DM; the styling
-     keeps the same shape of decision — one obvious affirmative, the rest
-     quiet — because "approve" and "not yet" should not look equally likely. */
-  .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; cursor: pointer;
-           border: 1px solid var(--line); background: #1e2432; color: var(--text); transition: filter .15s; }
-  button:hover:not(:disabled) { filter: brightness(1.25); }
-  button:disabled { opacity: .45; cursor: default; }
-  button.go { background: #14532d; border-color: #22c55e; color: #dcfce7; }
-  button.warn { background: #422006; border-color: var(--warn); color: #fde68a; }
-  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 22px; max-width: 620px;
-           background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 11px 16px;
-           box-shadow: 0 8px 30px #0009; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  /* --- shell --- */
+
+  .app { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh; }
+
+  .rail { background: var(--panel); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+  .brand { display: flex; gap: 12px; align-items: center; padding: 20px 18px 18px; }
+  .brand .mark { font-size: 26px; line-height: 1; filter: sepia(1) saturate(3) hue-rotate(4deg); }
+  .brand h1 { font-size: 19px; letter-spacing: .2px; }
+  .brand .sub { color: var(--dim); font-size: 12px; margin-top: 1px; }
+
+  .rail .label { padding: 0 18px 8px; }
+  .rail-list { flex: 1; overflow-y: auto; padding-bottom: 12px; }
+  .rail-foot { padding: 14px 18px; border-top: 1px solid var(--line);
+               color: var(--dimmer); font-family: var(--mono); font-size: 11.5px; line-height: 1.7; }
+
+  .camp { display: block; width: 100%; text-align: left; cursor: pointer;
+          background: none; border: 0; border-left: 2px solid transparent;
+          padding: 11px 18px; transition: background .15s, border-color .15s; }
+  .camp:hover { background: var(--raise); }
+  .camp.on { background: var(--raise); border-left-color: var(--brass); }
+  .camp .row1 { display: flex; align-items: center; gap: 8px; }
+  .camp .nm { font-weight: 500; }
+  .camp .meta { color: var(--dim); font-family: var(--mono); font-size: 11.5px;
+                line-height: 1.55; margin-top: 3px; }
+  .badge { margin-left: auto; min-width: 19px; padding: 1px 6px; border-radius: 999px;
+           background: var(--brass); color: #171204; font-family: var(--mono);
+           font-size: 11px; font-weight: 500; text-align: center; }
+
+  /* --- top bar --- */
+
+  .top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+         padding: 18px 24px; border-bottom: 1px solid var(--line);
+         position: sticky; top: 0; z-index: 4; background: var(--ink); }
+  .top h2 { font-size: 22px; font-family: var(--serif); }
+  .health { display: flex; gap: 16px; flex-wrap: wrap; }
+  .health span { color: var(--dim); font-family: var(--mono); font-size: 12px; }
+  .top .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+         margin-right: 7px; vertical-align: middle; background: var(--dimmer); }
+  .dot.ok { background: var(--sage); }
+  .dot.bad { background: var(--red); }
+  .dot.warn { background: var(--brass); }
+  .dot.live { background: var(--red); animation: pulse 1.7s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  /* --- the two columns --- */
+
+  .split { display: grid; grid-template-columns: minmax(380px, 460px) 1fr; align-items: start; }
+  .mid { border-right: 1px solid var(--line); min-height: calc(100vh - 71px);
+         display: flex; flex-direction: column; }
+  .side { padding: 20px 24px 40px; }
+
+  /* --- recording banner --- */
+
+  .rec { padding: 18px 22px 16px; border-bottom: 1px solid var(--line);
+         background: linear-gradient(180deg, #1a1216, transparent); }
+  .rec .head { color: var(--red); font-family: var(--mono); font-size: 11px;
+               letter-spacing: .1em; text-transform: uppercase; }
+  .rec .timer { font-family: var(--mono); font-size: 40px; font-weight: 500;
+                letter-spacing: -.5px; line-height: 1.15; margin-top: 6px; }
+  .rec .where { color: var(--dim); font-family: var(--mono); font-size: 12px; line-height: 1.7; }
+  .rec .top-row { display: flex; gap: 18px; align-items: flex-end; }
+  .wave { display: flex; align-items: center; gap: 2px; height: 34px; margin-top: 12px; }
+  .wave i { flex: 1; background: var(--red); border-radius: 1px; opacity: .85;
+            animation: bounce 1.1s ease-in-out infinite; }
+  @keyframes bounce { 0%,100% { transform: scaleY(.35) } 50% { transform: scaleY(1) } }
+
+  /* --- sessions --- */
+
+  .sessions { flex: 1; overflow-y: auto; padding: 16px 22px 8px; }
+  .sess { padding: 13px 14px; border-radius: 8px; border: 1px solid transparent;
+          cursor: pointer; transition: background .15s, border-color .15s; }
+  .sess:hover { background: var(--raise); }
+  .sess.on { background: var(--raise); border-color: var(--line-2); }
+  .sess .l1 { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+  .sess .ref { font-family: var(--mono); font-size: 13.5px; font-weight: 500; }
+  .sess .when { color: var(--dim); font-family: var(--mono); font-size: 11.5px; }
+  .sess .tldr { font-family: var(--serif); font-size: 14.5px; line-height: 1.55;
+                color: var(--text-2); margin-top: 7px; }
+  .sess .facets { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px;
+                  color: var(--dimmer); font-family: var(--mono); font-size: 11px; }
+
+  .pill { margin-left: auto; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line-2);
+          color: var(--dim); font-family: var(--mono); font-size: 10.5px;
+          letter-spacing: .04em; white-space: nowrap; }
+  .pill.posted { color: var(--sage-lit); border-color: var(--sage-dim); }
+  .pill.approval { color: var(--brass); border-color: var(--brass-dim); }
+  .pill.failed { color: var(--red-lit); border-color: #4a2a28; }
+  .pill.recording { color: var(--red-lit); border-color: #4a2a28; }
+
+  /* --- tabs --- */
+
+  .tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; cursor: pointer;
+         padding: 0 0 11px; color: var(--dim); font-size: 14.5px; transition: color .15s; }
+  .tab:hover { color: var(--text-2); }
+  .tab.on { color: var(--text); border-bottom-color: var(--brass); }
+  .tab .n { color: var(--dimmer); font-family: var(--mono); font-size: 11.5px; margin-left: 5px; }
+
+  /* --- roster --- */
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 0 0 9px; border-bottom: 1px solid var(--line);
+       font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+       text-transform: uppercase; color: var(--dim); font-weight: 400; }
+  th.r, td.r { text-align: right; }
+  td { padding: 11px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .share { display: inline-block; width: 62px; height: 4px; border-radius: 2px;
+           background: var(--raise-2); overflow: hidden; vertical-align: middle; margin-right: 9px; }
+  .share > i { display: block; height: 100%; background: var(--brass); }
+  .share.none > i { background: var(--dimmer); }
+  .unset { color: var(--dimmer); font-style: italic; }
+  .agreed { color: var(--sage); } .waiting { color: var(--brass); } .never { color: var(--dim); }
+  .declined { color: var(--red-lit); }
+
+  /* --- buttons --- */
+
+  .btn { background: transparent; border: 1px solid var(--line-2); border-radius: 7px;
+         color: var(--text-2); cursor: pointer; padding: 6px 13px; font-size: 13px;
+         transition: border-color .15s, color .15s, background .15s; }
+  .btn:hover:not(:disabled) { border-color: var(--dim); color: var(--text); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.go { border-color: var(--brass); color: var(--brass); }
+  .btn.go:hover:not(:disabled) { background: var(--brass-dim); color: #F0DFA0; }
+  .btn.danger { border-color: #4a2a28; color: var(--red-lit); }
+  .btn.danger:hover:not(:disabled) { background: #2a1614; }
+  .btn.sm { padding: 3px 9px; font-size: 12px; }
+  .acts { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 11px; }
+  :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; border-radius: 4px; }
+
+  input.in { background: var(--raise-2); border: 1px solid var(--line); border-radius: 7px;
+             padding: 6px 10px; font-size: 13px; min-width: 0; }
+  input.in:focus { outline: none; border-color: var(--brass); }
+  form.f { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+
+  /* --- notes --- */
+
+  .notes { margin-top: 22px; padding: 20px 22px; background: var(--raise);
+           border: 1px solid var(--line); border-radius: 10px; }
+  .notes .head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+                 padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .notes .tldr { font-family: var(--serif); font-size: 17px; line-height: 1.62;
+                 margin: 16px 0 4px; max-width: 62ch; }
+  .notes h4 { margin: 20px 0 7px; font-family: var(--mono); font-size: 10.5px;
+              letter-spacing: .08em; text-transform: uppercase; color: var(--dim); font-weight: 400; }
+  .notes ul { margin: 0; padding-left: 17px; }
+  .notes li { margin: 5px 0; line-height: 1.55; color: var(--text-2); }
+  .notes .cols { display: grid; gap: 8px 30px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .notes .scene { border-left: 2px solid var(--line-2); padding-left: 14px; margin: 12px 0; }
+  .notes .scene h5 { margin: 0 0 4px; font-size: 14.5px; font-weight: 500; }
+  .notes .funny li { color: var(--brass); }
+
+  /* --- odds and ends --- */
+
+  .empty { color: var(--dimmer); font-style: italic; padding: 10px 0; }
+  .note { color: var(--brass); font-size: 13px; margin-top: 10px; }
+  .kv { display: flex; justify-content: space-between; gap: 14px; padding: 9px 0;
+        border-bottom: 1px solid var(--line); }
+  .kv:last-child { border-bottom: 0; }
+  .kv .k { color: var(--dim); }
+  .kv .v { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  code { background: var(--raise-2); border-radius: 4px; padding: 1px 6px;
+         font-family: var(--mono); font-size: 12.5px; }
+
+  #err { display: none; margin: 16px 24px; padding: 12px 15px; border-radius: 9px;
+         background: #221315; border: 1px solid #4a2a28; color: var(--red-lit); font-size: 13.5px; }
+  body.stale .split, body.stale .rail-list { opacity: .5; transition: opacity .3s; }
+
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+           max-width: 640px; padding: 11px 17px; border-radius: 9px;
+           background: var(--raise); border: 1px solid var(--line-2);
+           box-shadow: 0 10px 34px #000a; font-size: 13.5px;
+           opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
   .toast.show { opacity: 1; }
-  .toast.bad { border-color: var(--bad); color: #fecaca; }
-  .toast.good { border-color: var(--ok); }
-  .note { color: var(--warn); font-size: 13px; margin-top: 10px; }
+  .toast.good { border-color: var(--sage-dim); }
+  .toast.bad { border-color: #4a2a28; color: var(--red-lit); }
 
-  /* One campaign, opened. Its own card rather than an expanding row: the
-     cards above are rebuilt every five seconds, and a panel with a half-typed
-     character name in it must not be one of the things thrown away. */
-  .camp { cursor: pointer; }
-  .camp:hover .name { color: var(--accent); }
-  .camp.open .name { color: var(--accent); }
-  #detail { display: none; }
-  #detail.open { display: block; }
-  .detail-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-  .detail-head h2 { margin: 0; }
-  .cols { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); margin-top: 6px; }
-  .cols h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
-             margin: 0 0 8px; font-weight: 600; }
-  .who { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
-  .who:last-child { border-bottom: 0; }
-  .who .sub { color: var(--dim); font-size: 12.5px; }
-  .who .acts { margin-top: 0; }
-  input, select { font: inherit; font-size: 13px; padding: 5px 9px; border-radius: 7px; min-width: 0;
-                  border: 1px solid var(--line); background: #0d1017; color: var(--text); }
-  input:focus, select:focus { outline: 1px solid var(--accent); }
-  form.inline { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
-  form.inline input { flex: 1 1 110px; }
-  .yes { color: var(--ok); } .no { color: var(--bad); } .maybe { color: var(--warn); }
-
-  /* Session notes. Read at a comfortable measure rather than stretched across
-     a 1100px card — this is the one part of the page that is prose, and prose
-     set the full width of a dashboard is prose nobody reads. */
-  #notes { display: none; }
-  #notes.open { display: block; }
-  .notes-body { max-width: 68ch; }
-  .notes-body .tldr { font-size: 16px; line-height: 1.65; margin: 6px 0 20px; }
-  .notes-body h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
-                   color: var(--dim); margin: 22px 0 8px; font-weight: 600; }
-  .notes-body h4 { font-size: 14.5px; margin: 14px 0 5px; font-weight: 600; }
-  .notes-body ul { margin: 0; padding-left: 20px; }
-  .notes-body li { margin: 4px 0; line-height: 1.55; }
-  .notes-body .scene { border-left: 2px solid var(--line); padding-left: 14px; margin-bottom: 4px; }
-  .notes-body .funny li { color: #fde68a; }
-  .notes-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
-
-  /* --- what needs you, first --- */
-
-  /* A live recording and a session waiting on a decision are the two reasons
-     to open this page. They used to be the third and fourth cards in a grid of
-     six, below the campaign list, which meant the answer to "is anything
-     happening?" was somewhere in the middle of the screen. They now sit
-     directly under the header — and vanish entirely when there is nothing,
-     so a quiet bot opens on a quiet page rather than on two cards saying
-     "Idle" and "Nothing waiting". */
-  #attention:empty { display: none; }
-  #attention { display: grid; gap: 14px; margin-bottom: 14px;
-               grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
-  .card.attn { border-color: #3b4763; box-shadow: 0 0 0 1px #1d2537, 0 6px 24px #0006; }
-  .card.attn.live { border-color: var(--live); }
-  .card.attn h2 { color: var(--text); }
-  .count { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 8px;
-           border-radius: 999px; background: var(--warn); color: #1a1200;
-           font-size: 11px; font-weight: 700; text-align: center; vertical-align: middle; }
-
-  header { position: sticky; top: 0; z-index: 5; padding: 14px 0 10px; margin-bottom: 10px;
-           background: linear-gradient(var(--bg) 72%, transparent); }
-  body.stale .wrap > *:not(header):not(#err) { opacity: .55; transition: opacity .3s; }
-
-  /* Keyboard reachability. The campaign rows are the page's main navigation
-     and were plain divs with a click handler — invisible to Tab, unusable
-     without a mouse. */
-  .camp { border-radius: 8px; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .camp:focus-visible { outline-offset: -2px; }
-
-  .skeleton { color: var(--dim); font-style: italic; padding: 14px 0; }
-  .skeleton::after { content: ''; display: inline-block; width: 1em; text-align: left;
-                     animation: dots 1.2s steps(4, end) infinite; }
-  @keyframes dots { 0% { content: '' } 25% { content: '.' } 50% { content: '..' } 75% { content: '...' } }
-
-  /* Save appears only once a field has actually changed, so a roster of seven
-     is seven names rather than seven buttons competing for attention. Only on
-     forms that edit something already there — a form you fill from empty needs
-     its button visible from the start. */
-  form.inline.gated button[type=submit] { visibility: hidden; }
-  form.inline.gated.dirty button[type=submit] { visibility: visible; }
-
-  @media (max-width: 640px) {
-    body { padding: 14px; }
-    .who { grid-template-columns: 1fr; }
-    .who .acts { margin-top: 6px; }
+  @media (max-width: 1100px) {
+    .split { grid-template-columns: 1fr; }
+    .mid { border-right: 0; border-bottom: 1px solid var(--line); min-height: 0; }
+  }
+  @media (max-width: 720px) {
+    .app { grid-template-columns: 1fr; }
+    .rail { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .rail-list { max-height: 210px; }
+    .side { padding: 18px 16px 32px; }
+    .top { padding: 14px 16px; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>Quill</h1>
-    <span class="muted" id="who">connecting…</span>
-    <span class="muted" style="margin-left:auto" id="stamp"></span>
-  </header>
 
-  <div id="err"></div>
+<div class="app">
+  <nav class="rail">
+    <div class="brand">
+      <span class="mark">🪶</span>
+      <div>
+        <h1>Quill</h1>
+        <div class="sub">the scribe at your table</div>
+      </div>
+    </div>
+    <div class="label">Campaigns</div>
+    <div class="rail-list" id="rail"></div>
+    <div class="rail-foot" id="foot">connecting…</div>
+  </nav>
 
-  <div id="attention"></div>
-
-  <div class="totals" id="totals"></div>
-
-  <div class="card wide">
-    <h2>Campaigns</h2>
-    <div id="campaigns"></div>
-  </div>
-
-  <div class="card wide" id="detail"></div>
-  <div class="card wide" id="notes"></div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Working on</h2>
-      <div id="working"></div>
+  <main>
+    <div class="top">
+      <h2 id="title">—</h2>
+      <div class="health" id="health"></div>
+      <div class="right" id="topacts"></div>
     </div>
 
-    <div class="card">
-      <h2>In the queue</h2>
-      <div id="queue"></div>
-    </div>
+    <div id="err"></div>
 
-    <div class="card">
-      <h2>Servers</h2>
-      <div id="servers"></div>
-    </div>
+    <div class="split">
+      <div class="mid">
+        <div id="rec"></div>
+        <div class="sessions">
+          <div class="label" style="padding-bottom:10px">Sessions <span style="text-transform:none;letter-spacing:0" id="sesshint"></span></div>
+          <div id="sessions"></div>
+        </div>
+        <div style="padding:14px 22px 20px; border-top:1px solid var(--line)">
+          <button class="btn" id="importbtn" style="width:100%">Import a recording</button>
+          <div id="importform"></div>
+        </div>
+      </div>
 
-    <div class="card">
-      <h2>Schedule</h2>
-      <div id="schedule"></div>
+      <div class="side">
+        <div class="tabs" id="tabs"></div>
+        <div id="panel"></div>
+        <div id="notes"></div>
+      </div>
     </div>
-
-    <div class="card">
-      <h2>Health</h2>
-      <div id="health"></div>
-    </div>
-  </div>
+  </main>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
 // Same origin by default: nginx proxies /api to the Pi and adds the status
-// token on the way through.
-//
-// The page used to fetch the Pi directly from the browser, which meant the
-// Pi's port had to be reachable by every viewer and any token would have had
-// to live in this file, in plain sight. Proxying keeps the token server-side
-// and leaves the Pi's API on the LAN, so exposing the dashboard to a URL
-// exposes only the dashboard.
+// token on the way through, so the token never reaches the browser and the
+// Pi's port can stay on the LAN even when the dashboard is published.
 //
 // ?api=http://host:port still overrides it, for pointing at a second bot.
 const API = new URLSearchParams(location.search).get('api') || window.SCRIBER_API || '/api';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const empty = (m) => `<div class="empty">${esc(m)}</div>`;
 
-function duration(ms) {
-  if (ms == null) return '—';
+// --- what the page is currently looking at -------------------------------
+//
+// Four things, and every render reads them rather than the DOM. The cards are
+// rebuilt from the poll every few seconds, so any state kept in the markup
+// would be thrown away mid-click.
+const view = { campaignId: null, tab: 'table', meetingId: null, importing: false };
+
+let status = null;   // last /status payload
+let detail = null;   // last /campaign?id= payload
+let notes = null;    // last /notes?meeting= payload
+let lastSeen = null;
+
+const PROVIDERS = { gemini: 'Gemini', anthropic: 'Claude' };
+
+function hhmmss(ms) {
+  if (ms == null) return '0:00:00';
   const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
-  if (m) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
-  return `${s}s`;
+  return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
-
-function whenLocal(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-}
-
-function dot(state) {
-  const cls = state === true ? 'ok' : state === false ? 'bad' : 'unknown';
-  return `<span class="dot ${cls}"></span>`;
-}
-
-const rows = (pairs) => pairs.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="val">${v}</span></div>`).join('');
-const empty = (msg) => `<div class="empty">${esc(msg)}</div>`;
 
 function ago(iso) {
   if (!iso) return 'never';
@@ -273,468 +352,433 @@ function ago(iso) {
   return `${Math.floor(days / 7)}w ago`;
 }
 
-function render(s) {
-  $('who').innerHTML = `${dot(s.bot.online)}${esc(s.bot.user || 'offline')} · up ${duration(s.bot.uptimeMs)} · opus ${esc(s.bot.opus.name)}`;
-  // The stamp is driven by its own one-second timer (see sinceLastSeen), so it
-  // keeps counting up while the bot is unreachable rather than freezing at the
-  // moment contact was lost. Nothing to set here.
+const shortDate = (iso) =>
+  iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
 
-  // Older bots won't send these; the page should degrade rather than break.
-  const totals = s.totals ?? null;
-  $('totals').innerHTML = totals
-    ? [
-        [totals.campaigns, totals.campaigns === 1 ? 'Campaign' : 'Campaigns'],
-        [totals.players, 'Players'],
-        [totals.sessions, 'Sessions'],
-        [totals.hours.toFixed(0) + 'h', 'Recorded'],
-        [totals.lines.toLocaleString(), 'Lines'],
-      ]
-        .map(([n, l]) => `<div class="stat"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`)
-        .join('')
-    : '';
+function sinceLastSeen() {
+  if (!lastSeen) return 'never';
+  const s = Math.round((Date.now() - lastSeen) / 1000);
+  if (s < 2) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
+}
 
-  const campaigns = s.campaigns ?? [];
-  $('campaigns').innerHTML = campaigns.length
-    ? campaigns
-        .map((c) => {
-          // An unclaimed campaign has nobody who can run /dm or /correct on
-          // it, which is worth surfacing — it is the state a campaign gets
-          // stranded in when its DM leaves the server.
-          const tags =
-            (c.recording ? '<span class="tag live">recording</span>' : '') +
-            (c.claimed ? '' : '<span class="tag warn">unclaimed</span>') +
-            (c.members && c.named < c.members ? `<span class="tag">${c.members - c.named} unnamed</span>` : '');
-          const where = c.guildName ? esc(c.guildName) : `server ${esc(c.guildId)}`;
-          return `
-            <div class="camp${openCampaignId === c.id ? ' open' : ''}" data-campaign="${c.id}"
-                 role="button" tabindex="0" aria-expanded="${openCampaignId === c.id}"
-                 aria-label="Open ${esc(c.name || c.channel || 'campaign')}">
-              <div>
-                <div class="name">${esc(c.name || c.channel || 'unnamed campaign')}${tags}</div>
-                <div class="meta">${where} · ${c.members} player(s) · last played ${esc(ago(c.lastSessionAt))} · notes → ${esc(c.output)}</div>
-              </div>
-              <div class="num">${c.sessions} session${c.sessions === 1 ? '' : 's'}<br>${c.hours.toFixed(1)}h · ${c.lines.toLocaleString()} lines</div>
-            </div>`;
-        })
-        .join('')
+const dot = (state) => `<span class="dot ${state === true ? 'ok' : state === false ? 'bad' : ''}"></span>`;
+
+// --- the rail ------------------------------------------------------------
+
+function renderRail() {
+  const camps = status?.campaigns ?? [];
+  $('rail').innerHTML = camps.length
+    ? camps.map((c) => `
+        <button class="camp${view.campaignId === c.id ? ' on' : ''}" data-campaign="${c.id}"
+                aria-current="${view.campaignId === c.id}">
+          <div class="row1">
+            ${c.recording ? '<span class="dot live"></span>' : `<span class="dot ${c.claimed ? 'ok' : 'warn'}"></span>`}
+            <span class="nm">${esc(c.name || c.channel || 'unnamed')}</span>
+            ${c.awaiting ? `<span class="badge">${c.awaiting}</span>` : ''}
+          </div>
+          <div class="meta">
+            ${c.sessions} session${c.sessions === 1 ? '' : 's'} · ${c.hours.toFixed(1)}h<br>
+            ${c.lines.toLocaleString()} lines · ${c.members} player${c.members === 1 ? '' : 's'}
+          </div>
+        </button>`).join('')
     : empty('No campaigns yet.');
 
-  // --- the band that only exists when something is happening ---
-  const live = s.recording.length
-    ? `<div class="card attn live">
-         <h2><span class="dot live"></span>Recording now</h2>
-         ${s.recording.map((r) => `
-           <div class="item">
-             <div class="title">${esc(r.guildName)} — ${esc(r.channel || 'voice')}</div>
-             <div class="sub">session #${r.meetingId} · ${duration(r.recordingForMs)} · ${r.clips} clips · ${r.speakers} speaker(s)</div>
-           </div>`).join('')}
-       </div>`
+  const b = status?.bot;
+  $('foot').innerHTML = b
+    ? `${esc(b.user || 'offline')}<br>up ${Math.floor(b.uptimeMs / 86400000)}d ${new Date(b.uptimeMs).toISOString().slice(11, 16)}<br><span id="stamp"></span>`
+    : 'connecting…';
+}
+
+// --- top bar -------------------------------------------------------------
+
+function renderTop() {
+  const c = status?.campaigns?.find((x) => x.id === view.campaignId);
+  $('title').textContent = c ? c.name || c.channel || 'unnamed campaign' : 'Quill';
+
+  const h = status?.health ?? {};
+  $('health').innerHTML = status
+    ? [
+        `${dot(h.whisperServer)}whisper server`,
+        `${dot(h.summariser)}${esc(h.summariserName || 'summariser')}`,
+        h.transcribePaused ? `${dot(false)}transcribing paused` : '',
+        h.summarisePaused ? `${dot(false)}summarising paused` : '',
+      ].filter(Boolean).map((s) => `<span>${s}</span>`).join('')
     : '';
 
-  const work = [
-    ...s.working.transcribing.map((t) => ({
-      title: `Transcribing session #${t.meetingId}`,
-      sub: t.description,
-      pct: t.total ? Math.round((t.done / t.total) * 100) : null,
-    })),
-    ...s.working.summarising.map((q) => ({ title: `Summarising session #${q.meetingId}`, sub: esc(q.channel), pct: null })),
-  ];
-  $('working').innerHTML = work.length
-    ? work.map((w) => `
-        <div class="item">
-          <div class="title">${esc(w.title)}</div>
-          <div class="sub">${esc(w.sub)}</div>
-          ${w.pct == null ? '' : `<div class="bar"><i style="width:${w.pct}%"></i></div>`}
-        </div>`).join('')
-    : empty('Idle.');
-
-  // The decisions that used to be buttons in a Discord DM.
-  //
-  // ONLY things that need an answer from you. The queued ones used to be in
-  // here too, under a heading that says "Waiting for you" — so a session that
-  // was approved and waiting on the PC appeared as something you had to act
-  // on, with no button to act with, which reads as a broken page rather than
-  // as "nothing to do". They live in their own card now.
-  const waiting = [
-    ...s.queue.awaitingTranscribe.map((q) => ({ ...q, what: 'needs your approval to transcribe', act: 'transcribe' })),
-    ...s.queue.awaitingSummary.map((q) => ({ ...q, what: 'needs your approval to summarise', act: 'summary' })),
-  ];
-
-  // Approved, or moving on its own. Nothing here is yours to do — except when
-  // it has failed, which is the one case that does want a decision.
-  const inFlight = [
-    ...s.queue.queuedTranscribe.map((q) => ({ ...q, what: 'approved — waiting for the PC' })),
-    ...s.queue.queuedSummary.map((q) => ({ ...q, what: 'queued to summarise' })),
-  ];
-
-  const providers = s.providers ?? [];
-  const canAct = s.actionsEnabled !== false;
-
-  // A provider is only worth choosing between when there IS a choice. With one
-  // configured the button says what it does; with two it says who does it.
-  function summaryButtons(jobId) {
-    if (providers.length <= 1) {
-      return `<button class="go" data-act="summary/approve" data-job="${jobId}">Summarise now</button>`;
-    }
-    return providers
-      .map((p) => `<button class="go" data-act="summary/approve" data-job="${jobId}" data-provider="${esc(p)}">${esc(PROVIDER_NAMES[p] ?? p)}</button>`)
-      .join('');
-  }
-
-  function actions(q) {
-    if (!q.act || !q.jobId || !canAct) return '';
-    const buttons =
-      q.act === 'transcribe'
-        ? `<button class="go" data-act="transcribe" data-job="${q.jobId}" data-action="now">Transcribe now</button>
-           <button data-act="transcribe" data-job="${q.jobId}" data-action="later">Not yet</button>
-           <button data-act="transcribe" data-job="${q.jobId}" data-action="pi">On the Pi (slow)</button>`
-        : summaryButtons(q.jobId);
-    return `<div class="acts">${buttons}</div>`;
-  }
-
-  // "Release everything" is separated from the per-session buttons on purpose:
-  // it is the one click here that spends real money without naming what it
-  // spent it on, so it should not sit in the same row as a single approval.
-  const bulk = s.queue.awaitingSummary.length;
-  // Everything in `waiting` needs an answer now that the queued ones have
-  // their own card, so this is just its length — kept named because the count
-  // badge and the tab title both mean "decisions outstanding", not "rows".
-  const needsYou = waiting.length;
-
-  const queued = waiting.length
-    ? `<div class="card attn">
-         <h2>Waiting for you${needsYou ? `<span class="count">${needsYou}</span>` : ''}</h2>
-         ${waiting.map((q) => `
-           <div class="item">
-             <div class="title">#${q.meetingId} — ${esc(q.channel)}</div>
-             <div class="sub">${esc(q.what)}${q.utterances ? ` · ${q.utterances} lines` : ''}${q.lastError ? `<br>last error: ${esc(q.lastError)}` : ''}</div>
-             ${actions(q)}
-           </div>`).join('')}
-         ${canAct ? '' : DISABLED_NOTE}
-         ${
-           bulk > 1 && canAct
-             ? `<div class="acts"><button data-act="summary/approve-all" data-confirm="Release all ${bulk} waiting summaries?">Release all ${bulk} summaries</button></div>`
-             : ''
-         }
-       </div>`
+  // Each button says the state it moves TO, so it is the same click whatever
+  // the page last managed to render — a toggle sent twice by a double-click,
+  // or by two tabs open on this page, lands on the opposite of what the person
+  // who clicked it saw.
+  const can = status?.actionsEnabled !== false;
+  $('topacts').innerHTML = can && status
+    ? `<button class="btn sm" data-act="pause" data-queue="transcribe" data-paused="${!h.transcribePaused}"
+         ${h.transcribePaused ? '' : 'data-confirm="Pause transcription? Nothing new will start."'}>
+         ${h.transcribePaused ? 'Resume transcribing' : 'Pause transcribing'}</button>
+       <button class="btn sm" data-act="pause" data-queue="summarize" data-paused="${!h.summarisePaused}"
+         ${h.summarisePaused ? '' : 'data-confirm="Pause summarising? Nothing new will start."'}>
+         ${h.summarisePaused ? 'Resume summarising' : 'Pause summarising'}</button>`
     : '';
+}
 
-  $('attention').innerHTML = live + queued;
+// --- the recording banner ------------------------------------------------
 
-  // The queue, and the failures in it.
-  //
-  // A session that produced nothing usable retries on the schedule forever,
-  // because nothing that could happen would make it succeed — an empty
-  // recording stays empty. That is the one queued item that does want a
-  // decision, so it gets the only one that makes sense: throw it away. The
-  // API refuses to discard anything with a transcribed line in it, so the
-  // button cannot take a real session with it.
-  const flightRow = (q) => {
-    const failed = Boolean(q.lastError);
-    const empty = failed && !q.utterances;
-    return `
-      <div class="item">
-        <div class="title">#${q.meetingId} — ${esc(q.channel)}</div>
-        <div class="sub">
-          ${failed ? '<span class="no">failed</span> · ' : ''}${esc(q.what)}${q.utterances ? ` · ${q.utterances} lines` : ''}
-          ${q.attempts ? ` · attempt ${q.attempts}` : ''}
-          ${q.lastError ? `<br><span class="no">${esc(q.lastError)}</span>` : ''}
-          ${empty ? '<br>Nothing was recorded, so retrying cannot help.' : ''}
-        </div>
-        ${
-          empty && canAct
-            ? `<div class="acts"><button class="warn" data-act="session/discard" data-meeting="${q.meetingId}"
-                 data-confirm="Discard empty session #${q.meetingId}? It has no transcript, and this stops it retrying.">Discard</button></div>`
-            : ''
-        }
+function renderRecording() {
+  const c = status?.campaigns?.find((x) => x.id === view.campaignId);
+  const live = status?.recording?.find((r) => r.guildId === c?.guildId);
+  if (!live) { $('rec').innerHTML = ''; return; }
+
+  // Decorative, and honestly so: Discord gives per-speaker clips, not a signal
+  // level, so there is no waveform to draw. The bars are seeded from the clip
+  // count, which at least means a busy session looks busier than a quiet one.
+  const bars = Array.from({ length: 46 }, (_, i) => {
+    const h = 25 + ((live.clips * 7 + i * 13) % 70);
+    return `<i style="height:${h}%;animation-delay:${(i % 9) * 0.11}s"></i>`;
+  }).join('');
+
+  $('rec').innerHTML = `
+    <div class="rec">
+      <div class="head"><span class="dot live"></span>Recording · session ${live.meetingId}</div>
+      <div class="top-row">
+        <div class="timer" id="timer">${hhmmss(live.recordingForMs)}</div>
+        <div class="where">#${esc(live.channel || 'voice')}<br>${live.clips} clips · ${live.speakers} speaker${live.speakers === 1 ? '' : 's'}</div>
+      </div>
+      <div class="wave">${bars}</div>
+    </div>`;
+}
+
+// --- the session list ----------------------------------------------------
+
+const PILL = { posted: 'posted', approval: 'approval', failed: 'failed', recording: 'recording',
+               queued: 'queued', working: 'working' };
+
+function sessionCard(s) {
+  const facets = [
+    s.npcs ? `${s.npcs} NPC${s.npcs === 1 ? '' : 's'}` : '',
+    s.locations ? `${s.locations} location${s.locations === 1 ? '' : 's'}` : '',
+    s.threads ? `${s.threads} thread${s.threads === 1 ? '' : 's'} open` : '',
+    !s.lines && s.state !== 'recording' ? 'no audio' : '',
+  ].filter(Boolean);
+
+  const line = s.tldr
+    ? `<div class="tldr">${esc(s.tldr.length > 190 ? s.tldr.slice(0, 190).replace(/\s+\S*$/, '') + '…' : s.tldr)}</div>`
+    : s.state === 'failed'
+      ? '<div class="tldr">Nothing was recorded, so retrying cannot help.</div>'
+      : s.state === 'approval'
+        ? '<div class="tldr">Transcript is ready. Nothing has been summarised or posted yet.</div>'
+        : '';
+
+  return `
+    <div class="sess${view.meetingId === s.meetingId ? ' on' : ''}" data-session="${s.meetingId}"
+         role="button" tabindex="0">
+      <div class="l1">
+        <span class="ref">${esc(s.ref || `#${s.meetingId}`)}</span>
+        <span class="when">${esc(shortDate(s.startedAt))}${s.lines ? ` · ${s.lines.toLocaleString()} lines` : ''}</span>
+        <span class="pill ${s.state}">${esc(PILL[s.state] || s.state)}</span>
+      </div>
+      ${line}
+      ${facets.length ? `<div class="facets">${facets.map((f) => `<span>${esc(f)}</span>`).join('')}</div>` : ''}
+      ${sessionActions(s)}
+    </div>`;
+}
+
+// The decision lives on the session it belongs to, rather than in a separate
+// queue that makes you find the same session twice.
+function sessionActions(s) {
+  if (status?.actionsEnabled === false) return '';
+  const out = [];
+
+  if (s.job?.status === 'awaiting_approval' && s.job.type === 'transcribe') {
+    out.push(`<button class="btn sm go" data-act="transcribe" data-job="${s.job.id}" data-action="now">Transcribe now</button>`,
+             `<button class="btn sm" data-act="transcribe" data-job="${s.job.id}" data-action="later">Not yet</button>`,
+             `<button class="btn sm" data-act="transcribe" data-job="${s.job.id}" data-action="pi">On the Pi</button>`);
+  }
+  if (s.job?.status === 'awaiting_approval' && s.job.type === 'summarize') {
+    const ps = status?.providers ?? [];
+    out.push(...(ps.length > 1
+      ? ps.map((p) => `<button class="btn sm go" data-act="summary/approve" data-job="${s.job.id}" data-provider="${esc(p)}">${esc(PROVIDERS[p] || p)}</button>`)
+      : [`<button class="btn sm go" data-act="summary/approve" data-job="${s.job.id}">Summarise now</button>`]));
+  }
+  if (s.discardable && s.state === 'failed') {
+    out.push(`<button class="btn sm danger" data-act="session/discard" data-meeting="${s.meetingId}"
+      data-confirm="Discard ${s.ref || `#${s.meetingId}`}? It has no transcript, and this stops it retrying.">Discard</button>`);
+  }
+  if (s.lines) {
+    out.push(`<button class="btn sm" data-download="${s.meetingId}">Transcript</button>`);
+    out.push(`<button class="btn sm" data-act="summary/again" data-meeting="${s.meetingId}"
+      data-confirm="Write the notes for ${s.ref || `#${s.meetingId}`} again?">Re-summarise</button>`);
+  }
+  return out.length ? `<div class="acts">${out.join('')}</div>` : '';
+}
+
+function renderSessions() {
+  const list = detail?.sessions ?? [];
+  $('sesshint').textContent = list.length ? '· newest first' : '';
+  $('sessions').innerHTML = list.length ? list.map(sessionCard).join('') : empty('Nothing recorded yet.');
+}
+
+// --- the side panel ------------------------------------------------------
+
+function renderTabs() {
+  if (!detail) { $('tabs').innerHTML = ''; return; }
+  const tabs = [
+    ['table', 'The table', detail.roster.length],
+    ['corrections', 'Corrections', detail.corrections.length],
+    ['settings', 'Settings', 0],
+  ];
+  $('tabs').innerHTML = tabs.map(([id, name, n]) => `
+    <button class="tab${view.tab === id ? ' on' : ''}" data-tab="${id}">
+      ${esc(name)}${n ? `<span class="n">${n}</span>` : ''}
+    </button>`).join('');
+}
+
+const CONSENT_CLASS = { granted: 'agreed', declined: 'declined', pending: 'waiting', expired: 'waiting' };
+
+function renderPanel() {
+  if (!detail) { $('panel').innerHTML = ''; return; }
+  const can = status?.actionsEnabled !== false;
+
+  if (view.tab === 'table') {
+    const total = detail.roster.reduce((n, p) => n + p.lines, 0) || 1;
+    $('panel').innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Player</th><th>Character</th><th class="r">Lines</th><th class="r">Share</th><th class="r">Consent</th>
+        </tr></thead>
+        <tbody>${detail.roster.map((p) => {
+          const pct = Math.round((p.lines / total) * 100);
+          const who = p.displayName || `user ${p.userId.slice(0, 4)}…${p.userId.slice(-4)}`;
+          return `<tr>
+            <td>${esc(who)}</td>
+            <td>${p.characterName
+                  ? `<span class="prose">${esc(p.characterName)}</span>`
+                  : '<span class="unset">not set</span>'}
+                ${can ? `<form class="f" style="margin-top:6px" data-act="roster/character"
+                          data-campaign="${detail.id}" data-user="${esc(p.userId)}">
+                          <input class="in" name="name" size="11" placeholder="character"
+                                 value="${esc(p.characterName || '')}" aria-label="Character for ${esc(who)}">
+                          <button class="btn sm go" type="submit">Save</button>
+                        </form>` : ''}</td>
+            <td class="num r">${p.lines ? p.lines.toLocaleString() : '—'}</td>
+            <td class="num r"><span class="share${p.lines ? '' : ' none'}"><i style="width:${p.lines ? pct : 0}%"></i></span>${p.lines ? pct + '%' : ''}</td>
+            <td class="r ${CONSENT_CLASS[p.consent.state] || 'never'}">${esc(p.consent.label)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+      ${detail.roster.length ? '' : empty('Nobody at this table yet.')}
+      ${can ? '' : DISABLED}`;
+    return;
+  }
+
+  if (view.tab === 'corrections') {
+    $('panel').innerHTML = `
+      ${detail.corrections.length ? `<table><tbody>${detail.corrections.map((c) => `
+        <tr>
+          <td><span class="mono">${esc(c.wrong)}</span> → <b class="prose">${esc(c.right)}</b></td>
+          <td class="r">${can ? `<button class="btn sm" data-act="corrections/remove"
+            data-campaign="${detail.id}" data-wrong="${esc(c.wrong)}">Remove</button>` : ''}</td>
+        </tr>`).join('')}</tbody></table>` : empty('No corrections saved.')}
+      ${can ? `<form class="f" style="margin-top:16px" data-act="corrections/add" data-campaign="${detail.id}">
+        <input class="in" name="wrong" placeholder="what whisper hears" required aria-label="Misheard text">
+        <input class="in" name="right" placeholder="what it should say" required aria-label="Correct text">
+        <button class="btn go" type="submit">Add</button>
+      </form>` : DISABLED}
+      <div class="empty" style="font-style:normal;color:var(--dim);margin-top:12px">
+        Applied to every future transcript, and replayed over this campaign's existing ones.
+        Removing one stops it applying; lines already rewritten stay as they are.
       </div>`;
-  };
-
-  $('queue').innerHTML = inFlight.length ? inFlight.map(flightRow).join('') : empty('Nothing queued.');
-
-  // The tab title carries the same two facts, so a dashboard left open in a
-  // background tab can still say a session ended and is waiting on you.
-  document.title = s.recording.length
-    ? '● Recording — Quill'
-    : needsYou
-      ? `(${needsYou}) Quill`
-      : 'Quill';
-
-  $('servers').innerHTML = s.servers.length
-    ? s.servers.map((g) => {
-        const held = g.campaigns > 1 ? ` <span class="tag">${g.campaigns} campaigns</span>` : '';
-        const state = g.recording ? '<span class="pill act">recording</span>' : '<span class="pill">idle</span>';
-        return `<div class="row"><span class="k">${dot(true)}${esc(g.name)}${held}</span><span class="val">${state}</span></div>`;
-      }).join('')
-    : empty('No servers.');
-
-  $('schedule').innerHTML = rows([
-    ['Auto window', `${String(s.schedule.windowStartHour).padStart(2, '0')}:00–${String(s.schedule.windowEndHour).padStart(2, '0')}:00${s.schedule.weekdaysOnly ? ' weekdays' : ' daily'}`],
-    ['Timezone', esc(s.schedule.timeZone)],
-    ['Approval required', s.schedule.requireApproval ? 'yes' : 'no'],
-    [s.schedule.inWindowNow ? 'Window' : 'Next window', s.schedule.inWindowNow ? 'open now' : whenLocal(s.schedule.nextAutoWindowAt)],
-  ]);
-
-  // The two queues are shown as state plus the button that changes it, rather
-  // than a toggle: a toggle sent twice — a double-click, or two tabs open on
-  // this page — lands on the opposite of what the person who clicked it saw.
-  // Each button says the state it will move to, so it is the same click
-  // whatever the page last managed to render.
-  const pauseButton = (queue, paused) =>
-    !canAct
-      ? paused ? 'paused' : 'running'
-      : `<button class="${paused ? 'go' : 'warn'}" data-act="pause" data-queue="${queue}" data-paused="${paused ? 'false' : 'true'}"
-          ${paused ? '' : `data-confirm="Pause ${queue === 'summarize' ? 'summarising' : 'transcription'}? Nothing new will start."`}>
-          ${paused ? 'Resume' : 'Pause'}</button>`;
-
-  $('health').innerHTML = rows([
-    ['PC whisper server', `${dot(s.health.whisperServer)}${s.health.whisperServer === null ? 'unknown' : s.health.whisperServer ? 'reachable' : 'not reachable'}`],
-    [`Summariser (${esc(s.health.summariserName)})`, `${dot(s.health.summariser)}${s.health.summariser === null ? 'unknown' : s.health.summariser ? 'ready' : 'unavailable'}`],
-    [
-      `Transcribing ${s.health.transcribePaused ? `${dot(false)}paused` : `${dot(true)}running`}`,
-      pauseButton('transcribe', s.health.transcribePaused),
-    ],
-    [
-      `Summarising ${s.health.summarisePaused ? `${dot(false)}paused` : `${dot(true)}running`}`,
-      pauseButton('summarize', s.health.summarisePaused),
-    ],
-  ]);
-}
-
-const PROVIDER_NAMES = { gemini: 'Gemini', anthropic: 'Claude' };
-
-// --- one campaign, opened ---
-//
-// Everything /dm roster, /corrections and /history used to answer, plus the
-// two things you actually do with them.
-//
-// Rendered into its own card, and NOT from the five-second poll. Two reasons:
-// this data changes a few times a month rather than a few times a minute, so
-// polling it for every campaign the bot serves would grow each request with
-// the size of the whole install; and a panel containing a half-typed character
-// name must not be one of the things a refresh throws away.
-
-let openCampaignId = null;
-
-function consentClass(state) {
-  return state === 'granted' ? 'yes' : state === 'declined' ? 'no' : 'maybe';
-}
-
-function rosterRow(view, p) {
-  // The Discord display name is what the operator recognises; the id is what
-  // the action needs. Showing both means a roster entry is identifiable even
-  // for someone the bot has never heard speak, who therefore has no name.
-  const who = p.displayName ? esc(p.displayName) : `user ${esc(p.userId)}`;
-  const plays = p.characterName ? `plays <b>${esc(p.characterName)}</b>` : '<i>no character set</i>';
-  const heard = p.lines ? `${p.lines} line${p.lines === 1 ? '' : 's'}` : 'not recorded yet';
-
-  return `
-    <div class="who">
-      <div>
-        <div>${who}${p.enrolled ? '' : ' <span class="tag warn">not on the roster</span>'}</div>
-        <div class="sub">${plays} · ${heard} · <span class="${consentClass(p.consent.state)}">${esc(p.consent.label)}</span></div>
-      </div>
-      <div class="acts">
-        <form class="inline gated" data-act="roster/character" data-campaign="${view.id}" data-user="${esc(p.userId)}">
-          <input name="name" placeholder="character" value="${esc(p.characterName || '')}" size="12"
-                 aria-label="Character name for ${who}">
-          <button type="submit" class="go">Save</button>
-        </form>
-        ${p.characterName ? `<button data-act="roster/forget" data-campaign="${view.id}" data-user="${esc(p.userId)}">Clear</button>` : ''}
-      </div>
-    </div>`;
-}
-
-function sessionRow(view, s) {
-  const done = s.lines > 0;
-  return `
-    <div class="who">
-      <div>
-        <div>${esc(s.ref || `#${s.meetingId}`)}</div>
-        <div class="sub">${esc((s.startedAt || '').slice(0, 10))} · ${esc(s.status)}${s.lines ? ` · ${s.lines} lines` : ''}</div>
-      </div>
-      <div class="acts">
-        ${s.hasNotes ? `<button class="go" data-notes="${s.meetingId}">Notes</button>` : ''}
-        ${done ? `<button data-download="${s.meetingId}">Transcript</button>` : ''}
-        ${done ? `<button data-act="summary/again" data-meeting="${s.meetingId}" data-confirm="Write the notes for ${s.ref || `#${s.meetingId}`} again?">Re-summarise</button>` : ''}
-      </div>
-    </div>`;
-}
-
-function renderDetail(view) {
-  // Held so the notes reader can offer previous/next without another request.
-  // Newest first, matching the order they are listed in.
-  notesSessions = view.sessions.filter((s) => s.hasNotes);
-
-  $('detail').className = 'card wide open';
-  $('detail').innerHTML = `
-    <div class="detail-head">
-      <h2>${esc(view.label)}</h2>
-      <span class="muted">${view.roster.length} at the table · ${view.sessions.length} session${view.sessions.length === 1 ? '' : 's'}</span>
-      <span style="margin-left:auto"><button data-close-detail>Close</button></span>
-    </div>
-    <div class="cols">
-      <div>
-        <h3>Roster</h3>
-        ${view.roster.length ? view.roster.map((p) => rosterRow(view, p)).join('') : empty('Nobody yet.')}
-      </div>
-      <div>
-        <h3>Corrections</h3>
-        ${
-          view.corrections.length
-            ? view.corrections
-                .map(
-                  (c) => `
-              <div class="who">
-                <div><div>"${esc(c.wrong)}" → <b>${esc(c.right)}</b></div></div>
-                <div class="acts">
-                  <button data-act="corrections/remove" data-campaign="${view.id}" data-wrong="${esc(c.wrong)}">Remove</button>
-                </div>
-              </div>`
-                )
-                .join('')
-            : empty('None saved.')
-        }
-        <form class="inline" data-act="corrections/add" data-campaign="${view.id}">
-          <input name="wrong" placeholder="what whisper hears" required>
-          <input name="right" placeholder="what it should say" required>
-          <button type="submit">Add</button>
-        </form>
-        <div class="sub muted" style="margin-top:8px">
-          Applied to every future transcript, and replayed over this campaign's existing ones.
-        </div>
-      </div>
-      <div>
-        <h3>Sessions</h3>
-        ${view.sessions.length ? view.sessions.map((s) => sessionRow(view, s)).join('') : empty('None recorded.')}
-
-        <h3>Import a recording</h3>
-        <form class="inline" data-act="import" data-campaign="${view.id}">
-          <input name="url" type="url" placeholder="https://… link to the audio" required style="flex:1 1 100%">
-          <input name="speaker" placeholder="speaker label (default: Table)" size="14">
-          <button type="submit" class="go">Import</button>
-        </form>
-        <div class="sub muted" style="margin-top:8px">
-          For a game played in person, or anything recorded outside Discord. It runs through the same
-          transcribe → summarise → post pipeline, and appears under "Working on" once it starts.
-          <b>Every line is attributed to one label</b> — a single microphone has no per-speaker channels.
-        </div>
-      </div>
-    </div>`;
-}
-
-async function openCampaign(id, { quiet = false } = {}) {
-  openCampaignId = id;
-  // Something immediately, so a click on a slow link is not indistinguishable
-  // from a click that did nothing. Skipped when refreshing an already-open
-  // panel after an action, which would otherwise flash the whole thing away.
-  if (!quiet) {
-    $('detail').className = 'card wide open';
-    $('detail').innerHTML = '<div class="skeleton">Loading</div>';
+    return;
   }
-  try {
-    const res = await fetch(`${API}/campaign?id=${id}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    renderDetail(await res.json());
-  } catch (err) {
-    toast(`Couldn't load that campaign — ${err.message}`, false);
-    closeCampaign();
-  }
+
+  $('panel').innerHTML = `
+    <div class="kv"><span class="k">Campaign</span><span class="v">${esc(detail.label)}</span></div>
+    <div class="kv"><span class="k">Sessions read as</span><span class="v">${esc(detail.sessions[0]?.ref || '—')}</span></div>
+    <div class="kv"><span class="k">Notes go to</span><span class="v">${esc(detail.output)}</span></div>
+    <div class="kv"><span class="k">Managed</span><span class="v">${detail.claimed ? 'yes' : 'unclaimed'}</span></div>
+    <div class="kv"><span class="k">At the table</span><span class="v">${detail.roster.length}</span></div>
+    <div class="kv"><span class="k">Agreed to be recorded</span><span class="v">${detail.roster.filter((p) => p.consent.mayRecord).length}</span></div>
+    <div class="empty" style="font-style:normal;color:var(--dim);margin-top:14px">
+      Renaming a campaign, inviting a player and choosing where notes are posted all happen in Discord,
+      where the people they concern are: <code>/campaign rename</code>, <code>/campaign invite</code>,
+      <code>/campaign output</code>.
+    </div>`;
 }
 
-function closeCampaign() {
-  openCampaignId = null;
-  notesSessions = [];
-  $('detail').className = 'card wide';
-  $('detail').innerHTML = '';
-  // Notes belong to the campaign that was open; leaving them behind would
-  // leave one table's recap sitting under another table's roster.
-  closeNotes();
-}
+const DISABLED =
+  '<div class="note">Actions are turned off on this bot — set <code>STATUS_TOKEN</code> in ' +
+  '<code>pi-service/.env</code> (and in the dashboard) to act from here.</div>';
 
-// --- reading a session's notes ---
-//
-// The recap used to be readable only where it was posted, in a Discord message
-// that scrolls away, or in the exported markdown on whichever machine the
-// vault syncs to. Neither is a way to look something up six weeks later.
-
-// Sessions of the open campaign that have notes, newest first — so the reader
-// gets previous/next without another request.
-let notesSessions = [];
+// --- notes ---------------------------------------------------------------
 
 const bullets = (title, lines, cls = '') =>
-  lines.length ? `<h3>${title}</h3><ul class="${cls}">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : '';
+  lines?.length ? `<div><h4>${title}</h4><ul class="${cls}">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
 
-function renderNotes(n) {
-  const at = notesSessions.findIndex((s) => s.meetingId === n.meetingId);
-  const older = at >= 0 && at < notesSessions.length - 1 ? notesSessions[at + 1] : null;
-  const newer = at > 0 ? notesSessions[at - 1] : null;
+function renderNotes() {
+  if (!notes) { $('notes').innerHTML = ''; return; }
 
-  const body = n.unreadable
-    ? `<div class="note">These notes are on disk but aren't readable — the stored summary isn't valid JSON.
+  const body = notes.unreadable
+    ? `<div class="note">These notes are on disk but are not readable — the stored summary is not valid JSON.
          Re-summarising the session will write them again.</div>`
-    : !n.written
-      ? empty('No notes yet — this session has not been summarised.')
+    : !notes.written
+      ? empty('This session has not been summarised yet.')
       : `
-        <div class="notes-body">
-          <div class="tldr">${esc(n.tldr) || '<i>No recap was written.</i>'}</div>
-          ${
-            n.scenes.length
-              ? `<h3>What happened</h3>` +
-                n.scenes
-                  .map(
-                    (s) => `
-                <div class="scene">
-                  <h4>${esc(s.title)}</h4>
-                  <ul>${s.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
-                </div>`
-                  )
-                  .join('')
-              : ''
-          }
-          ${bullets('Party decisions', n.partyDecisions)}
-          ${bullets('Still unresolved', n.unresolvedThreads)}
-          ${bullets('Follow-ups', n.followUps)}
-          ${bullets('NPCs introduced', n.npcsIntroduced)}
-          ${bullets('Locations', n.locationsVisited)}
-          ${bullets('Loot and rewards', n.lootAndRewards)}
-          ${bullets('Worth remembering', n.funnyMoments, 'funny')}
-        </div>`;
+        <div class="tldr prose">${esc(notes.tldr) || '<i>No recap was written.</i>'}</div>
+        ${notes.scenes.map((s) => `
+          <div class="scene">
+            <h5 class="prose">${esc(s.title)}</h5>
+            <ul>${s.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
+          </div>`).join('')}
+        <div class="cols">
+          ${bullets('NPCs introduced', notes.npcsIntroduced)}
+          ${bullets('Locations', notes.locationsVisited)}
+          ${bullets('Party decisions', notes.partyDecisions)}
+          ${bullets('Still unresolved', notes.unresolvedThreads)}
+          ${bullets('Loot and rewards', notes.lootAndRewards)}
+          ${bullets('Follow-ups', notes.followUps)}
+        </div>
+        ${bullets('Worth remembering', notes.funnyMoments, 'funny')}`;
 
-  $('notes').className = 'card wide open';
   $('notes').innerHTML = `
-    <div class="notes-nav">
-      <button data-notes="${older ? older.meetingId : ''}" ${older ? '' : 'disabled'}>← ${
-        older ? esc(older.ref || `#${older.meetingId}`) : 'earlier'
-      }</button>
-      <button data-notes="${newer ? newer.meetingId : ''}" ${newer ? '' : 'disabled'}>${
-        newer ? esc(newer.ref || `#${newer.meetingId}`) : 'later'
-      } →</button>
-      <span style="margin-left:auto"><button data-close-notes>Close</button></span>
-    </div>
-    <div class="detail-head">
-      <h2>${esc(n.ref || `Session #${n.meetingId}`)}</h2>
-      <span class="muted">${esc(n.campaign)} · ${esc((n.startedAt || '').slice(0, 10))}${
-        n.lines ? ` · ${n.lines} lines` : ''
-      }</span>
-    </div>
-    ${body}`;
-  $('notes').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    <div class="notes">
+      <div class="head">
+        <span class="label">${esc(notes.ref || `Session ${notes.meetingId}`)} — the notes Quill posted</span>
+        <span class="mono" style="color:var(--dim);font-size:12px">${esc(shortDate(notes.startedAt))}${notes.lines ? ` · ${notes.lines.toLocaleString()} lines` : ''}</span>
+        <span style="margin-left:auto"><button class="btn sm" data-close-notes>Close</button></span>
+      </div>
+      ${body}
+    </div>`;
 }
 
-async function openNotes(meetingId) {
+// --- import --------------------------------------------------------------
+
+function renderImport() {
+  $('importbtn').textContent = view.importing ? 'Cancel' : 'Import a recording';
+  if (!view.importing || !detail) { $('importform').innerHTML = ''; return; }
+  $('importform').innerHTML = `
+    <form class="f" style="margin-top:12px" data-act="import" data-campaign="${detail.id}">
+      <input class="in" name="url" type="url" required style="flex:1 1 100%"
+             placeholder="https://… a link to the audio" aria-label="Link to the recording">
+      <input class="in" name="speaker" placeholder="speaker label (default: Table)" size="16" aria-label="Speaker label">
+      <button class="btn go" type="submit">Start import</button>
+    </form>
+    <div class="empty" style="font-style:normal;color:var(--dim);margin-top:10px;font-size:13px">
+      For a game played in person, or anything recorded outside Discord. Every line is attributed to one
+      label — a single microphone has no per-speaker channels.
+    </div>`;
+}
+
+// --- painting ------------------------------------------------------------
+
+function paint() {
+  renderRail(); renderTop(); renderRecording(); renderSessions();
+  renderTabs(); renderPanel(); renderNotes(); renderImport();
+
+  const rec = status?.recording?.length;
+  const needs = (status?.campaigns ?? []).reduce((n, c) => n + (c.awaiting || 0), 0);
+  document.title = rec ? '● Recording — Quill' : needs ? `(${needs}) Quill` : 'Quill';
+}
+
+// --- loading -------------------------------------------------------------
+
+async function get(path) {
+  const res = await fetch(`${API}${path}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function loadCampaign(id) {
+  view.campaignId = id;
+  view.meetingId = null;
+  notes = null;
   try {
-    const res = await fetch(`${API}/notes?meeting=${meetingId}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    renderNotes(await res.json());
+    detail = await get(`/campaign?id=${id}`);
   } catch (err) {
+    detail = null;
+    toast(`Couldn't load that campaign — ${err.message}`, false);
+  }
+  paint();
+}
+
+async function loadNotes(meetingId) {
+  view.meetingId = meetingId;
+  try {
+    notes = await get(`/notes?meeting=${meetingId}`);
+  } catch (err) {
+    notes = null;
     toast(`Couldn't load those notes — ${err.message}`, false);
+  }
+  paint();
+}
+
+async function tick() {
+  try {
+    status = await get('/status');
+    lastSeen = Date.now();
+    document.body.classList.remove('stale');
+    $('err').style.display = 'none';
+
+    // Land on something rather than an empty frame: the campaign that needs a
+    // decision, else the one played most recently, which is what /status
+    // already sorts by.
+    if (view.campaignId == null && status.campaigns?.length) {
+      const pick = status.campaigns.find((c) => c.awaiting) || status.campaigns.find((c) => c.recording) || status.campaigns[0];
+      await loadCampaign(pick.id);
+      return;
+    }
+    // The open campaign's own detail does not come from the poll, so refresh
+    // it when the poll says something about it changed.
+    const mine = status.campaigns?.find((c) => c.id === view.campaignId);
+    if (mine && detail && (mine.sessions !== detail.sessions.length || mine.awaiting !== countAwaiting())) {
+      detail = await get(`/campaign?id=${view.campaignId}`).catch(() => detail);
+    }
+    paint();
+  } catch (err) {
+    // The bot being unreachable is itself information. The page dims as well
+    // as saying so: a dashboard confidently showing "not recording" while it
+    // has no idea is worse than one that admits it lost contact.
+    document.body.classList.add('stale');
+    document.title = 'Quill — offline';
+    $('err').style.display = 'block';
+    $('err').innerHTML = `Can't reach the bot at <code>${esc(API)}</code> — ${esc(err.message)}.
+      Showing what it last said, ${esc(sinceLastSeen())}.`;
   }
 }
 
-function closeNotes() {
-  $('notes').className = 'card wide';
-  $('notes').innerHTML = '';
+const countAwaiting = () =>
+  (detail?.sessions ?? []).filter((s) => s.job?.status === 'awaiting_approval').length;
+
+// --- acting --------------------------------------------------------------
+
+let toastTimer = null;
+function toast(message, ok) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = `toast show ${ok ? 'good' : 'bad'}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, ok ? 4500 : 9000);
+}
+
+async function send(action, body) {
+  try {
+    const res = await fetch(`${API}/actions/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = await res.json().catch(() => ({}));
+    toast(payload.message || `HTTP ${res.status}`, res.ok && payload.ok !== false);
+  } catch (err) {
+    toast(`Couldn't reach the bot — ${err.message}`, false);
+    return;
+  }
+  // Straight to a refresh rather than waiting for the next poll: the whole
+  // point of pressing the button is to watch the thing move.
+  status = await get('/status').catch(() => status);
+  if (view.campaignId) detail = await get(`/campaign?id=${view.campaignId}`).catch(() => detail);
+  if (view.meetingId) notes = await get(`/notes?meeting=${view.meetingId}`).catch(() => notes);
+  paint();
 }
 
 // The transcript needs the auth header, which a plain <a href> cannot carry —
@@ -754,61 +798,37 @@ async function downloadTranscript(meetingId) {
   }
 }
 
-const DISABLED_NOTE =
-  '<div class="note">Actions are turned off on this bot — set <code>STATUS_TOKEN</code> in ' +
-  '<code>pi-service/.env</code> (and in the dashboard) to approve from here.</div>';
-
-let toastTimer = null;
-function toast(message, ok) {
-  const el = $('toast');
-  el.textContent = message;
-  el.className = `toast show ${ok ? 'good' : 'bad'}`;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = 'toast'; }, ok ? 4000 : 9000);
-}
-
-// One listener for every button on the page, rather than one per render.
-//
-// The cards are rebuilt from scratch every five seconds, so any handler
-// attached to a button would be thrown away with it — and a click landing in
-// the gap between two renders would do nothing at all. Delegation survives
-// the rebuild because it is bound to the document, not to the buttons.
+// One listener for the whole page rather than one per render. Everything here
+// is rebuilt from the poll every few seconds, so a handler attached to a
+// button would be thrown away with it — and a click landing in the gap between
+// two renders would do nothing at all.
 document.addEventListener('click', async (event) => {
-  // Opening a campaign, closing it, and downloading a transcript are not
-  // actions against the API's action table, so they are handled before it.
-  if (event.target.closest('[data-close-detail]')) return closeCampaign();
-  if (event.target.closest('[data-close-notes]')) return closeNotes();
+  const t = event.target;
 
-  const notes = event.target.closest('button[data-notes]');
-  if (notes) return notes.dataset.notes ? openNotes(Number(notes.dataset.notes)) : undefined;
+  if (t.closest('[data-close-notes]')) { notes = null; view.meetingId = null; return paint(); }
 
-  const download = event.target.closest('button[data-download]');
-  if (download) return downloadTranscript(download.dataset.download);
+  const camp = t.closest('[data-campaign][class~="camp"]');
+  if (camp) return loadCampaign(Number(camp.dataset.campaign));
 
-  const row = event.target.closest('.camp[data-campaign]');
-  if (row) {
-    const id = Number(row.dataset.campaign);
-    return id === openCampaignId ? closeCampaign() : openCampaign(id);
+  const tab = t.closest('[data-tab]');
+  if (tab) { view.tab = tab.dataset.tab; return paint(); }
+
+  if (t.closest('#importbtn')) { view.importing = !view.importing; return renderImport(); }
+
+  const dl = t.closest('button[data-download]');
+  if (dl) return downloadTranscript(dl.dataset.download);
+
+  const sess = t.closest('.sess[data-session]');
+  if (sess && !t.closest('button') && !t.closest('form')) {
+    const id = Number(sess.dataset.session);
+    return id === view.meetingId ? (notes = null, view.meetingId = null, paint()) : loadNotes(id);
   }
 
-  const button = event.target.closest('button[data-act]');
-  if (!button || button.disabled) return;
-  // A submit button inside a form is the form's business, not this listener's
-  // — otherwise adding a correction would fire twice, once here without the
-  // typed values and once from the submit handler with them.
-  if (button.type === 'submit') return;
+  const btn = t.closest('button[data-act]');
+  if (!btn || btn.disabled || btn.type === 'submit') return;
+  if (btn.dataset.confirm && !confirm(btn.dataset.confirm)) return;
 
-  if (button.dataset.confirm && !confirm(button.dataset.confirm)) return;
-
-  // Disabled for the round trip so an impatient second click cannot send the
-  // same approval twice. The API refuses the duplicate anyway — this just
-  // stops the page reporting a confusing "already released" at someone who
-  // only meant to click once.
-  const label = button.textContent;
-  button.disabled = true;
-  button.textContent = '…';
-
-  const d = button.dataset;
+  const d = btn.dataset;
   const body = {};
   if (d.job) body.jobId = Number(d.job);
   if (d.meeting) body.meetingId = Number(d.meeting);
@@ -820,14 +840,14 @@ document.addEventListener('click', async (event) => {
   if (d.queue) body.queue = d.queue;
   if (d.paused) body.paused = d.paused === 'true';
 
+  const was = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
   await send(d.act, body);
-  button.disabled = false;
-  button.textContent = label;
+  btn.disabled = false; btn.textContent = was;
 });
 
-// Forms rather than buttons wherever there is something to type. A form gives
-// Enter-to-submit and required-field validation for free, and both matter for
-// the two things typed most often here: a character name and a correction.
+// Forms wherever there is something to type: Enter-to-submit and required-field
+// validation for free, and both matter for the things typed most often here.
 document.addEventListener('submit', async (event) => {
   const form = event.target.closest('form[data-act]');
   if (!form) return;
@@ -839,107 +859,36 @@ document.addEventListener('submit', async (event) => {
 
   const submit = form.querySelector('button[type=submit]');
   if (submit) submit.disabled = true;
+  if (form.dataset.act === 'import') view.importing = false;
   await send(form.dataset.act, body);
   if (submit) submit.disabled = false;
 });
 
-// One place that talks to the action API, so the refresh-afterwards rule and
-// the error handling are not written twice.
-async function send(action, body) {
-  try {
-    const res = await fetch(`${API}/actions/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const payload = await res.json().catch(() => ({}));
-    toast(payload.message || `HTTP ${res.status}`, res.ok && payload.ok !== false);
-  } catch (err) {
-    toast(`Couldn't reach the bot — ${err.message}`, false);
-    return;
-  }
-
-  // Straight to a refresh rather than waiting up to five seconds: the whole
-  // point of pressing the button is to watch the thing move. The open campaign
-  // is reloaded too, since roster and correction actions change what it shows
-  // and nothing else will refresh it.
-  tick();
-  if (openCampaignId) openCampaign(openCampaignId, { quiet: true });
-}
-
-// --- keyboard ---
-//
-// The campaign rows are this page's main navigation and were plain divs with a
-// click handler: invisible to Tab, unusable without a mouse. They are buttons
-// now in every sense but the tag, so they answer to Enter and Space too.
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    // Innermost first, so Escape backs out one level at a time rather than
-    // closing everything and losing your place in the campaign.
-    if ($('notes').classList.contains('open')) return closeNotes();
-    if (openCampaignId) return closeCampaign();
+    if (notes) { notes = null; view.meetingId = null; return paint(); }
+    if (view.importing) { view.importing = false; return renderImport(); }
     return;
   }
-
-  const row = event.target.closest?.('.camp[data-campaign]');
-  if (row && (event.key === 'Enter' || event.key === ' ')) {
+  const hit = event.target.closest?.('.camp[data-campaign], .sess[data-session]');
+  if (hit && (event.key === 'Enter' || event.key === ' ')) {
     event.preventDefault();
-    const id = Number(row.dataset.campaign);
-    return id === openCampaignId ? closeCampaign() : openCampaign(id);
+    if (hit.dataset.campaign) return loadCampaign(Number(hit.dataset.campaign));
+    return loadNotes(Number(hit.dataset.session));
   }
 });
 
-// Save shows itself once a field actually differs from what was loaded — so a
-// roster of seven reads as seven names, not seven buttons.
-document.addEventListener('input', (event) => {
-  const field = event.target.closest('form.inline.gated input');
-  if (!field) return;
-  const form = field.closest('form');
-  const changed = [...form.elements].some((el) => el.name && el.value !== (el.defaultValue ?? ''));
-  form.classList.toggle('dirty', changed);
-});
-
-let lastSeen = null;
-
-// "updated 21:43:07" is a clock time you have to compare against another clock
-// time to learn the only thing you wanted: whether this is current. Seconds ago
-// says it directly.
-function sinceLastSeen() {
-  if (!lastSeen) return 'never';
-  const s = Math.round((Date.now() - lastSeen) / 1000);
-  if (s < 2) return 'just now';
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
-}
-
-async function tick() {
-  try {
-    const res = await fetch(`${API}/status`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    render(await res.json());
-    lastSeen = Date.now();
-    document.body.classList.remove('stale');
-    $('err').style.display = 'none';
-  } catch (err) {
-    // The bot being unreachable is itself information — say so plainly rather
-    // than freezing on numbers that look current. The page dims as well as
-    // saying so: a dashboard confidently showing "not recording" while it has
-    // no idea is worse than one that admits it lost contact.
-    document.body.classList.add('stale');
-    document.title = 'Quill — offline';
-    $('err').style.display = 'block';
-    $('err').innerHTML = `Can't reach the bot at <code>${esc(API)}</code> — ${esc(err.message)}.
-      Showing what it last said, ${esc(sinceLastSeen())}.<br>
-      Is the Pi up, and is <code>STATUS_PORT</code> set? Override with <code>?api=http://host:port</code>.`;
-    $('who').innerHTML = `${dot(false)}unreachable`;
-  }
-}
-
-// Ticks on its own second so the age keeps counting up while the bot is
-// unreachable, instead of freezing at whatever it said when contact was lost.
+// The timer and the "last seen" age tick on their own second, so both keep
+// counting between polls rather than jumping every five.
 setInterval(() => {
-  $('stamp').textContent = `updated ${sinceLastSeen()}`;
+  const stamp = $('stamp');
+  if (stamp) stamp.textContent = `seen ${sinceLastSeen()}`;
+
+  const live = status?.recording?.find(
+    (r) => r.guildId === status?.campaigns?.find((c) => c.id === view.campaignId)?.guildId
+  );
+  const el = $('timer');
+  if (el && live && lastSeen) el.textContent = hhmmss(live.recordingForMs + (Date.now() - lastSeen));
 }, 1000);
 
 tick();
