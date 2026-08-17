@@ -60,9 +60,11 @@ export function buildTranscriptView({ db, meetingId }) {
       name: characters.get(s.userId) || s.displayName || 'unknown',
       lines: s.lines,
       share: Math.round((s.lines / total) * 100),
-      // The person who runs the game talks about twice as much as anyone else,
-      // which makes the bar chart unreadable unless you know which bar is
-      // theirs. Marked rather than hidden.
+      // Whose account owns this campaign — the person /campaign create was run
+      // by. Deliberately not "the DM": on a real table those turn out to be
+      // different accounts often enough that inferring one from the other
+      // would be wrong on screen, and the loudest voice is not it either.
+      // A fact, marked; nothing is concluded from it.
       manager: Boolean(campaign?.manager_user_id) && s.userId === campaign.manager_user_id,
     }))
     .sort((a, b) => b.lines - a.lines);

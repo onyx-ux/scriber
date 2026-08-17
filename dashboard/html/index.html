@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -15,7 +15,7 @@
 <style>
   /* Quill's palette, taken from the design: brass on near-black, sage for
      what worked, red for what is live or broken, amber for what is waiting.
-     Warm greys throughout — the ground leans blue and the text leans warm,
+     Warm greys throughout â€” the ground leans blue and the text leans warm,
      which is what stops a dark interface reading as a terminal. */
   :root {
     --ink:      #0E1014;  /* the page */
@@ -28,7 +28,7 @@
     --line:     #232730;  /* the structural borders */
     --line-2:   #262A33;  /* input borders, outer frame */
     --rule:     #1D2027;  /* row rules inside a table */
-    --edge:     #3A3529;  /* button borders — warm, not grey */
+    --edge:     #3A3529;  /* button borders â€” warm, not grey */
     --dash:     #2C313B;  /* dashed placeholder outlines */
 
     --text:     #E9E5DC;
@@ -193,9 +193,9 @@
 
   /* --- the split ----------------------------------------------------- */
 
-  /* The mockups are fixed 1920×1080 canvases, so they clip. A real session
+  /* The mockups are fixed 1920Ã—1080 canvases, so they clip. A real session
      list is forty sessions and a real recap is two screens of prose, so the
-     two columns that must not move — the session list and the facts rail —
+     two columns that must not move â€” the session list and the facts rail â€”
      stick under the top bar and scroll inside themselves, and the document
      scrolls the reading column. */
   .split { flex: 1; display: flex; align-items: flex-start; }
@@ -346,7 +346,8 @@
   .line:nth-child(even) { background: var(--column); }
   .line .t { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
   .line .who { font-size: 14px; color: var(--text-2); }
-  .line .who.gm { color: var(--brass); }
+  /* Whose account owns the campaign — a fact, not a claim about who is DMing. */
+  .line .who.owner { color: var(--brass); }
   .line .said { font-size: 15px; line-height: 1.6; color: var(--text); }
   .line mark { background: transparent; color: var(--brass-lit); border-bottom: 1px dotted var(--brass); }
 
@@ -385,8 +386,8 @@
   body.stale .main, body.stale .rail-list { opacity: .55; transition: opacity .3s; }
 
   /* Narrow screens: the columns stack rather than shrink to unreadable.
-     A phone is a real way this gets opened — to approve a summary from the
-     sofa — and the session list is the part that matters there. */
+     A phone is a real way this gets opened â€” to approve a summary from the
+     sofa â€” and the session list is the part that matters there. */
   @media (max-width: 1500px) { .facts.optional { display: none; } }
   @media (max-width: 1180px) {
     .facts { display: none; }
@@ -430,7 +431,7 @@
     <div class="cap">Campaigns</div>
     <div id="rail-list"></div>
     <div class="rail-nav" id="rail-nav"></div>
-    <div class="rail-foot" id="rail-foot">connecting…</div>
+    <div class="rail-foot" id="rail-foot">connectingâ€¦</div>
   </nav>
 
   <main class="main">
@@ -475,7 +476,7 @@ let status = null;      // last /status
 let detail = null;      // last /campaign?id=
 let notes = null;       // last /notes?meeting=
 let notesKey = null;    // the session and job those notes were fetched for
-let script = null;      // last /transcript?…&format=json
+let script = null;      // last /transcript?â€¦&format=json
 let lastSeen = null;
 
 const PROVIDERS = { gemini: 'Gemini', anthropic: 'Claude' };
@@ -488,7 +489,7 @@ function hhmmss(ms) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
-// A position in the recording, always hh:mm:ss — a three-hour session's
+// A position in the recording, always hh:mm:ss â€” a three-hour session's
 // timestamps have to stay comparable at a glance, and m:ss would read "202:15".
 const clock = (ms) => {
   const s = Math.floor((ms ?? 0) / 1000);
@@ -531,18 +532,18 @@ const uptime = (ms) =>
 // A user with no display name has never spoken, so all we have is the id.
 // Shown as an id rather than as a blank, because that is the string you paste
 // into /campaign invite.
-const whoIs = (p) => p.displayName || `user ${p.userId.slice(0, 4)}…${p.userId.slice(-4)}`;
+const whoIs = (p) => p.displayName || `user ${p.userId.slice(0, 4)}â€¦${p.userId.slice(-4)}`;
 
 // The design's NPC entries are a name and a description. Real ones are one
-// string, and the summariser chooses the punctuation between the two halves —
+// string, and the summariser chooses the punctuation between the two halves â€”
 // so this is the same split the Obsidian exporter and the ledger use, kept
 // deliberately identical to campaign/entry-name.js.
-const SEPARATOR = /\s*:\s+|\s+[—–-]\s+|,\s+|\s+\(/;
+const SEPARATOR = /\s*:\s+|\s+[â€”â€“-]\s+|,\s+|\s+\(/;
 function splitEntry(entry) {
   const s = String(entry ?? '').trim();
   const m = s.match(SEPARATOR);
   if (!m || m.index === 0) return { name: s, rest: '' };
-  return { name: s.slice(0, m.index).trim(), rest: s.slice(m.index).replace(/^[\s:—–,(-]+/, '').replace(/\)$/, '') };
+  return { name: s.slice(0, m.index).trim(), rest: s.slice(m.index).replace(/^[\s:â€”â€“,(-]+/, '').replace(/\)$/, '') };
 }
 
 const dotFor = (state) => `<span class="dot ${state === true ? 'ok' : state === false ? 'bad' : ''}"></span>`;
@@ -553,7 +554,7 @@ const can = () => status?.actionsEnabled !== false;
 //
 // Not a channel name with a # in front of it: a campaign's `channel` is the
 // last VOICE channel it recorded in, and the default destination is that
-// channel's own text feed — or NOTES_CHANNEL_ID, if the Pi sets one. Naming a
+// channel's own text feed â€” or NOTES_CHANNEL_ID, if the Pi sets one. Naming a
 // channel here would be a guess, and it would be wrong on exactly the installs
 // that configured something.
 const destination = () =>
@@ -567,7 +568,7 @@ const selected = () => sessions().find((s) => s.meetingId === view.meetingId) ??
 
 // A bot older than this page does not send `state`, `job` or the recap facets.
 // Deriving what can be derived keeps the page useful against it rather than
-// printing "undefined" in every pill — the two are deployed from different
+// printing "undefined" in every pill â€” the two are deployed from different
 // places (this file from a bind mount, the fields from an image), so they are
 // routinely a few minutes out of step.
 function normalise(s) {
@@ -592,11 +593,11 @@ function renderRail() {
   $('rail-list').innerHTML = camps.length
     ? camps.map((c) => {
         const bits = [];
-        if (c.sessions) bits.push(`${plural(c.sessions, 'session')} · ${c.hours.toFixed(1)}h`);
+        if (c.sessions) bits.push(`${plural(c.sessions, 'session')} Â· ${c.hours.toFixed(1)}h`);
         else bits.push('no sessions yet');
         if (c.recording) bits.push('recording now');
         else if (c.awaiting) bits.push(`${c.awaiting} waiting on you`);
-        else if (c.lines) bits.push(`${n(c.lines)} lines · ${plural(c.members, 'player')}`);
+        else if (c.lines) bits.push(`${n(c.lines)} lines Â· ${plural(c.members, 'player')}`);
         else bits.push(plural(c.members, 'player'));
 
         return `<button class="camp${view.campaignId === c.id && view.screen !== 'servers' && view.screen !== 'access' ? ' on' : ''}"
@@ -624,7 +625,7 @@ function renderRail() {
   const b = status?.bot;
   $('rail-foot').innerHTML = b
     ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}<br><span id="stamp" style="opacity:.75"></span>`
-    : 'connecting…';
+    : 'connectingâ€¦';
 }
 
 // ==========================================================================
@@ -669,7 +670,7 @@ function renderTop() {
     : '';
 
   // Each button says the state it moves TO, so it is the same click whatever
-  // the page last managed to render — a toggle sent twice by a double-click,
+  // the page last managed to render â€” a toggle sent twice by a double-click,
   // or by two tabs open on this page, lands on the opposite of what the person
   // who clicked it saw.
   const buttons = can() && status
@@ -688,7 +689,7 @@ function renderTop() {
 }
 
 // ==========================================================================
-// The banner — the transcriber being unreachable, said once, at the top
+// The banner â€” the transcriber being unreachable, said once, at the top
 // ==========================================================================
 
 function renderBanner() {
@@ -706,7 +707,7 @@ function renderBanner() {
       <div style="flex:1">
         <div class="say">Quill cannot reach the transcriber on your PC.</div>
         <div class="why">
-          Nothing is lost — recording, consent DMs and slash commands all still work.
+          Nothing is lost â€” recording, consent DMs and slash commands all still work.
           ${held ? `${plural(held, 'session')} ${held === 1 ? 'is' : 'are'} held until the machine comes back.` : ''}
           ${h.checkedAt ? `Last checked ${esc(since(new Date(h.checkedAt).getTime()))}.` : ''}
         </div>
@@ -725,7 +726,7 @@ function diagnosis() {
     ...(status?.working?.transcribing ?? []).map((t) => ({ what: `Session #${t.meetingId}`, sub: t.description, tag: 'stopped' })),
     ...(q.queuedTranscribe ?? []).map((j) => ({ what: `Session #${j.meetingId}`, sub: `${plural(j.utterances, 'clip')} on disk`, tag: 'held' })),
     ...(q.awaitingTranscribe ?? []).map((j) => ({ what: `Session #${j.meetingId}`, sub: 'waiting on you, not the PC', tag: 'ready' })),
-    ...(q.awaitingSummary ?? []).map((j) => ({ what: `Session #${j.meetingId}`, sub: 'already transcribed · waiting on you', tag: 'ready' })),
+    ...(q.awaitingSummary ?? []).map((j) => ({ what: `Session #${j.meetingId}`, sub: 'already transcribed Â· waiting on you', tag: 'ready' })),
   ];
 
   return `
@@ -754,7 +755,7 @@ function diagnosis() {
             checked ${esc(status?.health?.checkedAt ? since(new Date(status.health.checkedAt).getTime()) : 'never')}
           </div>
           <div class="quiet" style="margin-top:12px">
-            Nearly always the PC being asleep. Wake it, then press “Try again now”.
+            Nearly always the PC being asleep. Wake it, then press â€œTry again nowâ€.
           </div>
         </div>
         <div class="card">
@@ -815,10 +816,10 @@ function firstRun() {
       <div class="say-2" style="font-size:16px">Four things to do once, then it runs on its own.</div>
       <div class="steps" style="margin-top:36px">
         <div>
-          <span class="mark done">✓</span>
+          <span class="mark done">âœ“</span>
           <div style="flex:1">
             <div class="what">Quill is signed in${status?.servers?.length ? ` on ${plural(status.servers.length, 'server')}` : ''}</div>
-            <div class="sub">${esc(status?.bot?.user || 'connecting…')}${status?.bot?.uptimeMs ? ` · ${uptime(status.bot.uptimeMs)}` : ''}</div>
+            <div class="sub">${esc(status?.bot?.user || 'connectingâ€¦')}${status?.bot?.uptimeMs ? ` Â· ${uptime(status.bot.uptimeMs)}` : ''}</div>
           </div>
         </div>
         <div class="now">
@@ -847,7 +848,7 @@ function firstRun() {
         </div>
       </div>
       <div class="quiet" style="margin-top:26px">
-        The transcriber runs on your own machine —
+        The transcriber runs on your own machine â€”
         ${h.whisperServer === false ? 'Quill cannot reach it right now.' : h.whisperServer ? 'Quill can reach it.' : 'Quill has not checked yet.'}
         Audio never leaves your network.
       </div>
@@ -873,7 +874,7 @@ function sessionColumn() {
         <div class="say">Nothing here until you play.</div>
         <div class="quiet">
           Two of you in <span class="mono" style="color:var(--text-2)">${esc(detail?.channel || 'the voice channel')}</span>
-          is enough — Quill joins on its own and this fills in.
+          is enough â€” Quill joins on its own and this fills in.
         </div>
       </div>`;
   }
@@ -890,10 +891,10 @@ function sessionCard(s) {
   const when = [
     shortDate(s.startedAt),
     s.lines ? `${n(s.lines)} lines` : s.state === 'recording' ? 'recording' : 'no audio',
-  ].filter(Boolean).join(' · ');
+  ].filter(Boolean).join(' Â· ');
 
   // One line about the session, in the summariser's own words where they
-  // exist. Where they do not, the state is the sentence — which is the whole
+  // exist. Where they do not, the state is the sentence â€” which is the whole
   // reason the column is readable at a glance.
   const say = s.tldr
     ? `<div class="say">${esc(trim(s.tldr, 190))}</div>`
@@ -924,7 +925,7 @@ function sessionCard(s) {
 }
 
 const trim = (s, max) =>
-  s.length > max ? `${s.slice(0, max).replace(/\s+\S*$/, '')}…` : s;
+  s.length > max ? `${s.slice(0, max).replace(/\s+\S*$/, '')}â€¦` : s;
 
 // ==========================================================================
 // The pane: four tabs, and the session reader under "Notes"
@@ -945,7 +946,7 @@ function tabsBar() {
 }
 
 function paneBody() {
-  if (!detail) return '<div class="quiet" style="padding-top:30px">Loading…</div>';
+  if (!detail) return '<div class="quiet" style="padding-top:30px">Loadingâ€¦</div>';
   if (view.tab === 'table') return rosterTab();
   if (view.tab === 'corrections') return correctionsTab();
   if (view.tab === 'settings') return settingsTab();
@@ -982,27 +983,27 @@ function sessionKicker(s, tone = '') {
   ].filter(Boolean);
   return `
     <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
-      <div class="kicker ${tone}">Session ${s.sessionNumber ?? s.meetingId} · ${esc(longDate(s.startedAt))}</div>
-      ${bits.length ? `<span class="mono" style="font-size:11.5px;color:var(--dim)">${esc(bits.join(' · '))}</span>` : ''}
+      <div class="kicker ${tone}">Session ${s.sessionNumber ?? s.meetingId} Â· ${esc(longDate(s.startedAt))}</div>
+      ${bits.length ? `<span class="mono" style="font-size:11.5px;color:var(--dim)">${esc(bits.join(' Â· '))}</span>` : ''}
     </div>`;
 }
 
 // The notes, read as a document.
 //
 // The headline is the first scene's own title. Nothing in the stored recap is
-// a title for the whole session — the schema has never had one — so rather
+// a title for the whole session â€” the schema has never had one â€” so rather
 // than inventing a phrase, this borrows the one the summariser actually wrote
 // for where the session opens, and falls back to the session's ref.
 function notesPane(s) {
   if (!notes || notes.meetingId !== s.meetingId) {
-    return `${sessionKicker(s, 'done')}<div class="say-2">Opening…</div>`;
+    return `${sessionKicker(s, 'done')}<div class="say-2">Openingâ€¦</div>`;
   }
   if (notes.unreadable) {
     return `
       ${sessionKicker(s, 'broken')}
       <h1 class="display" style="margin-top:12px">These notes will not open.</h1>
       <div class="say-2">
-        The summary is on disk but is not valid JSON, so nothing can read it — not this page, not the
+        The summary is on disk but is not valid JSON, so nothing can read it â€” not this page, not the
         Obsidian export, not <code>/recap</code>. Writing them again fixes it; the transcript is untouched.
       </div>
       <div class="row-btns" style="margin-top:22px">
@@ -1074,7 +1075,7 @@ function approvalPane(s) {
     ${sessionKicker(s, 'wait')}
     <h1 class="display" style="margin-top:12px">Not written up yet</h1>
     <div class="say-2">
-      The transcript is on file — ${plural(s.lines, 'line')}${runtime(s.durationMs) ? ` over ${runtime(s.durationMs)}` : ''},
+      The transcript is on file â€” ${plural(s.lines, 'line')}${runtime(s.durationMs) ? ` over ${runtime(s.durationMs)}` : ''},
       corrections already applied. Nothing has been summarised and nothing has been posted.
       ${providers.length > 1 ? 'Pick who writes the notes.' : ''}
     </div>
@@ -1110,7 +1111,7 @@ function transcribePane(s) {
         <button class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="pi">On the Pi instead</button>
       </div>
       <div class="quiet" style="margin-top:14px">
-        “On the Pi” needs no GPU at all, and takes hours rather than minutes.
+        â€œOn the Piâ€ needs no GPU at all, and takes hours rather than minutes.
         ${status?.schedule?.nextAutoWindowAt
           ? `Left alone, the next automatic window opens ${esc(longDate(status.schedule.nextAutoWindowAt))} at ${esc(hhmm(status.schedule.nextAutoWindowAt))}.`
           : ''}
@@ -1129,9 +1130,9 @@ function queuedPane(s) {
     <div class="say-2">${esc(live?.description || 'Queued behind whatever is in front of it. Nothing here needs you.')}</div>
     <div class="steps" style="margin-top:30px;max-width:820px">
       <div>
-        <span class="mark done">✓</span>
+        <span class="mark done">âœ“</span>
         <div style="flex:1"><div class="what">Recorded</div>
-          <div class="sub">${esc(longDate(s.startedAt))}${runtime(s.durationMs) ? ` · ${runtime(s.durationMs)}` : ''}</div></div>
+          <div class="sub">${esc(longDate(s.startedAt))}${runtime(s.durationMs) ? ` Â· ${runtime(s.durationMs)}` : ''}</div></div>
       </div>
       <div class="${live ? 'now' : ''}">
         <span class="mark ${live ? 'live' : ''}">${live ? '' : '2'}</span>
@@ -1156,19 +1157,19 @@ function queuedPane(s) {
 function recordingPane(s) {
   const live = (status?.recording ?? []).find((r) => r.meetingId === s.meetingId);
   return `
-    <div class="kicker broken"><span class="dot live"></span> Recording · session ${s.sessionNumber ?? s.meetingId}</div>
+    <div class="kicker broken"><span class="dot live"></span> Recording Â· session ${s.sessionNumber ?? s.meetingId}</div>
     <div style="display:flex;align-items:flex-end;gap:24px;margin-top:14px;flex-wrap:wrap">
       <div class="mono" id="timer" style="font-size:52px;font-weight:500;letter-spacing:-1px;line-height:1">
         ${hhmmss(live?.recordingForMs)}
       </div>
       <div class="mono" style="font-size:12.5px;color:var(--dim);line-height:1.8;padding-bottom:6px">
         ${esc(live?.channel || s.channel || '')}<br>
-        ${n(live?.clips ?? 0)} clips · ${plural(live?.speakers ?? 0, 'speaker')}
+        ${n(live?.clips ?? 0)} clips Â· ${plural(live?.speakers ?? 0, 'speaker')}
       </div>
     </div>
     <div class="say-2">
       Audio is being written to the Pi and nothing has left your network. Transcription starts when the
-      last person leaves the channel${status?.schedule?.requireApproval ? ' — and Quill will ask before it uses the PC' : ''}.
+      last person leaves the channel${status?.schedule?.requireApproval ? ' â€” and Quill will ask before it uses the PC' : ''}.
     </div>
     <div class="quiet" style="margin-top:20px">End it from Discord with <code>/leave</code>.</div>`;
 }
@@ -1180,9 +1181,9 @@ function failedPane(s) {
   // made before it gave up.
   const events = [
     [hhmm(s.startedAt), `joined ${s.channel || 'the voice channel'}`],
-    s.endedAt ? [hhmm(s.endedAt), `last voice left · ${runtime(s.durationMs) ?? '0:00'} recorded`] : null,
+    s.endedAt ? [hhmm(s.endedAt), `last voice left Â· ${runtime(s.durationMs) ?? '0:00'} recorded`] : null,
     [hhmm(s.endedAt || s.startedAt), s.lines ? `${n(s.lines)} lines transcribed` : '0 clips written to disk'],
-    job?.attempts ? [null, `${plural(job.attempts, 'attempt')} · ${esc(job.lastError || 'nothing to read')}`] : null,
+    job?.attempts ? [null, `${plural(job.attempts, 'attempt')} Â· ${esc(job.lastError || 'nothing to read')}`] : null,
   ].filter(Boolean);
 
   return `
@@ -1192,7 +1193,7 @@ function failedPane(s) {
     </h1>
     <div class="say-2">
       ${s.lines
-        ? `The transcript exists — ${plural(s.lines, 'line')} — but the step after it failed. Trying again is worth a go.`
+        ? `The transcript exists â€” ${plural(s.lines, 'line')} â€” but the step after it failed. Trying again is worth a go.`
         : 'Quill joined the channel but no clips survived, so there is no audio to retry. Every attempt fails for the same reason.'}
     </div>
     <div class="card" style="margin-top:30px;max-width:760px">
@@ -1232,7 +1233,7 @@ function transcriptPeek(s) {
           <span style="font-size:14px;color:var(--text-2)">${esc(l.speaker)}</span>
           <span style="font-size:14.5px;line-height:1.6;color:var(--text-2)">${esc(l.text)}</span>
         </div>`).join('')
-        : '<div class="quiet">Loading the first lines…</div>'}
+        : '<div class="quiet">Loading the first linesâ€¦</div>'}
       <div style="display:flex;align-items:center;gap:12px;margin-top:10px;padding-top:14px;border-top:1px solid var(--line)">
         <span class="mono" style="font-size:11.5px;color:var(--dim)">
           ${peek ? `${n(Math.max(0, (script.total || 0) - peek.length))} more lines` : `${n(s.lines)} lines`}
@@ -1313,7 +1314,7 @@ function rosterTab() {
           return `<div class="tr">
             <div>${esc(who)}</div>
             <div>${characterCell(p, who)}</div>
-            <div class="r mono">${p.lines ? n(p.lines) : '—'}</div>
+            <div class="r mono">${p.lines ? n(p.lines) : 'â€”'}</div>
             <div class="r"><span class="share">
               <i class="${p.lines ? '' : 'quiet'}"><b style="width:${p.lines ? pct : 0}%"></b></i>
               <span class="mono" style="font-size:12px;color:var(--dim);width:34px;text-align:right">${p.lines ? `${pct}%` : ''}</span>
@@ -1378,9 +1379,9 @@ function correctionsTab() {
           </div>
           ${list.map((c) => `
             <div class="tr">
-              <div class="mono" style="font-size:14px;color:var(--text-2)">“${esc(c.wrong)}”</div>
+              <div class="mono" style="font-size:14px;color:var(--text-2)">â€œ${esc(c.wrong)}â€</div>
               <div style="font-size:15px;font-weight:500">${esc(c.right)}</div>
-              <div class="r mono" style="font-size:13px;color:var(--dim)">${c.lines == null ? '—' : `${n(c.lines)} lines`}</div>
+              <div class="r mono" style="font-size:13px;color:var(--dim)">${c.lines == null ? 'â€”' : `${n(c.lines)} lines`}</div>
               <div class="r">${can() ? `<button class="btn sm" data-act="corrections/remove"
                 data-campaign="${detail.id}" data-wrong="${esc(c.wrong)}">Remove</button>` : ''}</div>
             </div>`).join('')}
@@ -1402,7 +1403,7 @@ function correctionsTab() {
           <h4>${list.length ? plural(list.length, 'rule') : 'Nothing saved'}</h4>
           <div class="quiet" style="margin-top:8px">
             Adding a correction already rewrites this campaign's transcripts. Replay is for the sessions
-            that arrived afterwards from somewhere else — an import, or anything recovered from a crash.
+            that arrived afterwards from somewhere else â€” an import, or anything recovered from a crash.
           </div>
           ${can() && list.length ? `<button class="btn wide" style="margin-top:16px" data-act="corrections/replay"
             data-campaign="${detail.id}"
@@ -1411,7 +1412,7 @@ function correctionsTab() {
         <div class="card">
           <div class="cap">What this does not touch</div>
           <div class="quiet" style="margin-top:10px">
-            Notes already written keep the old spelling — the summariser wrote them from the transcript as
+            Notes already written keep the old spelling â€” the summariser wrote them from the transcript as
             it was. Re-summarise a session to regenerate one.
           </div>
         </div>
@@ -1448,7 +1449,7 @@ function settingsTab() {
           // The middle option is shown but never settable from here: choosing a
           // channel means listing the channels the bot may post in, which only
           // Discord can answer. It is still a state a campaign can be IN, so it
-          // has to be visible — and leaving it out was a dead end, because a
+          // has to be visible â€” and leaving it out was a dead end, because a
           // campaign posting to a chosen channel could then never be moved.
           `<div class="seg" data-seg="output">
              <button class="${mode === 'default' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
@@ -1474,7 +1475,7 @@ function settingsTab() {
           `<span class="val">${s.requireApproval ? 'on' : 'off'}</span>`)}
         ${row('Transcribe automatically', 'Only inside the window, so the PC is free while you work',
           `<div class="row-btns">
-             <span class="val">${String(s.windowStartHour ?? 0).padStart(2, '0')}:00 – ${String(s.windowEndHour ?? 0).padStart(2, '0')}:00</span>
+             <span class="val">${String(s.windowStartHour ?? 0).padStart(2, '0')}:00 â€“ ${String(s.windowEndHour ?? 0).padStart(2, '0')}:00</span>
              <span class="val">${s.weekdaysOnly ? 'weekdays' : 'any day'}</span>
            </div>`)}
         ${row('Timezone',
@@ -1486,7 +1487,7 @@ function settingsTab() {
         <div class="quiet" style="margin-top:20px;max-width:70ch">
           The window, the timezone and the approval switch are set once in <code>pi-service/.env</code> on the
           Pi, because they describe the machine rather than this campaign. Renaming, inviting a player, and
-          posting into a specific channel happen in Discord where the people they concern are —
+          posting into a specific channel happen in Discord where the people they concern are â€”
           <code>/campaign rename</code>, <code>/campaign invite</code>, <code>/campaign output</code>.
         </div>
       </div>
@@ -1522,7 +1523,7 @@ function settingsTab() {
 
 const disabledNote = () => `
   <div class="quiet" style="margin-top:18px;color:var(--brass-lit)">
-    Actions are turned off on this bot — set <code>STATUS_TOKEN</code> in <code>pi-service/.env</code>
+    Actions are turned off on this bot â€” set <code>STATUS_TOKEN</code> in <code>pi-service/.env</code>
     (and in the dashboard) to act from here.
   </div>`;
 
@@ -1531,7 +1532,7 @@ const disabledNote = () => `
 // ==========================================================================
 
 function transcriptScreen() {
-  if (!script) return '<div class="pane-main"><div class="quiet">Opening the transcript…</div></div>';
+  if (!script) return '<div class="pane-main"><div class="quiet">Opening the transcriptâ€¦</div></div>';
 
   const term = view.search.trim().toLowerCase();
   const lines = script.lines.filter((l) =>
@@ -1555,11 +1556,11 @@ function transcriptScreen() {
           ${lines.length ? lines.map((l) => `
             <div class="line">
               <span class="t">${esc(clock(l.ms))}</span>
-              <span class="who ${script.speakers.find((s) => s.userId === l.userId)?.manager ? 'gm' : ''}">${esc(l.speaker)}</span>
+              <span class="who ${script.speakers.find((s) => s.userId === l.userId)?.manager ? 'owner' : ''}">${esc(l.speaker)}</span>
               <span class="said">${highlight(l.text, term)}</span>
             </div>`).join('')
-            : `<div class="quiet" style="padding:40px 0">Nothing matches “${esc(view.search)}”.</div>`}
-          ${script.truncated ? '<div class="quiet" style="padding:20px 0">This transcript is longer than the reader shows — download the .txt for all of it.</div>' : ''}
+            : `<div class="quiet" style="padding:40px 0">Nothing matches â€œ${esc(view.search)}â€.</div>`}
+          ${script.truncated ? '<div class="quiet" style="padding:20px 0">This transcript is longer than the reader shows â€” download the .txt for all of it.</div>' : ''}
         </div>
       </div>
 
@@ -1582,7 +1583,7 @@ function transcriptScreen() {
             <div class="cap">Corrections in force</div>
             <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
               ${script.corrections.map((c) => `
-                <div style="font-size:13.5px;color:var(--text-2)">“${esc(c.wrong)}” → <b style="color:var(--text)">${esc(c.right)}</b></div>`).join('')}
+                <div style="font-size:13.5px;color:var(--text-2)">â€œ${esc(c.wrong)}â€ â†’ <b style="color:var(--text)">${esc(c.right)}</b></div>`).join('')}
             </div>
             <div class="quiet" style="margin-top:12px">
               These were applied as the transcript was written, so what you are reading is already corrected.
@@ -1592,13 +1593,13 @@ function transcriptScreen() {
           <div class="cap" style="margin-bottom:12px">This session</div>
           <div class="mono" style="font-size:12.5px;color:var(--text-2);line-height:2">
             ${esc(longDate(script.startedAt))}<br>
-            ${esc(n(script.total))} lines · ${plural(script.speakers.length, 'voice')}<br>
+            ${esc(n(script.total))} lines Â· ${plural(script.speakers.length, 'voice')}<br>
             ${esc(script.channel ? `#${script.channel}` : '')}
           </div>
         </div>
         <div class="quiet" style="margin-top:auto">
           ${script.hasNotes
-            ? 'The notes for this session are written — close this to read them.'
+            ? 'The notes for this session are written â€” close this to read them.'
             : 'No notes exist for this session yet.'}
         </div>
       </aside>`;
@@ -1635,7 +1636,7 @@ function serversScreen() {
               <div>
                 <div style="font-family:var(--serif);font-size:24px">${esc(g.name || g.id)}</div>
                 <div class="mono" style="font-size:11.5px;color:var(--dim);margin-top:4px">
-                  ${plural(here.length, 'campaign')} · ${esc(g.id)}
+                  ${plural(here.length, 'campaign')} Â· ${esc(g.id)}
                 </div>
               </div>
               ${g.recording ? '<span class="pill recording" style="margin-left:0">recording now</span>' : ''}
@@ -1652,13 +1653,13 @@ function serversScreen() {
                   <span class="dot ${c.recording ? 'live' : c.claimed ? 'warn' : ''}"></span>
                   <button class="charbtn" data-campaign="${c.id}" style="font-size:15px;font-weight:500">${esc(c.name || 'unnamed')}</button>
                   <span class="mono" style="font-size:12px;color:var(--dim)">
-                    ${esc(c.channel || '')}${c.output === 'dm' ? ' → DM' : ''}
+                    ${esc(c.channel || '')}${c.output === 'dm' ? ' â†’ DM' : ''}
                   </span>
                   <span class="mono" style="margin-left:auto;font-size:12px;color:var(--dim)">
                     ${c.sessions ? plural(c.sessions, 'session') : 'no sessions'}
                   </span>
                 </div>`).join('')
-                : '<div class="quiet" style="margin-top:12px">Quill is here but no campaign has been made yet — <code>/campaign create</code>.</div>'}
+                : '<div class="quiet" style="margin-top:12px">Quill is here but no campaign has been made yet â€” <code>/campaign create</code>.</div>'}
               ${here.length > 1 ? `<div class="quiet" style="margin-top:14px">
                 These campaigns share one server. Quill decides which one it is recording from who joins.
               </div>` : ''}
@@ -1697,13 +1698,13 @@ function accessScreen() {
       </h1>
       <div class="say-2">
         ${on
-          ? 'A token is set on the bot, and nginx adds it to every request on the way through — so it is never in this page and never in your browser. Anyone who can open this page can approve a summary, spend an API call, and pause the queue.'
+          ? 'A token is set on the bot, and nginx adds it to every request on the way through â€” so it is never in this page and never in your browser. Anyone who can open this page can approve a summary, spend an API call, and pause the queue.'
           : 'No STATUS_TOKEN is set on the bot, so every action is refused rather than treated as open. Reading is allowed; nothing here can change anything.'}
       </div>
 
       <div class="steps" style="margin-top:30px">
         <div>
-          <span class="mark ${on ? 'done' : ''}">${on ? '✓' : '!'}</span>
+          <span class="mark ${on ? 'done' : ''}">${on ? 'âœ“' : '!'}</span>
           <div style="flex:1"><div class="what">Actions</div>
             <div class="sub" style="font-family:var(--sans);font-size:13px">
               ${on ? 'Approvals, corrections, pausing and imports all work from here.'
@@ -1711,7 +1712,7 @@ function accessScreen() {
             </div></div>
         </div>
         <div>
-          <span class="mark done">✓</span>
+          <span class="mark done">âœ“</span>
           <div style="flex:1"><div class="what">Audio never leaves your network</div>
             <div class="sub" style="font-family:var(--sans);font-size:13px">
               Recording, storage and transcription are all on hardware you own. Only finished transcript
@@ -1719,7 +1720,7 @@ function accessScreen() {
             </div></div>
         </div>
         <div>
-          <span class="mark done">✓</span>
+          <span class="mark done">âœ“</span>
           <div style="flex:1"><div class="what">The page is behind a password</div>
             <div class="sub" style="font-family:var(--sans);font-size:13px">
               nginx allows the LAN outright and asks everyone else for the htpasswd credential.
@@ -1769,9 +1770,9 @@ function renderModal() {
           <div class="field">
             <label for="imp-url">The audio</label>
             <input class="in mono" id="imp-url" name="url" type="url" required
-                   placeholder="https://…/session-15.m4a">
+                   placeholder="https://â€¦/session-15.m4a">
             <div class="mono" style="font-size:11px;color:var(--dim);margin-top:9px">
-              a direct link Quill can download · m4a · mp3 · wav
+              a direct link Quill can download Â· m4a Â· mp3 Â· wav
             </div>
           </div>
           <div class="field">
@@ -1790,7 +1791,7 @@ function renderModal() {
             <button class="btn go big" type="submit" ${busy || !can() ? 'disabled' : ''}>Start the import</button>
             <button class="btn big" type="button" data-close-modal>Cancel</button>
             <span class="mono" style="font-size:11.5px;color:var(--dim);margin-left:auto">
-              ${status?.working?.transcribing?.length ? 'joins the queue behind what is transcribing' : 'next in the queue · nothing is transcribing'}
+              ${status?.working?.transcribing?.length ? 'joins the queue behind what is transcribing' : 'next in the queue Â· nothing is transcribing'}
             </span>
           </div>
         </form>
@@ -1813,7 +1814,7 @@ function paint() {
 
   const rec = status?.recording?.length;
   const needs = (status?.campaigns ?? []).reduce((sum, c) => sum + (c.awaiting || 0), 0);
-  document.title = rec ? '● Recording — Quill' : needs ? `(${needs}) Quill` : 'Quill';
+  document.title = rec ? 'â— Recording â€” Quill' : needs ? `(${needs}) Quill` : 'Quill';
 }
 
 // ==========================================================================
@@ -1838,7 +1839,7 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
     detail = await get(`/campaign?id=${id}`);
   } catch (err) {
     detail = null;
-    toast(`Couldn't load that campaign — ${err.message}`, false);
+    toast(`Couldn't load that campaign â€” ${err.message}`, false);
   }
   // Land on something worth reading rather than an empty pane: whatever is
   // waiting on a decision, else the most recent session that has notes.
@@ -1891,7 +1892,7 @@ async function syncNotes() {
       script = await get(`/transcript?meeting=${s.meetingId}&format=json`);
     }
   } catch (err) {
-    toast(`Couldn't open that session — ${err.message}`, false);
+    toast(`Couldn't open that session â€” ${err.message}`, false);
   }
 }
 
@@ -1904,7 +1905,7 @@ async function openTranscript(meetingId) {
   try {
     script = await get(`/transcript?meeting=${meetingId}&format=json`);
   } catch (err) {
-    toast(`Couldn't open that transcript — ${err.message}`, false);
+    toast(`Couldn't open that transcript â€” ${err.message}`, false);
     view.screen = 'campaign';
   }
   paint();
@@ -1940,7 +1941,7 @@ async function tick() {
 
     // Somebody is mid-sentence in a correction, a character name or the
     // transcript search. Rebuilding the pane under them would throw the text
-    // away and move the caret, which is worse than a five-second-old panel —
+    // away and move the caret, which is worse than a five-second-old panel â€”
     // so the poll updates only the parts with nothing to type in.
     if (typing()) { renderRail(); renderTop(); renderBanner(); return; }
     paint();
@@ -1949,7 +1950,7 @@ async function tick() {
     // saying so: a dashboard confidently showing "not recording" while it has
     // no idea is worse than one that admits it lost contact.
     document.body.classList.add('stale');
-    document.title = 'Quill — offline';
+    document.title = 'Quill â€” offline';
     toastOffline(err.message);
   }
 }
@@ -1958,7 +1959,7 @@ let offlineShown = 0;
 function toastOffline(message) {
   if (Date.now() - offlineShown < 30000) return;
   offlineShown = Date.now();
-  toast(`Can't reach the bot at ${API} — ${message}. Showing what it last said, ${since(lastSeen)}.`, false);
+  toast(`Can't reach the bot at ${API} â€” ${message}. Showing what it last said, ${since(lastSeen)}.`, false);
 }
 
 // ==========================================================================
@@ -1984,7 +1985,7 @@ async function send(action, body) {
     const payload = await res.json().catch(() => ({}));
     toast(payload.message || `HTTP ${res.status}`, res.ok && payload.ok !== false);
   } catch (err) {
-    toast(`Couldn't reach the bot — ${err.message}`, false);
+    toast(`Couldn't reach the bot â€” ${err.message}`, false);
     return;
   }
   // Straight to a refresh rather than waiting for the next poll: the whole
@@ -1995,7 +1996,7 @@ async function send(action, body) {
   paint();
 }
 
-// The transcript needs the auth header, which a plain <a href> cannot carry —
+// The transcript needs the auth header, which a plain <a href> cannot carry â€”
 // so it is fetched and handed to the browser as a blob rather than linked.
 async function downloadTranscript(meetingId) {
   try {
@@ -2008,7 +2009,7 @@ async function downloadTranscript(meetingId) {
     a.click();
     URL.revokeObjectURL(url);
   } catch (err) {
-    toast(`Couldn't fetch that transcript — ${err.message}`, false);
+    toast(`Couldn't fetch that transcript â€” ${err.message}`, false);
   }
 }
 
@@ -2017,7 +2018,7 @@ async function copy(text, said) {
     await navigator.clipboard.writeText(text);
     toast(said, true);
   } catch {
-    toast('The browser refused clipboard access — this needs https or localhost.', false);
+    toast('The browser refused clipboard access â€” this needs https or localhost.', false);
   }
 }
 
@@ -2044,7 +2045,7 @@ function notesAsMarkdown() {
 
 // One listener for the whole page rather than one per render. Everything here
 // is rebuilt from the poll every few seconds, so a handler attached to a button
-// would be thrown away with it — and a click landing in the gap between two
+// would be thrown away with it â€” and a click landing in the gap between two
 // renders would do nothing at all.
 document.addEventListener('click', async (event) => {
   const t = event.target;
@@ -2060,7 +2061,7 @@ document.addEventListener('click', async (event) => {
   if (edit) { view.editing = edit.dataset.edit; return paint(); }
 
   if (t.closest('[data-invite]')) {
-    return copy('/campaign invite', 'Invitations are a DM, so they are sent from Discord — /campaign invite copied.');
+    return copy('/campaign invite', 'Invitations are a DM, so they are sent from Discord â€” /campaign invite copied.');
   }
   if (t.closest('[data-copy-notes]')) {
     return copy(notesAsMarkdown(), 'Notes copied as markdown.');
@@ -2075,7 +2076,7 @@ document.addEventListener('click', async (event) => {
     view.screen = nav.dataset.screen;
     paint();
     // Coming back to a session that is waiting for approval, its first few
-    // lines have to be fetched again — the transcript reader borrowed the same
+    // lines have to be fetched again â€” the transcript reader borrowed the same
     // slot to hold the whole thing.
     if (view.screen === 'campaign') { await syncNotes(); paint(); }
     return;
@@ -2117,7 +2118,7 @@ document.addEventListener('click', async (event) => {
   if (d.paused) body.paused = d.paused === 'true';
 
   const was = btn.textContent;
-  btn.disabled = true; btn.textContent = '…';
+  btn.disabled = true; btn.textContent = 'â€¦';
   await send(d.act, body);
   btn.disabled = false; btn.textContent = was;
 });
@@ -2142,7 +2143,7 @@ document.addEventListener('submit', async (event) => {
 });
 
 // Searching re-renders in place rather than on submit, and keeps the caret
-// where it was — the list under it is the answer as you type.
+// where it was â€” the list under it is the answer as you type.
 document.addEventListener('input', (event) => {
   if (event.target.id !== 'tsearch') return;
   view.search = event.target.value;

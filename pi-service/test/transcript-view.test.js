@@ -88,9 +88,10 @@ test('who spoke is counted in lines and adds up', async (t) => {
   assert.equal(view.speakers.reduce((sum, s) => sum + s.share, 0), 100);
 });
 
-// The bar chart is unreadable unless you know which bar is the person running
-// the game, because they always talk about twice as much as anyone else.
-test('the person who runs the game is marked', async (t) => {
+// Whose account owns the campaign, marked as a fact. Not "the DM" — on a real
+// table the manager and the person narrating are often different accounts, so
+// the mark says who claimed the campaign and concludes nothing else.
+test("the campaign's manager is marked among the speakers", async (t) => {
   const { db, campaignId } = await harness(t);
   const meetingId = recorded(db, campaignId, LINES);
 
