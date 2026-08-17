@@ -26,6 +26,38 @@ function hostOf(rawUrl) {
   }
 }
 
+// What Quill is allowed to do on one server.
+//
+// The failure this exists to catch is silent: a bot that cannot post in the
+// channel it recorded in finishes the whole pipeline — records, transcribes,
+// pays for a summary — and then drops the notes on the floor with a line in a
+// log nobody reads. Discord shows permissions per role, per channel, on a
+// screen you have to go looking for.
+//
+// Guild level, not channel level, on purpose: a channel override can still bite
+// after this says yes, and claiming otherwise would be worse than being clear
+// about what was checked. Everything is guarded — a client shape without a
+// cached member answers null, meaning "not checked", which the page renders as
+// nothing rather than as a problem.
+const NEEDED = [
+  ['Connect', 'Join voice channels'],
+  ['Speak', 'Stay in voice while recording'],
+  ['ViewChannel', 'See the channels it records in'],
+  ['SendMessages', 'Post the notes'],
+  ['AttachFiles', 'Attach a transcript'],
+];
+
+function permissionsOf(guild) {
+  const held = guild?.members?.me?.permissions;
+  if (!held || typeof held.has !== 'function') return null;
+  try {
+    return NEEDED.map(([flag, what]) => ({ what, ok: held.has(flag) }));
+  } catch {
+    // A permission name this discord.js does not know is not worth a 500.
+    return null;
+  }
+}
+
 function sessionView(guildId, session, guildName, now) {
   const startedMs = session.startedAtMs ?? null;
   return {
@@ -51,7 +83,11 @@ export function buildStatus({
   startedAtMs = now,
 }) {
   const guilds = client?.guilds?.cache
-    ? [...client.guilds.cache.values()].map((g) => ({ id: g.id, name: g.name }))
+    ? [...client.guilds.cache.values()].map((g) => ({
+        id: g.id,
+        name: g.name,
+        permissions: permissionsOf(g),
+      }))
     : [];
 
   const recording = [...activeSessions.entries()].map(([guildId, session]) =>

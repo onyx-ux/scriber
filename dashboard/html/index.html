@@ -1620,6 +1620,7 @@ function serversScreen() {
       </div>
       ${servers.map((g) => {
         const here = (status.campaigns ?? []).filter((c) => c.guildId === g.id);
+        const missing = (g.permissions ?? []).filter((p) => !p.ok);
         return `
           <div class="card" style="margin-top:24px;padding:26px 28px">
             <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
@@ -1633,8 +1634,13 @@ function serversScreen() {
                 </div>
               </div>
               ${g.recording ? '<span class="pill recording" style="margin-left:0">recording now</span>' : ''}
+              ${missing.length ? `<span class="pill approval" style="margin-left:0">${
+                missing.length === 1 ? 'needs one permission' : `needs ${missing.length} permissions`
+              }</span>` : ''}
             </div>
-            <div style="border-top:1px solid var(--line);margin-top:20px;padding-top:18px">
+            <div style="border-top:1px solid var(--line);margin-top:20px;padding-top:18px;
+                        display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap">
+              <div style="flex:1;min-width:280px">
               <div class="cap">Campaigns here</div>
               ${here.length ? here.map((c) => `
                 <div style="display:flex;align-items:baseline;gap:12px;margin-top:12px;flex-wrap:wrap">
@@ -1651,6 +1657,24 @@ function serversScreen() {
               ${here.length > 1 ? `<div class="quiet" style="margin-top:14px">
                 These campaigns share one server. Quill decides which one it is recording from who joins.
               </div>` : ''}
+              </div>
+              ${g.permissions ? `
+                <div style="flex:0 0 340px">
+                  <div class="cap">Permissions</div>
+                  <div style="display:flex;flex-direction:column;gap:9px;margin-top:12px">
+                    ${g.permissions.map((p) => `
+                      <div style="display:flex;gap:12px;align-items:baseline;font-size:13.5px;
+                                  color:${p.ok ? 'var(--text-2)' : 'var(--brass-lit)'}">
+                        <span class="mono" style="font-size:11px;width:22px;flex:0 0 22px;
+                              color:${p.ok ? 'var(--sage-lit)' : 'var(--amber)'}">${p.ok ? 'ok' : 'no'}</span>
+                        <span>${esc(p.what)}</span>
+                      </div>`).join('')}
+                  </div>
+                  ${missing.length ? `<div class="quiet" style="margin-top:12px">
+                    Granted per role in Discord's server settings. Until then a session can record and still
+                    fail to arrive.
+                  </div>` : ''}
+                </div>` : ''}
             </div>
           </div>`;
       }).join('')}

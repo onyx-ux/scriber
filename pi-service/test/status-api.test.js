@@ -306,3 +306,58 @@ test('the snapshot contains no secrets', async (t) => {
     assert.ok(!json.includes(secret), `${secret} leaked into the status payload`);
   }
 });
+
+// --- what Quill is allowed to do on each server ---
+//
+// The failure this catches is silent: a bot that cannot post finishes the whole
+// pipeline — records, transcribes, pays for a summary — and then drops the
+// notes with a line in a log nobody reads.
+
+test('a server reports which permissions the bot actually holds', async (t) => {
+  const db = await freshDb(t);
+  const client = {
+    user: { tag: 'Quill#0233' },
+    guilds: {
+      cache: new Map([['g1', {
+        id: 'g1',
+        name: 'The Table',
+        members: { me: { permissions: { has: (flag) => flag !== 'SendMessages' } } },
+      }]]),
+    },
+  };
+
+  const [server] = buildStatus({ db, cfg, client }).servers;
+  assert.equal(server.permissions.find((p) => p.what === 'Post the notes').ok, false);
+  assert.ok(server.permissions.every((p) => p.what !== 'Post the notes' ? p.ok : true));
+});
+
+// null means "not checked", which the page renders as nothing. A client shape
+// with no cached member must not read as "everything is missing" — that would
+// put a red flag on a healthy server every time the cache is cold.
+test('a server whose permissions cannot be read says so rather than guessing', async (t) => {
+  const db = await freshDb(t);
+
+  for (const guild of [
+    { id: 'g1', name: 'The Table' },
+    { id: 'g1', name: 'The Table', members: {} },
+    { id: 'g1', name: 'The Table', members: { me: { permissions: null } } },
+    { id: 'g1', name: 'The Table', members: { me: { permissions: { has: () => { throw new Error('bad flag'); } } } } },
+  ]) {
+    const client = { user: { tag: 'q' }, guilds: { cache: new Map([['g1', guild]]) } };
+    assert.equal(buildStatus({ db, cfg, client }).servers[0].permissions, null);
+  }
+});
+
+// The whisper URL is published to a page that can be exposed, so a credential
+// someone put in that config value must never travel with it.
+test('the transcriber address is published as host and port, never with credentials', async (t) => {
+  const db = await freshDb(t);
+
+  const withSecret = { ...cfg, whisperServerUrl: 'http://user:hunter2@192.168.1.24:9001/' };
+  const { health } = buildStatus({ db, cfg: withSecret, client: null });
+  assert.equal(health.whisperServerHost, '192.168.1.24:9001');
+  assert.doesNotMatch(JSON.stringify(health), /hunter2/);
+
+  assert.equal(buildStatus({ db, cfg: { ...cfg, whisperServerUrl: 'not a url' }, client: null }).health.whisperServerHost, null);
+  assert.equal(buildStatus({ db, cfg, client: null }).health.whisperServerHost, null);
+});
