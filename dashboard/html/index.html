@@ -1539,7 +1539,12 @@ function invitePanel() {
 // six players was six always-open text boxes, which read as a data-entry
 // screen for something you set once.
 function characterCell(p, who) {
-  if (!canManage()) return p.characterName ? esc(p.characterName) : '<span class="unset">not set</span>';
+  // Your own character is yours to name wherever you are welcome, which is
+  // what /campaign setchar has always done. Anybody else's needs the table.
+  const mine = me?.signedIn && p.userId && p.userId === me.userId;
+  if (!canManage() && !mine) {
+    return p.characterName ? esc(p.characterName) : '<span class="unset">not set</span>';
+  }
   if (view.editing === p.userId) {
     return `<form class="row-btns" data-act="roster/character" data-campaign="${detail.id}" data-user="${esc(p.userId)}">
       <input class="in" name="name" style="width:140px" value="${esc(p.characterName || '')}"

@@ -116,9 +116,23 @@ const ACTION_NEEDS = {
   'campaign/output': 'manage',
 };
 
+// The two actions you may aim at yourself wherever you are welcome.
+//
+// /campaign setchar has always let a player name their own character, and it
+// is obviously theirs to name — the dashboard being stricter than the slash
+// command for the same act was an accident of grouping it with the rest of the
+// roster, not a decision.
+const OWN_BUSINESS = new Set(['roster/character', 'roster/forget']);
+
 function mayAct({ pathname, body, viewer, db }) {
   const name = /^\/actions\/(.+?)\/?$/.exec(pathname)?.[1];
   if (!name) return null; // unknown path — runAction 404s it properly
+
+  if (OWN_BUSINESS.has(name) && viewer.userId && body?.userId === viewer.userId) {
+    return maySee(viewer, Number(body?.campaignId))
+      ? null
+      : { status: 403, message: 'That is not a table you play at.' };
+  }
 
   const needs = ACTION_NEEDS[name] ?? 'machinery';
 
@@ -363,6 +377,9 @@ export function startStatusServer({
     if (url.pathname === '/me') {
       send(res, 200, {
         signedIn: Boolean(viewer.userId),
+        // Their own id, so the page can tell "this row is you" from "this row
+        // is somebody else" without guessing from a display name.
+        userId: viewer.userId,
         username: viewer.username,
         level: viewer.level,
         sees: LEVEL_WORDS[viewer.level],

@@ -298,3 +298,35 @@ test('signing in still goes through the door', async (t) => {
   assert.equal(res.status, 401);
   assert.equal(discord.sent.length, 0, 'and no DM was sent');
 });
+
+// /campaign setchar has always let a player name their own character, and it
+// is obviously theirs to name. The dashboard being stricter than the slash
+// command for the same act was an accident, not a decision.
+test('a player may set their own character name but nobody else\'s', async (t) => {
+  const { base, discord, db, mine } = await serving(t);
+  const cookie = await signIn(base, discord);
+
+  const own = await json(await call(base, '/actions/roster/character', {
+    method: 'POST', cookie, body: { campaignId: mine, userId: PLAYER, name: 'Safriel' },
+  }));
+  assert.equal(own.status, 200, own.body.message);
+  assert.equal(db.getCharacterName(mine, PLAYER), 'Safriel');
+
+  const theirs = await json(await call(base, '/actions/roster/character', {
+    method: 'POST', cookie, body: { campaignId: mine, userId: CREATOR, name: 'Not Yours' },
+  }));
+  assert.equal(theirs.status, 403);
+  assert.equal(db.getCharacterName(mine, CREATOR), null);
+});
+
+test('a player cannot name themselves at a table they do not play at', async (t) => {
+  const { base, discord, db, theirs } = await serving(t);
+  const cookie = await signIn(base, discord);
+
+  const res = await json(await call(base, '/actions/roster/character', {
+    method: 'POST', cookie, body: { campaignId: theirs, userId: PLAYER, name: 'Gatecrasher' },
+  }));
+
+  assert.equal(res.status, 403);
+  assert.equal(db.getCharacterName(theirs, PLAYER), null);
+});
