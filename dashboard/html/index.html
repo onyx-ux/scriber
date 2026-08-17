@@ -1320,13 +1320,20 @@ function rosterTab() {
               <span class="mono" style="font-size:12px;color:var(--dim);width:34px;text-align:right">${p.lines ? `${pct}%` : ''}</span>
             </span></div>
             <div class="r" style="display:flex;justify-content:flex-end;align-items:center;gap:10px">
-              <span class="as-val ${CONSENT_CLASS[p.consent.state] || 'never'}">${esc(p.consent.label)}</span>
-              ${p.consent.mayRecord ? '' : '<button class="btn sm" data-invite>Invite</button>'}
+              <span class="as-val ${p.consent.withdrawn ? 'declined' : CONSENT_CLASS[p.consent.state] || 'never'}">${esc(p.consent.label)}</span>
+              ${p.consent.mayRecord || p.consent.withdrawn ? '' : '<button class="btn sm" data-invite>Invite</button>'}
             </div>
           </div>`;
         }).join('')}
       </div>
       ${roster.length ? '' : '<div class="quiet" style="padding:20px 0">Nobody at this table yet.</div>'}
+      ${roster.some((p) => p.consent.withdrawn) ? `
+        <div style="border-left:2px solid var(--edge);padding-left:16px;margin-top:26px;max-width:70ch">
+          <div class="quiet">
+            There is no control here to put someone back. If they want to be recorded again they run
+            <code>/campaign consent</code> themselves — asking on their behalf is a conversation, not a button.
+          </div>
+        </div>` : ''}
       ${can() ? '' : disabledNote()}
     </div>`;
 }

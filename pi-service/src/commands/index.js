@@ -35,7 +35,16 @@ import {
   declinedMessage,
   expiredMessage,
   describeUnrecorded,
+  WITHDRAW_PREFIX,
+  parseWithdrawButton,
+  buildStandingMessage,
+  buildErasePlan,
+  buildErasedMessage,
+  buildStoppedMessage,
+  buildResumedMessage,
+  buildManagerNotice,
 } from '../campaign/consent.js';
+import { standing, stopRecording, resumeRecording, describePlan, erase } from '../campaign/withdrawal.js';
 import { exportCampaignSite } from '../export/site.js';
 import {
   dashboardPointer,
@@ -111,6 +120,12 @@ const InteractionContext = { GUILD: 0, BOT_DM: 1, PRIVATE_CHANNEL: 2 };
 // actually played in.
 const PLAYER_SUBCOMMANDS = new Set([
   'recap', 'funny', 'search', 'ask', 'history', 'stats', 'npcs', 'locations', 'archive', 'export',
+  // `consent` sits at this tier rather than MEMBER on purpose. It has to work
+  // in a DM — the invitation arrived in one, and someone withdrawing may
+  // reasonably not want to do it in front of the table — and MEMBER refuses
+  // outside a server. It is also the one command that must remain reachable by
+  // a person who has just told the bot to stop recording them.
+  'consent',
 ]);
 
 // MEMBER. Acts on the table you are sitting at, so it needs a campaign you are
@@ -295,6 +310,12 @@ export const commandDefs = [
         s
           .setName('whoami')
           .setDescription('Show what name you currently appear as in transcripts and notes')
+          .addStringOption(campaignOption)
+      )
+      .addSubcommand((s) =>
+        s
+          .setName('consent')
+          .setDescription('See whether you are being recorded, and stop it or take back what you have said')
           .addStringOption(campaignOption)
       )
 
@@ -519,6 +540,7 @@ const CAMPAIGN_ROUTES = {
 
   setchar: (i, db) => handleSetCharacter(i, db),
   whoami: (i, db) => handleWhoAmI(i, db),
+  consent: (i, db, cfg) => handleConsent(i, db, cfg),
 
   recap: (i, db) => handleRecap(i, db),
   funny: (i, db) => handleFunny(i, db),
@@ -1342,8 +1364,108 @@ async function handleConsentButton(interaction, db) {
   });
 }
 
+// --- taking consent back -------------------------------------------------
+//
+// Everything in this flow is ephemeral. Whether you are being recorded, and
+// whether you have decided to stop, is nobody else's business — least of all
+// the channel's, where it would read as an announcement and turn a private
+// decision into an event other people have opinions about.
+
+async function handleConsent(interaction, db, cfg) {
+  const campaignRow = campaign(interaction);
+  const now = standing(db, {
+    campaignId: campaignRow.id,
+    userId: interaction.user.id,
+    retentionDays: cfg.audioRetentionDays ?? null,
+  });
+
+  await interaction.reply({
+    ...buildStandingMessage(now, campaignLabel(campaignRow)),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+// The buttons under it. Each one edits the message it came from rather than
+// posting a new one, so the flow is a single card that changes rather than a
+// thread of decisions left in somebody's DMs.
+async function handleWithdrawButton(interaction, db, cfg) {
+  const parsed = parseWithdrawButton(interaction.customId);
+  if (!parsed) return interaction.update({ content: '⚠️ Unrecognised button.', components: [] });
+
+  const campaignRow = db.getCampaign(parsed.campaignId);
+  if (!campaignRow) {
+    return interaction.update({ content: '⚠️ That campaign no longer exists.', components: [] });
+  }
+  const label = campaignLabel(campaignRow);
+  const userId = interaction.user.id;
+
+  if (parsed.action === 'cancel') {
+    const now = standing(db, { campaignId: parsed.campaignId, userId, retentionDays: cfg.retentionDays ?? null });
+    return interaction.update(buildStandingMessage(now, label));
+  }
+
+  if (parsed.action === 'stop') {
+    const result = stopRecording(db, { campaignId: parsed.campaignId, userId });
+    if (!result.ok) return interaction.update({ content: result.message, components: [] });
+    const after = standing(db, { campaignId: parsed.campaignId, userId });
+    console.log(`[consent] ${userId} stopped recording in campaign ${parsed.campaignId}`);
+    return interaction.update({ content: buildStoppedMessage(label, after), components: [] });
+  }
+
+  if (parsed.action === 'resume') {
+    const result = resumeRecording(db, { campaignId: parsed.campaignId, userId });
+    if (!result.ok) return interaction.update({ content: result.message, components: [] });
+    console.log(`[consent] ${userId} resumed recording in campaign ${parsed.campaignId}`);
+    return interaction.update({ content: buildResumedMessage(label), components: [] });
+  }
+
+  // The confirmation is counted fresh rather than carried in the button, so the
+  // numbers shown are true at the moment of the click even if the card has been
+  // sitting open through another session.
+  if (parsed.action === 'erase') {
+    const plan = describePlan(db, { campaignId: parsed.campaignId, userId });
+    if (!plan || plan.lines === 0) {
+      return interaction.update({ content: 'There is nothing of yours on file to take out.', components: [] });
+    }
+    return interaction.update(buildErasePlan(plan, label));
+  }
+
+  // parsed.action === 'confirm'
+  //
+  // Stopping first: if the erase throws halfway, the worst state to be left in
+  // is one where the record was deleted but the microphone is still open.
+  stopRecording(db, { campaignId: parsed.campaignId, userId });
+  const result = erase(db, { campaignId: parsed.campaignId, userId });
+  if (!result.ok) return interaction.update({ content: result.message, components: [] });
+
+  console.log(
+    `[consent] ${userId} erased ${result.lines} line(s) from ${result.sessions} transcript(s) in campaign ${parsed.campaignId}`
+  );
+
+  await interaction.update({ content: buildErasedMessage(result, label), components: [] });
+
+  // The person running the game is told what changed, never who or why. Their
+  // transcripts moved under them and a recap that no longer matches what they
+  // remember is otherwise a bug they will spend an evening chasing.
+  await tellManager(interaction, campaignRow, result, label);
+}
+
+async function tellManager(interaction, campaignRow, result, label) {
+  if (!campaignRow.manager_user_id || campaignRow.manager_user_id === interaction.user.id) return;
+  try {
+    const manager = await interaction.client.users.fetch(campaignRow.manager_user_id);
+    await manager.send(buildManagerNotice({ campaignName: label, result }));
+  } catch (err) {
+    // A manager with DMs closed must not turn a completed erasure into a
+    // failure. The work is done; this is a courtesy.
+    console.warn(`[consent] could not tell the manager of campaign ${campaignRow.id}: ${err.message}`);
+  }
+}
+
 async function handleApprovalButton(interaction, db, cfg) {
   const { customId } = interaction;
+
+  if (customId.startsWith(WITHDRAW_PREFIX)) return handleWithdrawButton(interaction, db, cfg);
 
   // The invited person answering. Handled before everything else because it
   // arrives in a DM rather than in a server, so none of the operator buttons

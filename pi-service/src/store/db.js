@@ -436,6 +436,22 @@ const CAMPAIGN_VIEW = `
          (SELECT MAX(m.started_at) FROM meetings m WHERE m.campaign_id = c.id) AS last_session_at
     FROM campaigns c`;
 
+// Apply a function to every string inside a parsed structure, leaving the
+// structure itself alone.
+//
+// Used to redact a name from a stored recap. The recap's shape is model output
+// that has drifted across prompt revisions — arrays that were strings, objects
+// that were arrays — so this cannot assume any particular field layout and
+// simply walks whatever is there.
+function walkStrings(value, rewrite) {
+  if (typeof value === 'string') return rewrite(value);
+  if (Array.isArray(value)) return value.map((item) => walkStrings(item, rewrite));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walkStrings(v, rewrite)]));
+  }
+  return value;
+}
+
 export function openDb(path) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
@@ -687,6 +703,37 @@ function wrap(db) {
         ).run(campaignId, userId);
       }
       return { ...row, state: granted ? 'granted' : 'declined' };
+    }),
+
+    // The person deciding for themselves, unprompted.
+    //
+    // decideConsent answers an invitation, so it refuses when there is no live
+    // one — which is right for a button in a DM and wrong for /campaign
+    // consent, where the two people who most need it are someone who already
+    // accepted and is taking it back, and someone who was never asked and wants
+    // to settle it now. Neither has an open invite.
+    //
+    // Deliberately a separate method rather than a flag on decideConsent: this
+    // one is only ever called with the caller's OWN user id, and keeping it
+    // apart makes a future change that breaks that rule obvious.
+    setConsent: db.transaction((campaignId, userId, granted, nowIso = new Date().toISOString()) => {
+      db.prepare(
+        `INSERT INTO campaign_consent (campaign_id, user_id, state, invited_at, decided_at)
+         VALUES (?, ?, ?, datetime('now'), ?)
+         ON CONFLICT(campaign_id, user_id) DO UPDATE SET
+           state = excluded.state, decided_at = excluded.decided_at, expires_at = NULL`
+      ).run(campaignId, userId, granted ? 'granted' : 'declined', nowIso);
+
+      // Same rule as decideConsent: agreeing puts you at the table, declining
+      // does not throw you off it. Being on the roster is not being recorded,
+      // and quietly un-enrolling someone would take away their /recap too.
+      if (granted) {
+        db.prepare(
+          `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, 'self')
+           ON CONFLICT(campaign_id, user_id) DO NOTHING`
+        ).run(campaignId, userId);
+      }
+      return db.prepare(`SELECT * FROM campaign_consent WHERE campaign_id = ? AND user_id = ?`).get(campaignId, userId);
     }),
 
     // The one question the capture path asks, and the only state that answers
@@ -1351,6 +1398,103 @@ function wrap(db) {
         )
         .all({ campaignId });
     },
+
+    // --- one person's footprint in a campaign, and removing it ---
+    //
+    // Consent can be taken back. Everything here exists so that "take out what
+    // you have" is a thing the bot can actually do, and so the person asking is
+    // told the true size of it first rather than after.
+
+    // What this person has said here: how many lines, across how many sessions,
+    // and the name those lines are filed under.
+    contributionOf(campaignId, userId) {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS lines, COUNT(DISTINCT u.meeting_id) AS sessions
+             FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.campaign_id = ? AND u.user_id = ?`
+        )
+        .get(campaignId, userId);
+
+      const named = db
+        .prepare(
+          `SELECT u.display_name FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.campaign_id = ? AND u.user_id = ?
+            ORDER BY u.id DESC LIMIT 1`
+        )
+        .get(campaignId, userId);
+
+      return {
+        lines: row?.lines ?? 0,
+        sessions: row?.sessions ?? 0,
+        displayName: named?.display_name ?? null,
+      };
+    },
+
+    // Delete every line this person spoke in this campaign.
+    //
+    // One transaction, and scoped by campaign as hard as the correction
+    // rewriter is: agreeing to be recorded at one table and withdrawing at
+    // another are separate decisions, and deleting across both would destroy a
+    // record nobody asked to have destroyed.
+    //
+    // Returns which meetings were touched, because their notes were written
+    // from a transcript that no longer says the same thing.
+    eraseSpeaker: db.transaction((campaignId, userId) => {
+      const meetings = db
+        .prepare(
+          `SELECT DISTINCT u.meeting_id AS id FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.campaign_id = ? AND u.user_id = ?`
+        )
+        .all(campaignId, userId)
+        .map((r) => r.id);
+
+      const removed = db
+        .prepare(
+          `DELETE FROM utterances
+            WHERE user_id = ?
+              AND meeting_id IN (SELECT id FROM meetings WHERE campaign_id = ?)`
+        )
+        .run(userId, campaignId).changes;
+
+      return { lines: removed, meetings };
+    }),
+
+    // Rewrite the stored recaps of the given meetings.
+    //
+    // `rewrite` is passed in and applied to every string INSIDE the parsed
+    // JSON, never to the raw blob: a regex over the serialised text would
+    // happily corrupt escaping and leave a summary that no longer parses,
+    // which is exactly the state notes-view.js has to render as "unreadable".
+    redactSummaries: db.transaction((meetingIds, rewrite) => {
+      const read = db.prepare(`SELECT id, summary_json FROM meetings WHERE id = ?`);
+      const write = db.prepare(`UPDATE meetings SET summary_json = ? WHERE id = ?`);
+
+      let changed = 0;
+      for (const id of meetingIds) {
+        const row = read.get(id);
+        if (!row?.summary_json) continue;
+
+        let notes;
+        try {
+          notes = JSON.parse(row.summary_json);
+        } catch {
+          // Already unreadable. Leaving it alone is the honest outcome: this
+          // cannot promise to have redacted something it cannot parse.
+          continue;
+        }
+
+        const next = JSON.stringify(walkStrings(notes, rewrite));
+        if (next !== row.summary_json) {
+          write.run(next, id);
+          changed += 1;
+        }
+      }
+      return changed;
+    }),
 
     // --- most recent completed meeting, for /recap ---
 

@@ -168,3 +168,30 @@ test('one campaign never reports another table', async (t) => {
   assert.deepEqual(view.corrections, []);
   assert.deepEqual(view.sessions, []);
 });
+
+// "declined" alone stopped being the whole story once /campaign consent
+// existed. Someone who said no at the start and someone who withdrew after
+// eleven sessions are both `declined` in the table, and telling the second one
+// they were "never recorded" is false in a way they could disprove by
+// scrolling up.
+test('withdrawing after being recorded does not read as never recorded', async (t) => {
+  const { db, campaignId } = await harness(t);
+  played(db, campaignId, [{ userId: '111', displayName: 'Saf', startMs: 0, endMs: 1, text: 'hello' }]);
+  db.setConsent(campaignId, '111', false);
+
+  const person = buildCampaignView({ db, campaignId }).roster.find((p) => p.userId === '111');
+  assert.equal(person.consent.state, 'declined');
+  assert.equal(person.consent.withdrawn, true);
+  assert.match(person.consent.label, /earlier lines kept/);
+  assert.doesNotMatch(person.consent.label, /never recorded/);
+});
+
+test('declining before ever speaking still reads as never recorded', async (t) => {
+  const { db, campaignId } = await harness(t);
+  db.setConsent(campaignId, '222', false);
+  db.addCampaignMember(campaignId, '222', 'dm-1');
+
+  const person = buildCampaignView({ db, campaignId }).roster.find((p) => p.userId === '222');
+  assert.equal(person.consent.withdrawn, false);
+  assert.match(person.consent.label, /never recorded/);
+});

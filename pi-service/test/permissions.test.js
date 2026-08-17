@@ -176,9 +176,15 @@ test('the command surface splits into the three intended tiers', async () => {
   // may run. `create` is here because an unclaimed campaign has to be
   // claimable, and `list` because seeing what is here is not a privilege.
   assert.deepEqual(subs.filter((s) => !MANAGER_SUBCOMMANDS.has(s)).sort(), [
-    'archive', 'ask', 'create', 'export', 'funny', 'history', 'list',
+    'archive', 'ask', 'consent', 'create', 'export', 'funny', 'history', 'list',
     'locations', 'npcs', 'recap', 'search', 'setchar', 'stats', 'whoami',
   ]);
+
+  // `consent` must never drift into the manager tier. It is the one command
+  // whose whole purpose is that the person it concerns can run it without the
+  // person recording them being involved — gating it behind the roster owner
+  // would turn withdrawing consent back into asking a favour.
+  assert.equal(MANAGER_SUBCOMMANDS.has('consent'), false);
 
   // The gated ones are reachable from a user install, and that is fine — the
   // tier is enforced by RESOLUTION, not by which command carries them. A

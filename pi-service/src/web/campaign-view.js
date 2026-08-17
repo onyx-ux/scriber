@@ -28,12 +28,24 @@ const CONSENT_WORDS = {
   expired: 'invitation expired',
 };
 
-function consentFor(row) {
-  if (!row) return { state: 'unasked', label: 'never asked', mayRecord: false };
+// `lines` is passed in because "declined" alone stopped being the whole story
+// once /campaign consent existed. Someone who said no at the start and someone
+// who withdrew after eleven sessions are both `declined` in the table, and
+// telling the second one's DM that they were "never recorded" is false in a way
+// they could disprove by scrolling up. The count is what separates them.
+function consentFor(row, lines = 0) {
+  if (!row) return { state: 'unasked', label: 'never asked', mayRecord: false, withdrawn: false };
+
+  const withdrawn = row.state === 'declined' && lines > 0;
   return {
     state: row.state,
-    label: CONSENT_WORDS[row.state] ?? row.state,
+    label: withdrawn ? 'stopped — earlier lines kept' : (CONSENT_WORDS[row.state] ?? row.state),
     mayRecord: row.state === 'granted',
+    // Flagged rather than only worded, so the page can say plainly that there
+    // is no control here to put them back. Putting someone back is theirs to
+    // do, and a button on the operator's screen would be exactly the thing
+    // consent exists to prevent.
+    withdrawn,
     decidedAt: row.decided_at ?? null,
     expiresAt: row.expires_at ?? null,
   };
@@ -109,7 +121,7 @@ export function buildCampaignView({ db, campaignId }) {
       characterName: r.characterName,
       lines: r.lines ?? 0,
       enrolled: Boolean(r.enrolled),
-      consent: consentFor(consent.get(r.userId)),
+      consent: consentFor(consent.get(r.userId), r.lines ?? 0),
     })),
 
     corrections: db.listCorrections(campaignId).map((c) => ({
