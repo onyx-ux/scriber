@@ -1445,14 +1445,19 @@ function settingsTab() {
 
         <div class="cap" style="margin:28px 0 6px">Where the notes go</div>
         ${row('Destination', 'Everyone in the channel sees the write-up, or only you do',
-          mode === 'channel'
-            ? `<span class="val">a channel chosen in Discord</span>`
-            : `<div class="seg" data-seg="output">
-                 <button class="${mode === 'default' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
-                         data-mode="default" ${can() ? '' : 'disabled'}>Where we played</button>
-                 <button class="${mode === 'dm' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
-                         data-mode="dm" ${can() && detail.claimed ? '' : 'disabled'}>DM to me</button>
-               </div>`)}
+          // The middle option is shown but never settable from here: choosing a
+          // channel means listing the channels the bot may post in, which only
+          // Discord can answer. It is still a state a campaign can be IN, so it
+          // has to be visible — and leaving it out was a dead end, because a
+          // campaign posting to a chosen channel could then never be moved.
+          `<div class="seg" data-seg="output">
+             <button class="${mode === 'default' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
+                     data-mode="default" ${can() ? '' : 'disabled'}>Where we played</button>
+             <button class="${mode === 'channel' ? 'on' : ''}" disabled
+                     title="Set with /campaign output in Discord, where the channels can be listed">A chosen channel</button>
+             <button class="${mode === 'dm' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
+                     data-mode="dm" ${can() && detail.claimed ? '' : 'disabled'}>DM to me</button>
+           </div>`)}
         ${row('Last recorded in', 'The voice channel Quill most recently joined for this campaign',
           `<span class="val">${esc(detail.channel || 'never recorded')}</span>`)}
         ${row('Who writes them',
