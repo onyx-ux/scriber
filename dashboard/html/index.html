@@ -454,6 +454,22 @@ function renderRecording() {
 const PILL = { posted: 'posted', approval: 'approval', failed: 'failed', recording: 'recording',
                queued: 'queued', working: 'working' };
 
+// A bot older than this page does not send `state`, `job` or the recap facets.
+// Deriving what can be derived from the meeting status keeps the page useful
+// against it rather than printing "undefined" in every pill — the two are
+// deployed from different places (this file from a bind mount, the fields from
+// an image), so they are routinely a few minutes out of step.
+function normalise(s) {
+  if (s.state) return s;
+  const status = s.status ?? '';
+  return {
+    ...s,
+    state: status === 'done' ? 'posted' : status.endsWith('_failed') ? 'failed' : status === 'recording' ? 'recording' : 'queued',
+    npcs: 0, locations: 0, threads: 0, tldr: '',
+    discardable: s.lines === 0 && status !== 'recording',
+  };
+}
+
 function sessionCard(s) {
   const facets = [
     s.npcs ? `${s.npcs} NPC${s.npcs === 1 ? '' : 's'}` : '',
@@ -514,7 +530,7 @@ function sessionActions(s) {
 }
 
 function renderSessions() {
-  const list = detail?.sessions ?? [];
+  const list = (detail?.sessions ?? []).map(normalise);
   $('sesshint').textContent = list.length ? '· newest first' : '';
   $('sessions').innerHTML = list.length ? list.map(sessionCard).join('') : empty('Nothing recorded yet.');
 }
