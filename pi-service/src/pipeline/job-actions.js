@@ -213,6 +213,33 @@ export function addCorrection(db, { campaignId, wrong, right, rewrite } = {}) {
   };
 }
 
+// Run every saved correction back over the campaign's existing transcripts.
+//
+// addCorrection already replays the one rule it just saved, so this is for the
+// case that rule cannot cover: a session transcribed while the correction list
+// was shorter — an import, a session recovered from a crash, anything
+// backfilled — which is on disk uncorrected and would stay that way until
+// somebody re-typed a rule that is already saved.
+export function replayCorrections(db, { campaignId, rewrite } = {}) {
+  const rules = db.listCorrections(campaignId);
+  if (rules.length === 0) {
+    return { ok: false, message: '⚠️ This campaign has no corrections saved, so there is nothing to replay.' };
+  }
+
+  const changed = db.rewriteUtterances(campaignId, (text) => rewrite(text, rules));
+  return {
+    ok: true,
+    rules: rules.length,
+    changed,
+    message:
+      `✏️ Replayed ${rules.length} correction${rules.length === 1 ? '' : 's'} — ` +
+      `${changed} line${changed === 1 ? '' : 's'} rewritten. ` +
+      (changed > 0
+        ? 'Summaries written before this still say the old names — re-summarise a session to regenerate one.'
+        : 'Everything already read the right way.'),
+  };
+}
+
 export function removeCorrection(db, { campaignId, wrong } = {}) {
   const from = String(wrong ?? '').trim();
   if (!from) return { ok: false, message: '⚠️ Which correction? Name the wrong text.' };
@@ -257,6 +284,48 @@ export function forgetCharacter(db, { campaignId, userId } = {}) {
   return cleared
     ? { ok: true, userId, message: '🎭 Character name cleared. They stay on the roster.' }
     : { ok: false, message: '⚠️ They had no character name set.' };
+}
+
+// --- where a campaign's notes are delivered ---
+
+// Two of the three destinations, on purpose.
+//
+// 'channel' needs a channel id, and picking one means listing the server's
+// channels and knowing which ones the bot may post in — something only Discord
+// can answer, and something /campaign output already does properly with a
+// channel picker. What the dashboard can do without guessing is the choice
+// between "wherever we played" and "privately, to me", which is the switch
+// that actually gets flipped when a table has a guest.
+export const OUTPUT_MODES = {
+  default: 'the channel the campaign was set up in',
+  dm: "a direct message to the campaign's manager",
+};
+
+export function setOutput(db, { campaignId, mode } = {}) {
+  const wanted = String(mode ?? '').trim();
+  if (!Object.hasOwn(OUTPUT_MODES, wanted)) {
+    return {
+      ok: false,
+      message:
+        `⚠️ Unknown destination "${wanted}". From here it is ${Object.keys(OUTPUT_MODES).join(' or ')} — ` +
+        'to post into a specific channel, use `/campaign output` in Discord, where the channels can be listed.',
+    };
+  }
+
+  const campaign = db.getCampaign(campaignId);
+  if (!campaign) return { ok: false, message: '⚠️ No such campaign.' };
+  if (wanted === 'dm' && !campaign.manager_user_id) {
+    return {
+      ok: false,
+      message: '⚠️ Nobody manages this campaign yet, so there is no one to DM. Claim it with `/campaign create` first.',
+    };
+  }
+
+  // null, not the string 'default': a null mode is what the delivery code
+  // reads as "post where we played", and storing the word would make it fall
+  // through to the unknown branch.
+  db.setCampaignOutput(campaignId, wanted === 'default' ? null : wanted, null);
+  return { ok: true, mode: wanted, message: `📮 Notes will go to ${OUTPUT_MODES[wanted]}.` };
 }
 
 // --- throwing away a session that never had anything in it ---

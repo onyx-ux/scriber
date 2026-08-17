@@ -1043,6 +1043,17 @@ function wrap(db) {
         .all();
     },
 
+    // The most recent job of any status for one meeting.
+    //
+    // listPendingJobs deliberately excludes finished and permanently-failed
+    // jobs, which is right for the queue but wrong for the one screen that
+    // exists to explain a failure: by the time a session reads 'failed', the
+    // job carrying the reason has left the pending set, and the dashboard was
+    // left saying a session had failed with no way to say why.
+    lastJobForMeeting(meetingId) {
+      return db.prepare(`SELECT * FROM jobs WHERE meeting_id = ? ORDER BY id DESC LIMIT 1`).get(meetingId) ?? null;
+    },
+
     // Release a parked job so the worker can pick it up on its next tick.
     // provider: null keeps whatever the job already had (normally nothing,
     // meaning "use the configured default").
@@ -1105,6 +1116,30 @@ function wrap(db) {
     removeCorrection(campaignId, wrongText) {
       return db.prepare(`DELETE FROM corrections WHERE campaign_id = ? AND wrong_text = ?`).run(campaignId, wrongText)
         .changes;
+    },
+
+    // How many stored lines contain a piece of text.
+    //
+    // Used by the dashboard to say how much of the campaign a correction is
+    // actually holding up. It counts the CORRECT text, not the wrong one:
+    // corrections are applied as the transcript is written and replayed over
+    // everything already on disk, so by the time you are looking at the list
+    // the misheard spelling is gone. "Kaelen appears on 184 lines" is a fact
+    // about the transcripts; "Kaylen was fixed 184 times" is not recorded
+    // anywhere and would have to be invented.
+    countUtterancesContaining(campaignId, text) {
+      const needle = String(text ?? '');
+      if (!needle) return 0;
+      // LIKE's own wildcards have to be neutralised, or a correction whose
+      // text contains % or _ would match far more than it should.
+      const escaped = needle.replace(/[\\%_]/g, (c) => `\\${c}`);
+      return db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.campaign_id = ? AND u.text LIKE ? ESCAPE '\\'`
+        )
+        .get(campaignId, `%${escaped}%`).n;
     },
 
     // Rewrites already-stored transcripts. Takes the replace function rather

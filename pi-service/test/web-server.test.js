@@ -179,7 +179,7 @@ test('a campaign is readable in full, and an unknown one is a 404', async (t) =>
 
   assert.equal(view.label, 'Cipher');
   assert.equal(view.sessions[0].ref, 'Cipher_01');
-  assert.deepEqual(view.corrections, [{ wrong: 'Vecks', right: 'Vex' }]);
+  assert.deepEqual(view.corrections, [{ wrong: 'Vecks', right: 'Vex', lines: 0 }]);
   assert.ok(view.roster.some((r) => r.userId === '111'));
 
   assert.equal((await fetch(`${base}/campaign?id=9999&token=sesame`)).status, 404);
@@ -197,6 +197,26 @@ test('a transcript downloads as plain text under its session name', async (t) =>
   assert.match(await res.text(), /we open the door/);
 
   assert.equal((await fetch(`${base}/transcript?meeting=9999&token=sesame`)).status, 404);
+});
+
+// Same URL, same door. A separate route for the reader is a second place for
+// the auth check to drift, and a transcript is exactly the thing that must not
+// become readable by asking for it a different way.
+test('the same transcript comes back structured when the reader asks', async (t) => {
+  const { db, base, campaignId } = await serving(t, { statusToken: 'sesame' });
+  const { meetingId } = parked(db, campaignId);
+
+  const res = await fetch(`${base}/transcript?meeting=${meetingId}&format=json&token=sesame`);
+  assert.match(res.headers.get('content-type'), /application\/json/);
+
+  const view = await res.json();
+  assert.equal(view.ref, 'Cipher_01');
+  assert.equal(view.total, view.lines.length);
+  assert.ok(view.lines.length > 0);
+  assert.ok(view.speakers.length > 0);
+
+  assert.equal((await fetch(`${base}/transcript?meeting=${meetingId}&format=json`)).status, 401,
+    'and it is behind the same token as the plain text');
 });
 
 test('an unknown path is a 404 rather than a stack trace', async (t) => {

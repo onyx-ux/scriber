@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { buildStatus } from './status.js';
 import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
+import { buildTranscriptView } from './transcript-view.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -86,14 +87,22 @@ function readJsonBody(req) {
 export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs = Date.now() }) {
   if (!cfg.statusPort) return null;
 
-  const reachability = { whisperServer: null, summariser: null };
+  const reachability = { whisperServer: null, summariser: null, checkedAt: null };
 
+  // Guarded against overlap: the on-demand probe below is a button anyone can
+  // hold down, and each call opens two sockets with their own timeouts.
+  let probing = false;
   async function probe() {
+    if (probing) return;
+    probing = true;
     try {
       reachability.whisperServer = await isWhisperServerReachable(cfg);
       reachability.summariser = await isSummariserReachable(cfg);
+      reachability.checkedAt = new Date().toISOString();
     } catch {
       // A failed probe is itself the answer; never let it kill the timer.
+    } finally {
+      probing = false;
     }
   }
   probe();
@@ -108,6 +117,9 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
   // session in progress, and one function that starts a long job.
   const ctx = {
     activeSessions,
+    // Fire-and-forget: the answer arrives in the next status poll, not in the
+    // response to the click.
+    probeNow: () => { probe(); },
     // Started, not awaited. Downloading, converting and transcribing an
     // hours-long recording takes hours; the HTTP response says "started" and
     // progress shows up in the status snapshot like any other transcription.
@@ -223,6 +235,18 @@ export function startStatusServer({ db, cfg, client, activeSessions, startedAtMs
         send(res, 404, { ok: false, message: 'No such session.' });
         return;
       }
+
+      // Two readers of the same transcript, and they want different things.
+      // A file you keep is plain text — the default, and what /export always
+      // attached. A page you search wants the lines apart: clock, speaker,
+      // words, plus who talked most. Same URL, because it is the same
+      // transcript, and one of them would otherwise be a second route that
+      // could drift from this one on auth.
+      if (url.searchParams.get('format') === 'json') {
+        send(res, 200, buildTranscriptView({ db, meetingId: id }));
+        return;
+      }
+
       const text = buildTranscriptText(db.listUtterances(id));
       res
         .writeHead(200, {

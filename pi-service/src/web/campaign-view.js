@@ -115,10 +115,18 @@ export function buildCampaignView({ db, campaignId }) {
     corrections: db.listCorrections(campaignId).map((c) => ({
       wrong: c.wrong_text,
       right: c.correct_text,
+      // How many lines in this campaign currently read the corrected way —
+      // see db.countUtterancesContaining for why this counts the RIGHT text.
+      // It answers "is this rule doing anything", which is the only reason to
+      // look at a list of corrections at all.
+      lines: db.countUtterancesContaining(campaignId, c.correct_text),
     })),
 
     sessions: db.listRecentMeetings(campaignId, 40).map((m) => {
-      const job = jobs.get(m.id) ?? null;
+      // A failed session's job is no longer pending, so the reason it failed
+      // is not in the map above. Fetched only for the failures — one extra
+      // query per broken session, none at all for a healthy campaign.
+      const job = jobs.get(m.id) ?? (m.status?.endsWith('_failed') ? db.lastJobForMeeting(m.id) : null);
       const lines = db.countUtterances(m.id);
       return {
         meetingId: m.id,
@@ -130,13 +138,33 @@ export function buildCampaignView({ db, campaignId }) {
         channel: m.channel_name,
         startedAt: m.started_at,
         endedAt: m.ended_at,
+        // How long the table actually played. Carried so the reader can say
+        // "3:22 recorded" beside the line count — a 400-line session that ran
+        // four hours and one that ran twenty minutes are different problems.
+        durationMs:
+          m.started_at && m.ended_at
+            ? Math.max(0, new Date(m.ended_at).getTime() - new Date(m.started_at).getTime())
+            : null,
         status: m.status,
         lines,
         state: stateOf(m, job),
         // The job carried alongside, so the session list can offer the
         // decision on the session it belongs to rather than making you find
         // the same session again in a separate queue.
-        job: job ? { id: job.id, type: job.type, status: job.status, lastError: job.last_error ?? null } : null,
+        job: job
+          ? {
+              id: job.id,
+              type: job.type,
+              status: job.status,
+              lastError: job.last_error ?? null,
+              // Four attempts that all failed the same way is the difference
+              // between "try again" and "this can never work" — the failure
+              // screen offers to discard on the strength of it.
+              attempts: job.attempts ?? 0,
+              nextAttemptAt: job.next_attempt_at ?? null,
+              provider: job.provider ?? null,
+            }
+          : null,
         // Whether there is anything to READ, which is not the same as whether
         // the session finished: a summary can fail, or be waiting for
         // approval, long after the transcript exists. The notes button is

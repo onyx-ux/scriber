@@ -76,8 +76,11 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
   assert.deepEqual(
     Object.keys(ACTIONS).sort(),
     [
+      'campaign/output',
       'corrections/add',
       'corrections/remove',
+      'corrections/replay',
+      'health/probe',
       'import',
       'pause',
       'roster/character',
@@ -315,6 +318,99 @@ test('removing a correction that was never saved says so', async (t) => {
   const res = runAction({ pathname: '/actions/corrections/remove', body: { campaignId, wrong: 'Nope' }, db, cfg });
   assert.equal(res.payload.ok, false);
   assert.match(res.payload.message, /No saved correction/);
+});
+
+// The case replay exists for: a transcript that arrived AFTER the rule was
+// saved, which addCorrection's own one-off rewrite could not have reached.
+test('replaying corrections catches a transcript that arrived after the rule', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  runAction({ pathname: '/actions/corrections/add', body: { campaignId, wrong: 'Vecks', right: 'Vex' }, db, cfg });
+
+  const late = parked(db, 'summarize', campaignId).meetingId;
+  db.raw
+    .prepare(`UPDATE utterances SET text = 'Vecks arrives late' WHERE meeting_id = ?`)
+    .run(late);
+
+  const res = runAction({ pathname: '/actions/corrections/replay', body: { campaignId }, db, cfg });
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.changed, 1);
+  assert.equal(db.listUtterances(late)[0].text, 'Vex arrives late');
+});
+
+test('replaying every rule rewrites a line once, not once per rule', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  db.addCorrection(campaignId, 'Vecks', 'Vex');
+  db.addCorrection(campaignId, 'Kaylen', 'Kaelen');
+
+  const meetingId = parked(db, 'summarize', campaignId).meetingId;
+  db.raw.prepare(`UPDATE utterances SET text = 'Vecks and Kaylen argue' WHERE meeting_id = ?`).run(meetingId);
+
+  const res = runAction({ pathname: '/actions/corrections/replay', body: { campaignId }, db, cfg });
+  assert.equal(res.payload.changed, 1, 'one line changed, however many rules touched it');
+  assert.equal(db.listUtterances(meetingId)[0].text, 'Vex and Kaelen argue');
+});
+
+test('replaying with nothing saved is refused rather than reported as work', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = runAction({ pathname: '/actions/corrections/replay', body: { campaignId }, db, cfg });
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /no corrections saved/i);
+});
+
+// --- where the notes are delivered ---
+
+test('the destination can be moved to a DM and back', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+
+  assert.equal(runAction({ pathname: '/actions/campaign/output', body: { campaignId, mode: 'dm' }, db, cfg }).payload.ok, true);
+  assert.equal(db.getCampaign(campaignId).output_mode, 'dm');
+
+  assert.equal(runAction({ pathname: '/actions/campaign/output', body: { campaignId, mode: 'default' }, db, cfg }).payload.ok, true);
+  assert.equal(db.getCampaign(campaignId).output_mode, null, 'null is what the delivery code reads as "where we played"');
+});
+
+// 'channel' needs a channel id and a list of channels the bot may post in.
+// Only Discord can answer that, so the dashboard must not pretend it can.
+test('choosing a specific channel is refused here and pointed at Discord', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = runAction({ pathname: '/actions/campaign/output', body: { campaignId, mode: 'channel' }, db, cfg });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /campaign output/);
+  assert.equal(db.getCampaign(campaignId).output_mode, null, 'and nothing was changed');
+});
+
+test('a DM destination is refused when nobody manages the campaign', async (t) => {
+  const { db, cfg } = await harness(t);
+  const orphan = db.createCampaign('guild-9', 'Unclaimed', null);
+  const res = runAction({ pathname: '/actions/campaign/output', body: { campaignId: orphan, mode: 'dm' }, db, cfg });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /Nobody manages/);
+});
+
+// --- looking again at the machines ---
+
+test('the health probe is asked for, not performed inline', async (t) => {
+  const { db, cfg } = await harness(t);
+  let asked = 0;
+
+  const res = runAction({
+    pathname: '/actions/health/probe',
+    body: {},
+    db,
+    cfg,
+    ctx: { probeNow: () => { asked += 1; } },
+  });
+
+  assert.equal(res.status, 202, 'accepted — the answer arrives in the next poll, not in this response');
+  assert.equal(asked, 1);
+});
+
+test('a bot with no probe hook says so rather than failing silently', async (t) => {
+  const { db, cfg } = await harness(t);
+  const res = runAction({ pathname: '/actions/health/probe', body: {}, db, cfg, ctx: {} });
+  assert.equal(res.payload.ok, false);
 });
 
 // A username is not an id. Without this, a typo silently creates a roster

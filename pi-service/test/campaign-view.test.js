@@ -89,11 +89,59 @@ test('sessions are listed by the reference people actually type', async (t) => {
   assert.equal(session.status, 'awaiting_summary');
 });
 
-test('corrections come back as the pair they are', async (t) => {
+test('corrections come back as the pair they are, and how much they hold up', async (t) => {
   const { db, campaignId } = await harness(t);
   db.addCorrection(campaignId, 'Vecks', 'Vex');
+  played(db, campaignId, [
+    { userId: '111', displayName: 'Matt', startMs: 0, endMs: 1, text: 'Vex opens the door' },
+    { userId: '111', displayName: 'Matt', startMs: 2, endMs: 3, text: 'Vex again' },
+    { userId: '222', displayName: 'Sam', startMs: 4, endMs: 5, text: 'nobody by that name' },
+  ]);
 
-  assert.deepEqual(buildCampaignView({ db, campaignId }).corrections, [{ wrong: 'Vecks', right: 'Vex' }]);
+  assert.deepEqual(buildCampaignView({ db, campaignId }).corrections, [
+    { wrong: 'Vecks', right: 'Vex', lines: 2 },
+  ]);
+});
+
+// The count is of the CORRECT text, not the wrong one, and that is the whole
+// point: by the time a correction is in the list, every transcript has already
+// been rewritten, so counting the misspelling would always answer zero and
+// read as "this rule does nothing".
+test('a correction that has never matched anything says so honestly', async (t) => {
+  const { db, campaignId } = await harness(t);
+  db.addCorrection(campaignId, 'Vecks', 'Vex');
+  played(db, campaignId, [{ userId: '111', displayName: 'Matt', startMs: 0, endMs: 1, text: 'hello' }]);
+
+  assert.equal(buildCampaignView({ db, campaignId }).corrections[0].lines, 0);
+});
+
+// A session that failed has no pending job, so the reason it failed is not in
+// the pending set — and a failure screen that cannot say why is no better than
+// no screen at all.
+test('a failed session still carries the job that explains it', async (t) => {
+  const { db, campaignId } = await harness(t);
+  const meetingId = db.createMeeting({
+    guildId: 'guild-1',
+    campaignId,
+    channelId: 'voice',
+    channelName: 'Voice Chat',
+    startedAt: '2026-08-01T19:00:00Z',
+    audioDir: '/tmp',
+  });
+  db.enqueueTranscribeJob(meetingId, { requireApproval: false });
+  const job = db.getTranscribeJobForMeeting(meetingId);
+  // The real shape of this failure: it retried on the schedule, failed the
+  // same way every time, and was eventually given up on.
+  db.rescheduleJob(job.id, '2026-08-01T20:00:00Z', 'transcription produced nothing usable');
+  db.rescheduleJob(job.id, '2026-08-01T21:00:00Z', 'transcription produced nothing usable');
+  db.failJobPermanently(job.id, 'transcription produced nothing usable');
+  db.setMeetingStatus(meetingId, 'transcribe_failed');
+
+  const session = buildCampaignView({ db, campaignId }).sessions.find((s) => s.meetingId === meetingId);
+  assert.equal(session.state, 'failed');
+  assert.equal(session.job.lastError, 'transcription produced nothing usable');
+  assert.equal(session.job.attempts, 2, 'the failure screen says how many times it tried');
+  assert.equal(session.discardable, true);
 });
 
 // The status snapshot deliberately has no user ids because it can be

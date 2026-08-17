@@ -21,8 +21,10 @@ import {
   setPaused,
   addCorrection,
   removeCorrection,
+  replayCorrections,
   setCharacter,
   forgetCharacter,
+  setOutput,
 } from '../pipeline/job-actions.js';
 import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
 import { applyCorrections } from '../campaign/corrections.js';
@@ -120,6 +122,28 @@ export const ACTIONS = {
     return { status: 200, payload: removeCorrection(db, { campaignId: id, wrong: body.wrong }) };
   },
 
+  'corrections/replay': (db, cfg, body) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    return {
+      status: 200,
+      // applyCorrections takes the whole rule list in one pass, so a line is
+      // rewritten once however many rules touch it — looping the single-rule
+      // rewrite would count the same line several times and, worse, let one
+      // rule's output feed the next rule's input.
+      payload: replayCorrections(db, {
+        campaignId: id,
+        rewrite: (text, rules) => applyCorrections(text, rules),
+      }),
+    };
+  },
+
+  'campaign/output': (db, cfg, body) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    return { status: 200, payload: setOutput(db, { campaignId: id, mode: body.mode }) };
+  },
+
   'roster/character': (db, cfg, body) => {
     const id = campaignId(body);
     const who = userId(body);
@@ -176,6 +200,24 @@ export const ACTIONS = {
           '📥 Import started. Downloading, converting and transcribing a long recording takes a while — ' +
           'it will appear under "Working on", and the notes arrive the usual way.',
       },
+    };
+  },
+
+  // Ask the bot to look again, now.
+  //
+  // Reachability is refreshed on a slow timer so the dashboard's polling does
+  // not put a steady trickle of traffic on the LAN. That is right for the
+  // steady state and wrong for the one moment it matters: you have just walked
+  // over and turned the PC on, and the page will keep saying "unreachable" for
+  // up to a minute. This is the button that answers "is it back yet".
+  'health/probe': (db, cfg, body, ctx) => {
+    if (typeof ctx?.probeNow !== 'function') {
+      return { status: 200, payload: { ok: false, message: '⚠️ This bot cannot re-check on demand.' } };
+    }
+    ctx.probeNow();
+    return {
+      status: 202,
+      payload: { ok: true, message: '📡 Checking the transcriber and the summariser now — the dots update in a moment.' },
     };
   },
 

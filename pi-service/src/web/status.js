@@ -13,6 +13,19 @@ import { configuredProviders } from '../pipeline/model-client.js';
 // Nothing secret goes in here. No tokens, no API keys, no file paths outside
 // the data directory — it is served unauthenticated on the LAN by default.
 
+// host:port from a configured URL, with any userinfo dropped. A malformed or
+// absent URL becomes null rather than being echoed back verbatim — this is
+// published, and the one thing that must never leak out of it is a credential
+// someone embedded in a config value.
+function hostOf(rawUrl) {
+  if (!rawUrl) return null;
+  try {
+    return new URL(rawUrl).host || null;
+  } catch {
+    return null;
+  }
+}
+
 function sessionView(guildId, session, guildName, now) {
   const startedMs = session.startedAtMs ?? null;
   return {
@@ -152,6 +165,16 @@ export function buildStatus({
       summariserName: cfg.summaryProvider,
       summarisePaused: db.getSetting('summarize_paused') === 'true',
       transcribePaused: db.getSetting('transcribe_paused') === 'true',
+      // Where the transcriber is, so "unreachable" is actionable rather than
+      // just alarming — the answer is nearly always that the machine at that
+      // address is asleep. Host and port only: any credentials someone put in
+      // the URL are stripped rather than published, and a private-range
+      // address is not a secret worth hiding from its own operator.
+      whisperServerHost: hostOf(cfg.whisperServerUrl),
+      // When the dots were last true. A dashboard that says "reachable" is
+      // making a claim about a minute ago, and on the screen that exists
+      // because a machine went down, the age of the claim is the point.
+      checkedAt: reachability.checkedAt ?? null,
     },
     // Which summarisers actually have a key, so the page can offer a choice at
     // the moment of approval instead of guessing — and can leave the choice
