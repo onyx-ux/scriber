@@ -9,6 +9,7 @@ import { buildViewer, OPERATOR, maySee, mayManage, atLeast, LEVEL_WORDS } from '
 import { cookieFrom, readSession, closeSession, sessionCookie, clearedCookie } from './auth.js';
 import { handleAuthRoute, createRequestLimiter } from './auth-routes.js';
 import { scopeStatus, scopeCampaign } from './scope.js';
+import { guildsCreatableBy } from '../campaign/create.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -114,6 +115,7 @@ const ACTION_NEEDS = {
   'corrections/remove': 'manage',
   'corrections/replay': 'manage',
   'campaign/output': 'manage',
+  'campaign/create': 'manage',
   // Ending somebody else's session is the operator's alone. A server owner
   // has `servers` too, so gating on that would hand it to them as well.
   'access/revoke': 'everything',
@@ -255,6 +257,9 @@ export function startStatusServer({
   // session in progress, and one function that starts a long job.
   const ctx = {
     activeSessions,
+    // Every Discord the bot is in, so an action can check a chosen server
+    // against reality rather than against what the browser claimed.
+    guilds: () => [...(client?.guilds?.cache?.values?.() ?? [])].map((g) => ({ id: g.id, name: g.name ?? g.id })),
     // Fire-and-forget: the answer arrives in the next status poll, not in the
     // response to the click.
     probeNow: () => { probe(); },
@@ -367,7 +372,7 @@ export function startStatusServer({
 
       // Awaited unconditionally: most actions answer synchronously and `await`
       // on a plain object is a no-op, but the ones that talk to Discord cannot.
-      const { status, payload, action } = await runAction({ pathname: url.pathname, body, db, cfg, ctx });
+      const { status, payload, action } = await runAction({ pathname: url.pathname, body, db, cfg, ctx: { ...ctx, viewer } });
       // Logged because these are the operations that used to leave an audit
       // trail in a Discord DM. Losing that when they moved would mean a job
       // could change state with nothing anywhere recording who did it.
@@ -485,9 +490,19 @@ export function startStatusServer({
     }
 
     try {
-      const body = JSON.stringify(
-        scopeStatus(buildStatus({ db, cfg, client, activeSessions, reachability, startedAtMs }), viewer)
+      const payload = scopeStatus(
+        buildStatus({ db, cfg, client, activeSessions, reachability, startedAtMs }),
+        viewer
       );
+
+      // Which servers this viewer could start a campaign in. Computed here
+      // rather than in scopeStatus because it needs Discord, and attached
+      // after scoping so it can only ever be added to a payload, never widen
+      // one.
+      const creatable = guildsCreatableBy({ db, viewer, guilds: ctx.guilds() });
+      if (creatable.length) payload.canCreateIn = creatable;
+
+      const body = JSON.stringify(payload);
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(body);
     } catch (err) {
       console.error('[status] failed to build snapshot:', err.message);

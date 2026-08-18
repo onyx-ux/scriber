@@ -23,6 +23,7 @@ import {
   findCampaign,
 } from '../campaign/resolve.js';
 import { isOwner } from '../campaign/permissions.js';
+import { createCampaign } from '../campaign/create.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import {
@@ -652,54 +653,24 @@ async function handleCampaignCreate(interaction, db, cfg) {
     });
   }
 
-  const name = interaction.options.getString('name').trim();
-  if (!name) {
-    return interaction.reply({ content: '⚠️ Give the campaign a name.', flags: MessageFlags.Ephemeral });
-  }
+  // Every rule about names, clashes and ceilings lives in campaign/create.js,
+  // because the dashboard performs the same act and a second copy would drift.
+  const made = createCampaign({
+    db,
+    cfg,
+    guildId: interaction.guildId,
+    userId: interaction.user.id,
+    name: interaction.options.getString('name'),
+  });
 
-  if (!nameIsUsable(name)) {
-    return interaction.reply({
-      content:
-        `⚠️ I can't file anything under \`${name}\`. A campaign's name becomes the folder its notes live in ` +
-        'and the start of every session reference (`Cipher_02`), and that one leaves nothing behind once emoji ' +
-        'and path characters are stripped. Give it at least one letter or number.',
-      flags: MessageFlags.Ephemeral,
-    });
+  if (!made.ok) {
+    return interaction.reply({ content: made.message, flags: MessageFlags.Ephemeral });
   }
-
-  const clash = campaignNameClash(db, name);
-  if (clash) {
-    return interaction.reply({
-      content:
-        `⚠️ There's already a campaign called **${campaignLabel(clash)}**${clash.guild_id === interaction.guildId ? ' in this server' : ' on this bot'}, ` +
-        `and its notes are filed in \`${campaignFolder({ channel_name: clash.name }, clash.name)}/\`. ` +
-        'Two campaigns sharing a folder would interleave their session notes, so pick a different name.',
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  if (!isOwner(interaction.user.id, cfg)) {
-    if (db.countCampaignsInGuild(interaction.guildId) >= MAX_CAMPAIGNS_PER_GUILD) {
-      return interaction.reply({
-        content: `⚠️ This server already has ${MAX_CAMPAIGNS_PER_GUILD} campaigns, which is as many as I'll track for one Discord.`,
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-    if (db.countCampaignsManagedBy(interaction.user.id) >= MAX_CAMPAIGNS_PER_MANAGER) {
-      return interaction.reply({
-        content: `⚠️ You already run ${MAX_CAMPAIGNS_PER_MANAGER} campaigns, which is as many as I'll let one person hold.`,
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-  }
-
-  const id = db.createCampaign(interaction.guildId, name, interaction.user.id);
-  const folder = campaignFolder({ channel_name: name }, name);
 
   return interaction.reply({
     content:
-      `📖 **${name}** exists. You run it.\n` +
-      `Session notes are filed in \`${folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and referred to as \`${sessionRef(name, 1)}\`.\n\n` +
+      `📖 **${made.name}** exists. You run it.\n` +
+      `Session notes are filed in \`${made.folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and referred to as \`${sessionRef(made.name, 1)}\`.\n\n` +
       '**Next:** add your players with `/dm add player:@them name:<their character>` — they need to be on the roster ' +
       "before they can `/join`, and a character name keeps them from being written up as an NPC. " +
       'Then `/campaign output` if you want the recaps somewhere other than the channel you record in.',

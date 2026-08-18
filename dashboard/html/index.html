@@ -136,6 +136,9 @@
   .brand .name { font-family: var(--serif); font-size: 21px; line-height: 1.15; letter-spacing: .3px; }
   .brand .sub { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 4px; }
   .rail > .cap { padding: 22px 24px 10px; }
+  .camp.newcamp { border-style: dashed; opacity: .78; }
+  .camp.newcamp:hover { opacity: 1; }
+  .camp.newcamp .nm { color: var(--brass); }
   .rail-list { padding: 0 12px; display: flex; flex-direction: column; gap: 6px;
                flex: 0 1 auto; min-height: 0; overflow-y: auto; }
   .rail-nav { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px;
@@ -569,6 +572,11 @@ const dotFor = (state) => `<span class="dot ${state === true ? 'ok' : state === 
 // deploy degrades to the behaviour that existed before levels did.
 const cap = (name) => (me?.can ? Boolean(me.can[name]) : true);
 
+// Starting a campaign needs somewhere to put it. The bot works out which
+// servers those are and sends the list; an empty list means the button would
+// only ever open a dialog with nothing to pick, so it is not drawn at all.
+const canCreate = () => status?.actionsEnabled !== false && (status?.canCreateIn?.length ?? 0) > 0;
+
 // Whether actions are possible at all: the bot must accept them, and this
 // viewer must be allowed to make them.
 const can = () => status?.actionsEnabled !== false && cap('approvals');
@@ -640,8 +648,19 @@ function renderRail() {
       }).join('')
     : `<div class="placeholder">
          <div style="font-size:13.5px;color:var(--dim);line-height:1.6">No campaigns yet</div>
-         <div class="mono" style="font-size:11.5px;color:var(--brass);margin-top:8px">/campaign create</div>
+         ${canCreate()
+           ? `<button type="button" class="btn sm go" style="margin-top:12px" data-new-campaign>New campaign</button>`
+           : `<div class="mono" style="font-size:11.5px;color:var(--brass);margin-top:8px">/campaign create</div>`}
        </div>`;
+
+  // A second, quieter entry point. The checklist button disappears the moment
+  // the first campaign exists, and starting a second one should not mean going
+  // back to Discord to do it.
+  if (camps.length && canCreate()) {
+    $('rail-list').innerHTML +=
+      '<button type="button" class="camp newcamp" data-new-campaign>' +
+      '<div class="l1"><span class="nm">+ New campaign</span></div></button>';
+  }
 
   const servers = status?.servers?.length ?? 0;
   // The Servers view is a list of Discords and their permissions — only
@@ -954,7 +973,9 @@ function firstRun() {
             <div class="what" style="font-weight:500">Make a campaign</div>
             <div class="sub" style="font-family:var(--sans);font-size:13px">One per game. It holds the roster, the corrections and every session.</div>
           </div>
-          <code>/campaign create</code>
+          ${canCreate()
+            ? `<button type="button" class="btn sm go" data-new-campaign>New campaign</button>`
+            : `<code>/campaign create</code>`}
         </div>
         <div>
           <span class="mark">3</span>
@@ -2186,14 +2207,63 @@ function accessScreen() {
 // It is the one part of the page you type a URL into, and a five-second
 // repaint that replaced the dialog would throw away whatever was half-typed.
 // Everything the dialog says about the world it says once, when it opens.
+// Starting a campaign. Two fields, because that is the whole act: what it is
+// called, and which Discord it belongs to. Everything else a campaign has —
+// roster, corrections, where the notes go — is set afterwards, from inside it.
+function createDialog() {
+  const servers = status?.canCreateIn ?? [];
+  return `
+    <div class="backdrop" data-backdrop>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="New campaign">
+        <div class="kicker">Campaigns</div>
+        <h1>Start a campaign</h1>
+        <div class="say-2" style="font-size:14.5px;margin-top:12px">
+          One per game. It holds the roster, the corrections, and every session you record.
+          You will run it.
+        </div>
+
+        <form data-act="campaign/create">
+          <div class="field">
+            <label for="new-name">Name</label>
+            <input class="in" id="new-name" name="name" required autocomplete="off" placeholder="Cipher">
+            <div class="mono" style="font-size:11px;color:var(--dim);margin-top:9px">
+              becomes the folder its notes live in, and the start of every session reference
+            </div>
+          </div>
+          <div class="field">
+            <label for="new-guild">Server</label>
+            ${servers.length === 1
+              ? `<input type="hidden" name="guildId" value="${esc(servers[0].id)}">
+                 <div class="in" style="opacity:.7">${esc(servers[0].name)}</div>`
+              : `<select class="in" id="new-guild" name="guildId" required>
+                   ${servers.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
+                 </select>`}
+          </div>
+          <div class="foot">
+            <button class="btn go big" type="submit" ${can() ? '' : 'disabled'}>Start it</button>
+            <button class="btn big" type="button" data-close-modal>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+}
+
 let modalShowing = null;
 
 function renderModal() {
-  const wanted = view.importing && detail ? detail.id : null;
+  const wanted = view.creating ? 'create' : view.importing && detail ? `import:${detail.id}` : null;
   if (wanted === modalShowing) return;
   modalShowing = wanted;
 
-  if (!view.importing || !detail) { $('modal').innerHTML = ''; return; }
+  if (!wanted) { $('modal').innerHTML = ''; return; }
+
+  if (view.creating) {
+    $('modal').innerHTML = createDialog();
+    $('new-name')?.focus();
+    return;
+  }
+
+  if (!detail) { $('modal').innerHTML = ''; return; }
   const busy = (status?.recording ?? []).some((r) => r.guildId === detail.guildId);
 
   $('modal').innerHTML = `
@@ -2433,6 +2503,7 @@ function toast(message, ok) {
 }
 
 async function send(action, body) {
+  let sent = null;
   try {
     const res = await fetch(`${API}/actions/${action}`, {
       method: 'POST',
@@ -2447,6 +2518,7 @@ async function send(action, body) {
     if (payload?.needsConfirming && (await confirmBlastRadius(action, body, payload))) return;
 
     toast(payload.message || `HTTP ${res.status}`, res.ok && payload.ok !== false);
+    sent = payload;
   } catch (err) {
     toast(`Couldn't reach the bot — ${err.message}`, false);
     return;
@@ -2457,6 +2529,9 @@ async function send(action, body) {
   if (view.campaignId) detail = await get(`/campaign?id=${view.campaignId}`).catch(() => detail);
   if (view.meetingId) await syncNotes();
   paint();
+  // Handed back so a caller can act on what was made — the id of a campaign
+  // that did not exist a moment ago is not knowable any other way.
+  return sent;
 }
 
 // The transcript needs the auth header, which a plain <a href> cannot carry —
@@ -2514,9 +2589,13 @@ document.addEventListener('click', async (event) => {
   const t = event.target;
 
   if (t.closest('[data-close-modal]') || t === $('modal')?.querySelector('[data-backdrop]')) {
-    view.importing = false; return paint();
+    view.importing = false; view.creating = false; return paint();
   }
-  if (t.closest('[data-import]')) { view.importing = true; return paint(); }
+  // One dialog at a time. Opening either has to close the other, or a page
+  // left with both flags set shows the first one forever and every later click
+  // on the second looks like a dead button.
+  if (t.closest('[data-new-campaign]')) { view.importing = false; view.creating = true; return paint(); }
+  if (t.closest('[data-import]')) { view.creating = false; view.importing = true; return paint(); }
   if (t.closest('[data-diagnose]')) { view.diagnosing = !view.diagnosing; return renderBanner(); }
   if (t.closest('[data-cancel-edit]')) { view.editing = null; return paint(); }
 
@@ -2709,9 +2788,16 @@ document.addEventListener('submit', async (event) => {
   const submit = form.querySelector('button[type=submit]');
   if (submit) submit.disabled = true;
   if (form.dataset.act === 'import') view.importing = false;
+  if (form.dataset.act === 'campaign/create') view.creating = false;
   if (form.dataset.act === 'roster/character') view.editing = null;
-  await send(form.dataset.act, body);
+  const payload = await send(form.dataset.act, body);
   if (submit) submit.disabled = false;
+
+  // Land in the campaign that was just made. Making one and then having to
+  // find it in the rail yourself would be a strange way to finish.
+  if (form.dataset.act === 'campaign/create' && payload?.campaignId) {
+    await loadCampaign(payload.campaignId);
+  }
 });
 
 // A correction that would rewrite a large share of the campaign comes back
@@ -2742,7 +2828,7 @@ document.addEventListener('input', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (view.importing) { view.importing = false; return paint(); }
+  if (view.importing || view.creating) { view.importing = false; view.creating = false; return paint(); }
   if (view.editing) { view.editing = null; return paint(); }
   if (view.screen === 'transcript') { view.screen = 'campaign'; return paint(); }
 });

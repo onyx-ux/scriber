@@ -77,6 +77,7 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
     Object.keys(ACTIONS).sort(),
     [
       'access/revoke',
+      'campaign/create',
       'campaign/output',
       'corrections/add',
       'corrections/remove',

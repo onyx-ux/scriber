@@ -129,7 +129,7 @@ async function world(t) {
     await rm(dir, { recursive: true, force: true });
   });
 
-  return { db, cfg, parked, base: `http://127.0.0.1:${server.address().port}` };
+  return { db, cfg, campaignId, parked, base: `http://127.0.0.1:${server.address().port}` };
 }
 
 const camel = (s) => s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
@@ -159,7 +159,7 @@ function matches(node, sel) {
 const TYPED = {
   wrong: 'Kaylen', right: 'Kaelen', name: 'Safriel', query: 'newbie',
   url: 'https://example.com/session.m4a', speaker: 'The Table',
-  model: 'gemini-3.1-flash-lite', code: '123456',
+  model: 'gemini-3.1-flash-lite', code: '123456', guildId: 'guild-1',
 };
 
 async function driver({ base, typed = {} }) {
@@ -251,7 +251,9 @@ async function driver({ base, typed = {} }) {
       if (tag === 'form') {
         const rest = markup.slice(m.index);
         const block = rest.slice(0, rest.indexOf('</form>') + 7);
-        fields = [...block.matchAll(/name="([a-z]+)"/g)].map((f) => [f[1], TYPED[f[1]] ?? 'x']);
+        // camelCase too — a field called guildId is still a field, and a
+        // lowercase-only pattern silently submits the form without it.
+        fields = [...block.matchAll(/name="([a-zA-Z]+)"/g)].map((f) => [f[1], TYPED[f[1]] ?? 'x']);
       }
 
       found.push({
@@ -293,10 +295,14 @@ const PAYLOAD = ['confirm', 'job', 'meeting', 'user', 'wrong', 'provider',
                  'queue', 'paused', 'mode', 'action', 'role', 'campaign'];
 
 test('every control the dashboard renders does something', async (t) => {
-  const { parked, base } = await world(t);
+  const { campaignId, parked, base } = await world(t);
   const page = await driver({ base });
 
-  const CAMPAIGN = nav({ screen: 'campaign' }, ['navlink']);
+  // The campaign is selected by id rather than by opening whatever screen
+  // happens to be current. Creating a campaign lands you in the new empty
+  // one, so a reset that only said "campaign screen" would quietly start
+  // testing the wrong campaign from that point on.
+  const CAMPAIGN = nav({ campaign: String(campaignId) }, ['camp']);
   const stops = [
     ['campaign / notes', [CAMPAIGN, nav({ tab: 'notes' }, ['tab'])]],
     ['campaign / the table', [CAMPAIGN, nav({ tab: 'table' }, ['tab'])]],
@@ -307,6 +313,9 @@ test('every control the dashboard renders does something', async (t) => {
     ['servers', [nav({ screen: 'servers' }, ['navlink'])]],
     ['access', [nav({ screen: 'access' }, ['navlink'])]],
     ['import dialog', [CAMPAIGN, nav({ import: '' })]],
+    // Both dialogs get their own stop, because the controls inside one only
+    // exist while it is open and are invisible to the walk otherwise.
+    ['new campaign dialog', [CAMPAIGN, nav({ newCampaign: '' })]],
   ];
 
   const reset = async (steps) => { for (const step of steps) await page.fire(step); };

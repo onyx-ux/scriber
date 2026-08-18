@@ -27,6 +27,7 @@ import {
   setOutput,
 } from '../pipeline/job-actions.js';
 import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
+import { createCampaign, guildsCreatableBy } from '../campaign/create.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { ROLES } from '../pipeline/model-choice.js';
 
@@ -163,6 +164,56 @@ export const ACTIONS = {
         message: ended
           ? `Signed out of ${ended} session${ended === 1 ? '' : 's'}. They can sign back in with a new code.`
           : 'They had no sessions open.',
+      },
+    };
+  },
+
+  // Start a campaign without going to Discord.
+  //
+  // Who it belongs to comes from the session, never from the body: a manager id
+  // the caller could name is a manager id the caller could forge, and the
+  // campaign's owner is the one field here that decides who may change it
+  // afterwards.
+  //
+  // The server is checked against what this viewer may create in for the same
+  // reason. Every rule after that -- the name, the folder clash, the ceilings --
+  // is the slash command's, because it is literally the same function.
+  'campaign/create': (db, cfg, body, ctx) => {
+    const viewer = ctx?.viewer ?? null;
+
+    // With login off there is no session, and the page is the operator by
+    // definition -- so the campaign belongs to whoever the bot calls its owner.
+    const userId = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+    if (!userId) {
+      return {
+        status: 403,
+        payload: {
+          ok: false,
+          message: 'Sign in before starting a campaign — it has to belong to somebody.',
+        },
+      };
+    }
+
+    const guildId = String(body?.guildId ?? '').trim();
+    const allowed = guildsCreatableBy({ db, viewer, guilds: ctx?.guilds?.() ?? [] });
+    if (!allowed.some((g) => g.id === guildId)) {
+      return badRequest(
+        allowed.length
+          ? 'Pick one of the servers you can start a campaign in.'
+          : 'You have no server to start a campaign in yet.'
+      );
+    }
+
+    const made = createCampaign({ db, cfg, guildId, userId, name: body?.name });
+    if (!made.ok) return { status: 200, payload: { ok: false, message: made.message } };
+
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        campaignId: made.id,
+        name: made.name,
+        message: `📖 **${made.name}** exists. Notes are filed in \`${made.folder}/\`. Invite your players from the table tab.`,
       },
     };
   },
