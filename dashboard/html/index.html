@@ -2368,6 +2368,12 @@ async function send(action, body) {
       body: JSON.stringify(body),
     });
     const payload = await res.json().catch(() => ({}));
+
+    // Some refusals are a question rather than a no: the bot has counted what
+    // the change would do and wants that seen first. If the answer is yes it
+    // re-sends confirmed, and this call's job is done.
+    if (payload?.needsConfirming && (await confirmBlastRadius(action, body, payload))) return;
+
     toast(payload.message || `HTTP ${res.status}`, res.ok && payload.ok !== false);
   } catch (err) {
     toast(`Couldn't reach the bot — ${err.message}`, false);
@@ -2631,6 +2637,21 @@ document.addEventListener('submit', async (event) => {
   await send(form.dataset.act, body);
   if (submit) submit.disabled = false;
 });
+
+// A correction that would rewrite a large share of the campaign comes back
+// refused rather than applied, with the count. Rewriting is not reversible —
+// afterwards there is no telling which words were changed — so the number has
+// to be seen before it happens, not reported after.
+async function confirmBlastRadius(action, body, payload) {
+  if (!payload?.needsConfirming) return false;
+  const sure = confirm(
+    `${payload.message}\n\n` +
+    `Apply it anyway to all ${payload.wouldChange} of ${payload.total} lines? This cannot be undone.`
+  );
+  if (!sure) return false;
+  await send(action, { ...body, force: true });
+  return true;
+}
 
 // Searching re-renders in place rather than on submit, and keeps the caret
 // where it was — the list under it is the answer as you type.

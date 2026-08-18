@@ -1252,6 +1252,36 @@ function wrap(db) {
         .get(campaignId, `%${escaped}%`).n;
     },
 
+    // How many lines a rewrite WOULD change, without changing any.
+    //
+    // The rewrite is not reversible — once "a" has become "b" there is no
+    // telling which "b" used to be an "a" — so the only safe moment to learn
+    // how big a correction is, is before applying it. Same iteration as
+    // rewriteUtterances, minus the UPDATE.
+    countRewrites(campaignId, rewrite) {
+      const rows = db
+        .prepare(
+          `SELECT u.text FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.campaign_id = ?`
+        )
+        .all(campaignId);
+
+      let n = 0;
+      for (const row of rows) if (rewrite(row.text) !== row.text) n += 1;
+      return n;
+    },
+
+    countUtterancesIn(campaignId) {
+      return db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.campaign_id = ?`
+        )
+        .get(campaignId).n;
+    },
+
     // Rewrites already-stored transcripts. Takes the replace function rather
     // than doing it in SQL because SQLite's REPLACE() is case-sensitive and
     // has no word-boundary support, so "vecks" wouldn't match "Vecks" and

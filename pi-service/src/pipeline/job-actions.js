@@ -186,13 +186,47 @@ export function transcribeAction(db, cfg, { jobId, action = ACTION_NOW } = {}) {
 // A correction is a fact about ONE game's invented names. Scoping is not a
 // nicety — rewriting another table's transcripts with it is silent corruption
 // that nobody would notice until a recap named the wrong NPC.
-export function addCorrection(db, { campaignId, wrong, right, rewrite } = {}) {
+// How much of a campaign one correction may rewrite before it has to be
+// confirmed.
+//
+// Found the hard way, on live data: a correction of "a" to "b" is accepted by
+// every check above, and because the rewriter is word-boundary anchored it
+// replaced every standalone "a" in 1,011 of a campaign's 6,844 lines. There is
+// no undoing that — you cannot tell afterwards which "b" used to be an "a" —
+// and it took restoring from a snapshot to get the transcripts back.
+//
+// A rule that rewrites a quarter of everything ever said at a table is almost
+// always a typo. Both thresholds have to be crossed, so a small campaign where
+// three lines are a quarter of the total is not blocked.
+const BLAST_FRACTION = 0.25;
+const BLAST_FLOOR = 100;
+
+export function addCorrection(db, { campaignId, wrong, right, rewrite, force = false } = {}) {
   const from = String(wrong ?? '').trim();
   const to = String(right ?? '').trim();
 
   if (!from || !to) return { ok: false, message: '⚠️ Both the wrong text and the correct text are required.' };
   if (from.toLowerCase() === to.toLowerCase()) {
     return { ok: false, message: '⚠️ Those are the same thing — nothing to correct.' };
+  }
+
+  // Counted before anything is written. The rewrite is not reversible, so the
+  // only safe place to find out how big it is, is beforehand.
+  const wouldChange = rewrite ? db.countRewrites(campaignId, (text) => rewrite(text, from, to)) : 0;
+  const total = db.countUtterancesIn(campaignId);
+
+  if (!force && wouldChange >= BLAST_FLOOR && wouldChange > total * BLAST_FRACTION) {
+    return {
+      ok: false,
+      wouldChange,
+      total,
+      needsConfirming: true,
+      message:
+        `⚠️ "${from}" appears in ${wouldChange} of this campaign's ${total} lines. ` +
+        'Rewriting that many is almost always a typo in the correction rather than a fix — and it cannot be ' +
+        'undone, because afterwards there is no telling which words were changed. ' +
+        'Use a longer or more distinctive term, or confirm it if you really mean it.',
+    };
   }
 
   // Saved first so it applies to every future session, then replayed over

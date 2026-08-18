@@ -113,6 +113,11 @@ export const ACTIONS = {
         wrong: body.wrong,
         right: body.right,
         rewrite: (text, from, to) => applyCorrections(text, [{ wrong_text: from, correct_text: to }]),
+        // Only ever true when the operator has been shown how many lines it
+        // would rewrite and said yes anyway — see the blast-radius guard in
+        // job-actions.js. A rewrite cannot be undone, so the number has to be
+        // seen before it happens rather than reported after.
+        force: body.force === true,
       }),
     };
   },

@@ -686,3 +686,102 @@ test('a synchronous action still returns without a promise', async (t) => {
   assert.equal(typeof res.then, 'undefined', 'still a plain result');
   assert.equal(res.payload.ok, true);
 });
+
+// --- the blast radius of one correction ---
+//
+// Found the hard way, on live data: "a" -> "b" passes every other check, and
+// because the rewriter is word-boundary anchored it replaced every standalone
+// "a" in 1,011 of a campaign's 6,844 lines. There is no undoing that — you
+// cannot tell afterwards which "b" used to be an "a" — and it took a restore
+// from a snapshot to get the transcripts back.
+
+async function loaded(db, campaignId, lines) {
+  const meetingId = db.createMeeting({
+    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'Voice Chat',
+    startedAt: new Date().toISOString(), audioDir: '/tmp',
+  });
+  db.finalizeTranscription(
+    meetingId,
+    Array.from({ length: lines }, (_, i) => ({
+      userId: 'u', displayName: 'A', startMs: i, endMs: i + 1,
+      text: i % 2 === 0 ? 'she found a door in the wall' : 'nothing of interest here',
+    }))
+  );
+  return meetingId;
+}
+
+test('a correction that would rewrite a quarter of the campaign is refused', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  await loaded(db, campaignId, 400);
+
+  const res = runAction({
+    pathname: '/actions/corrections/add',
+    body: { campaignId, wrong: 'a', right: 'b' },
+    db, cfg,
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.equal(res.payload.needsConfirming, true);
+  assert.equal(res.payload.wouldChange, 200);
+  assert.match(res.payload.message, /cannot be undone/);
+  assert.deepEqual(db.listCorrections(campaignId), [], 'and nothing was saved');
+  assert.match(db.listUtterances(1)[0].text, /found a door/, 'and nothing was rewritten');
+});
+
+test('confirming it explicitly still lets it through', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  await loaded(db, campaignId, 400);
+
+  const res = runAction({
+    pathname: '/actions/corrections/add',
+    body: { campaignId, wrong: 'a', right: 'b', force: true },
+    db, cfg,
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.changed, 200);
+});
+
+// A real name is distinctive, so the guard must never get in the way of the
+// thing corrections exist for.
+test('an ordinary name correction is unaffected', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const meetingId = await loaded(db, campaignId, 400);
+  db.raw.prepare(`UPDATE utterances SET text = 'Vecks opens the door' WHERE meeting_id = ? AND id % 7 = 0`).run(meetingId);
+
+  const res = runAction({
+    pathname: '/actions/corrections/add',
+    body: { campaignId, wrong: 'Vecks', right: 'Vex' },
+    db, cfg,
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.ok(res.payload.changed > 0);
+});
+
+// A small campaign where three lines really are a quarter of everything must
+// not be blocked — both thresholds have to be crossed.
+test('a tiny campaign is not blocked by the fraction alone', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  await loaded(db, campaignId, 8);
+
+  const res = runAction({
+    pathname: '/actions/corrections/add',
+    body: { campaignId, wrong: 'a', right: 'b' },
+    db, cfg,
+  });
+
+  assert.equal(res.payload.ok, true, res.payload.message);
+});
+
+test('the dry run counts without changing anything', async (t) => {
+  const { db, campaignId } = await harness(t);
+  await loaded(db, campaignId, 100);
+  const before = db.listUtterances(1).map((u) => u.text);
+
+  const n = db.countRewrites(campaignId, (text) => text.replace(/\ba\b/g, 'b'));
+
+  assert.equal(n, 50);
+  assert.deepEqual(db.listUtterances(1).map((u) => u.text), before, 'counting is not rewriting');
+  assert.equal(db.countUtterancesIn(campaignId), 100);
+});
