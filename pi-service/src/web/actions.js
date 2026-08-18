@@ -144,6 +144,29 @@ export const ACTIONS = {
     };
   },
 
+  // Sign somebody out of the dashboard, everywhere at once.
+  //
+  // This does not remove them from a campaign and does not touch a single
+  // transcript -- it ends their sessions, so the next thing they do needs a
+  // fresh code from the bot. Revoking access and deleting somebody's history
+  // are different acts, and only one of them belongs on a button.
+  'access/revoke': (db, cfg, body) => {
+    const userId = String(body?.userId ?? '').trim();
+    if (!userId) return badRequest('A userId is required.');
+
+    const ended = db.closeAllAuthSessions(userId);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        ended,
+        message: ended
+          ? `Signed out of ${ended} session${ended === 1 ? '' : 's'}. They can sign back in with a new code.`
+          : 'They had no sessions open.',
+      },
+    };
+  },
+
   'campaign/output': (db, cfg, body) => {
     const id = campaignId(body);
     if (!id) return badRequest('A numeric campaignId is required.');

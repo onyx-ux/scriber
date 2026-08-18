@@ -9,6 +9,7 @@ import vm from 'node:vm';
 
 import { openDb } from '../src/store/db.js';
 import { startStatusServer } from '../src/web/server.js';
+import { openSession } from '../src/web/auth.js';
 
 // Does every button do something?
 //
@@ -89,6 +90,11 @@ async function world(t) {
   db.setMeetingStatus(broken, 'transcribe_failed');
 
   db.recordModelUsage({ provider: 'gemini', model: 'gemini-3.6-flash', role: 'summary', totalTokens: 1400 });
+
+  // Somebody signed in, so the access roster has a live session to show and
+  // its sign-out button is rendered rather than skipped.
+  openSession(db, { statusToken: 'sesame' }, { userId: PLAYER, username: 'saf' });
+
 
   const cfg = {
     statusHost: '127.0.0.1', statusPort: await freePort(), statusToken: 'sesame',
@@ -251,7 +257,7 @@ async function driver({ base, typed = {} }) {
       found.push({
         tag, dataset, fields,
         classes: (/class="([^"]*)"/.exec(attrs)?.[1] ?? '').split(/\s+/).filter(Boolean),
-        type: /type="submit"/.test(attrs) ? 'submit' : 'button',
+        type: /type="button"/.test(attrs) ? 'button' : 'submit',
       });
     }
     return found;

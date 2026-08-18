@@ -313,6 +313,7 @@
   .grid .r { text-align: right; }
   .roster .hd, .roster .tr { grid-template-columns: 1.4fr 1.4fr 90px 150px 190px; }
   .corr .hd, .corr .tr { grid-template-columns: 1fr 1fr 130px 100px; }
+  .access .hd, .access .tr { grid-template-columns: 1.5fr 92px 1.5fr 150px 104px; }
   .set-row { display: flex; justify-content: space-between; align-items: center; gap: 20px;
              padding: 16px 0; border-bottom: 1px solid var(--rule); }
   .set-row .what { font-size: 15px; }
@@ -690,7 +691,7 @@ function renderTop() {
           <button class="btn" data-copy-transcript>Copy all</button>
           <button class="btn" data-download="${script.meetingId}">Download .txt</button>
           ${script.total && can()
-            ? `<button class="btn go" data-act="summary/again" data-meeting="${script.meetingId}"
+            ? `<button type="button" class="btn go" data-act="summary/again" data-meeting="${script.meetingId}"
                  data-confirm="Write the notes for ${esc(script.ref)} again?">Summarise this</button>`
             : ''}` : ''}
         <button class="btn ghost" data-screen="campaign">Close</button>
@@ -725,10 +726,10 @@ function renderTop() {
   // or by two tabs open on this page, lands on the opposite of what the person
   // who clicked it saw.
   const buttons = can() && cap('machinery') && status
-    ? `<button class="btn" data-act="pause" data-queue="transcribe" data-paused="${!h.transcribePaused}"
+    ? `<button type="button" class="btn" data-act="pause" data-queue="transcribe" data-paused="${!h.transcribePaused}"
          ${h.transcribePaused ? '' : 'data-confirm="Pause transcription? Nothing new will start."'}>
          ${h.transcribePaused ? 'Resume transcribing' : 'Pause transcribing'}</button>
-       <button class="btn" data-act="pause" data-queue="summarize" data-paused="${!h.summarisePaused}"
+       <button type="button" class="btn" data-act="pause" data-queue="summarize" data-paused="${!h.summarisePaused}"
          ${h.summarisePaused ? '' : 'data-confirm="Pause summarising? Nothing new will start."'}>
          ${h.summarisePaused ? 'Resume summarising' : 'Pause summarising'}</button>`
     : '';
@@ -766,7 +767,7 @@ function renderBanner() {
         </div>
       </div>
       <div class="row-btns">
-        ${can() ? '<button class="btn danger" data-act="health/probe">Try again now</button>' : ''}
+        ${can() ? '<button type="button" class="btn danger" data-act="health/probe">Try again now</button>' : ''}
         <button class="btn ghost" data-diagnose>${view.diagnosing ? 'Hide the detail' : 'What is held'}</button>
       </div>
     </div>
@@ -1132,7 +1133,7 @@ function notesPane(s) {
         Obsidian export, not <code>/recap</code>. Writing them again fixes it; the transcript is untouched.
       </div>
       <div class="row-btns" style="margin-top:22px">
-        ${can() ? `<button class="btn go" data-act="summary/again" data-meeting="${s.meetingId}">Write them again</button>` : ''}
+        ${can() ? `<button type="button" class="btn go" data-act="summary/again" data-meeting="${s.meetingId}">Write them again</button>` : ''}
         ${cap('transcripts') ? `<button class="btn" data-transcript="${s.meetingId}">Read the transcript</button>` : ''}
       </div>`;
   }
@@ -1142,7 +1143,7 @@ function notesPane(s) {
       <h1 class="display" style="margin-top:12px">Not written up yet.</h1>
       <div class="say-2">This session has a transcript but no notes. Summarising posts them the usual way.</div>
       <div class="row-btns" style="margin-top:22px">
-        ${can() ? `<button class="btn go" data-act="summary/again" data-meeting="${s.meetingId}">Summarise it</button>` : ''}
+        ${can() ? `<button type="button" class="btn go" data-act="summary/again" data-meeting="${s.meetingId}">Summarise it</button>` : ''}
         ${cap('transcripts') ? `<button class="btn" data-transcript="${s.meetingId}">Read the transcript</button>` : ''}
       </div>`;
   }
@@ -1157,7 +1158,7 @@ function notesPane(s) {
       <h1 class="display">${esc(heading)}</h1>
       <div class="row-btns" style="margin-left:auto;padding-bottom:6px">
         ${cap('transcripts') ? `<button class="btn sm" data-transcript="${s.meetingId}">Transcript</button>` : ''}
-        ${can() ? `<button class="btn sm" data-act="summary/again" data-meeting="${s.meetingId}"
+        ${can() ? `<button type="button" class="btn sm" data-act="summary/again" data-meeting="${s.meetingId}"
              data-confirm="Write the notes for ${esc(s.ref)} again?">Re-summarise</button>` : ''}
         <button class="btn sm ghost" data-copy-notes>Copy for Obsidian</button>
       </div>
@@ -1208,12 +1209,12 @@ function approvalPane(s) {
       <div class="row-btns" style="margin-top:22px">
         ${providers.length
           ? providers.map((p, i) => `
-              <button class="btn ${i === 0 ? 'go big' : 'big'}" data-act="summary/approve"
+              <button type="button" class="btn ${i === 0 ? 'go big' : 'big'}" data-act="summary/approve"
                       data-job="${s.job.id}" data-provider="${esc(p)}">
                 ${i === 0 ? `Summarise with ${esc(providerName(p))}` : esc(providerName(p))}
               </button>`).join('')
-          : `<button class="btn go big" data-act="summary/approve" data-job="${s.job.id}">Summarise now</button>`}
-        <button class="btn big" data-act="summary/park" data-job="${s.job.id}">Leave it parked</button>
+          : `<button type="button" class="btn go big" data-act="summary/approve" data-job="${s.job.id}">Summarise now</button>`}
+        <button type="button" class="btn big" data-act="summary/park" data-job="${s.job.id}">Leave it parked</button>
         <span class="mono" style="font-size:11.5px;color:var(--dim);margin-left:6px">
           notes post to ${esc(destination())} when they are ready
         </span>
@@ -1231,9 +1232,9 @@ function transcribePane(s) {
     </div>
     ${can() ? `
       <div class="row-btns" style="margin-top:22px">
-        <button class="btn go big" data-act="transcribe" data-job="${s.job.id}" data-action="now">Transcribe now</button>
-        <button class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="later">Not yet</button>
-        <button class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="pi">On the Pi instead</button>
+        <button type="button" class="btn go big" data-act="transcribe" data-job="${s.job.id}" data-action="now">Transcribe now</button>
+        <button type="button" class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="later">Not yet</button>
+        <button type="button" class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="pi">On the Pi instead</button>
       </div>
       <div class="quiet" style="margin-top:14px">
         “On the Pi” needs no GPU at all, and takes hours rather than minutes.
@@ -1333,9 +1334,9 @@ function failedPane(s) {
     </div>
     ${can() ? `
       <div class="row-btns" style="margin-top:26px">
-        ${s.discardable ? `<button class="btn warn big" data-act="session/discard" data-meeting="${s.meetingId}"
+        ${s.discardable ? `<button type="button" class="btn warn big" data-act="session/discard" data-meeting="${s.meetingId}"
             data-confirm="Discard ${esc(s.ref)}? It has no transcript, and this stops it retrying.">Discard this session</button>` : ''}
-        ${s.lines ? `<button class="btn go big" data-act="summary/again" data-meeting="${s.meetingId}">Try summarising again</button>` : ''}
+        ${s.lines ? `<button type="button" class="btn go big" data-act="summary/again" data-meeting="${s.meetingId}">Try summarising again</button>` : ''}
         <button class="btn big" data-import>Import a recording instead</button>
       </div>
       <div class="quiet" style="margin-top:20px">
@@ -1446,7 +1447,7 @@ function rosterTab() {
             </span></div>
             <div class="r" style="display:flex;justify-content:flex-end;align-items:center;gap:10px">
               <span class="as-val ${p.consent.withdrawn ? 'declined' : CONSENT_CLASS[p.consent.state] || 'never'}">${esc(p.consent.label)}</span>
-              ${askable(p) ? `<button class="btn sm" data-act="roster/invite" data-campaign="${detail.id}"
+              ${askable(p) ? `<button type="button" class="btn sm" data-act="roster/invite" data-campaign="${detail.id}"
                 data-user="${esc(p.userId)}">${p.consent.state === 'pending' ? 'Ask again' : 'Invite'}</button>` : ''}
             </div>
           </div>`;
@@ -1522,7 +1523,7 @@ function invitePanel() {
                 : 'not at this table yet'}</div>
               <div class="r">${already?.consent.mayRecord || already?.consent.withdrawn
                 ? ''
-                : `<button class="btn sm go" data-act="roster/invite" data-campaign="${detail.id}"
+                : `<button type="button" class="btn sm go" data-act="roster/invite" data-campaign="${detail.id}"
                      data-user="${esc(m.userId)}">Ask them</button>`}</div>
             </div>`;
           }).join('')}
@@ -1587,7 +1588,7 @@ function correctionsTab() {
               <div class="mono" style="font-size:14px;color:var(--text-2)">“${esc(c.wrong)}”</div>
               <div style="font-size:15px;font-weight:500">${esc(c.right)}</div>
               <div class="r mono" style="font-size:13px;color:var(--dim)">${c.lines == null ? '—' : `${n(c.lines)} lines`}</div>
-              <div class="r">${canManage() ? `<button class="btn sm" data-act="corrections/remove"
+              <div class="r">${canManage() ? `<button type="button" class="btn sm" data-act="corrections/remove"
                 data-campaign="${detail.id}" data-wrong="${esc(c.wrong)}">Remove</button>` : ''}</div>
             </div>`).join('')}
           ${canManage() ? `
@@ -1610,7 +1611,7 @@ function correctionsTab() {
             Adding a correction already rewrites this campaign's transcripts. Replay is for the sessions
             that arrived afterwards from somewhere else — an import, or anything recovered from a crash.
           </div>
-          ${canManage() && list.length ? `<button class="btn wide" style="margin-top:16px" data-act="corrections/replay"
+          ${canManage() && list.length ? `<button type="button" class="btn wide" style="margin-top:16px" data-act="corrections/replay"
             data-campaign="${detail.id}"
             data-confirm="Replay every correction over this campaign's transcripts?">Replay over everything again</button>` : ''}
         </div>
@@ -1657,11 +1658,11 @@ function settingsTab() {
           // has to be visible — and leaving it out was a dead end, because a
           // campaign posting to a chosen channel could then never be moved.
           `<div class="seg" data-seg="output">
-             <button class="${mode === 'default' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
+             <button type="button" class="${mode === 'default' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
                      data-mode="default" ${canManage() ? '' : 'disabled'}>Where we played</button>
              <button class="${mode === 'channel' ? 'on' : ''}" disabled
                      title="Set with /campaign output in Discord, where the channels can be listed">A chosen channel</button>
-             <button class="${mode === 'dm' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
+             <button type="button" class="${mode === 'dm' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
                      data-mode="dm" ${canManage() && detail.claimed ? '' : 'disabled'}>DM to me</button>
            </div>`)}
         ${row('Last recorded in', 'The voice channel Quill most recently joined for this campaign',
@@ -2056,34 +2057,111 @@ function backupCard() {
     </div>`;
 }
 
+const LEVEL_TONE = { dev: 'agreed', owner: 'agreed', creator: 'waiting', player: '', none: 'never' };
+
+// Who can get into this bot.
+//
+// This page used to describe the security model -- token set, audio local,
+// nginx password. All true, and none of it answered the question you open an
+// access page to ask, which is who can see your campaigns and at what level.
+// So the posture is now three lines at the bottom, and the page is a roster.
 function accessScreen() {
-  const on = can();
+  const a = status?.access;
+
+  // The roster only reaches dev, so anybody else asking gets told why rather
+  // than shown an empty table and left to wonder whether that means nobody.
+  if (!a) {
+    return `
+      <div class="pane-main pane-wide">
+        <div class="kicker">Access</div>
+        <h1 class="display" style="margin-top:14px">This one is the bot owner's.</h1>
+        <div class="say-2">
+          A list of everyone who can reach this bot, and what each of them can see, is not a list
+          to hand around. You can see your own level in the corner of the rail.
+        </div>
+      </div>`;
+  }
+
+  const open = !a.requireLogin;
+  const nobody = a.people.length === 0;
+
+  const rows = a.people.map((p) => {
+    const name = p.name || `user ${p.userId.slice(0, 4)}…${p.userId.slice(-4)}`;
+    const seen = p.signedIn
+      ? `<span class="agreed">signed in</span>`
+      : p.codePending
+        ? `<span class="waiting">code sent</span>`
+        : p.lastSeen
+          ? `<span class="muted">${esc(since(Date.parse(p.lastSeen + 'Z')))}</span>`
+          : '<span class="muted">never signed in</span>';
+
+    // What they reach, in the terms that matter for that level: a server owner
+    // thinks in servers, everybody below them thinks in tables.
+    const reach = p.level === 'dev'
+      ? 'everything on this bot'
+      : p.guilds.length
+        ? esc(p.guilds.join(', '))
+        : p.campaigns
+          ? `${p.campaigns} campaign${p.campaigns === 1 ? '' : 's'}${p.manages ? `, runs ${p.manages}` : ''}`
+          : 'nothing yet';
+
+    return `
+      <div class="tr">
+        <div>${esc(name)}<div class="quiet mono" style="font-size:11px">${esc(p.userId)}</div></div>
+        <div class="as-val ${LEVEL_TONE[p.level] ?? ''}">${esc(p.level)}</div>
+        <div class="quiet">${reach}</div>
+        <div class="r as-val">${seen}</div>
+        <div class="r">${
+          p.sessions
+            ? `<button type="button" class="btn sm" data-act="access/revoke" data-user="${esc(p.userId)}"
+                 data-confirm="Sign ${name.replace(/"/g, '')} out of every session? They can sign back in with a new code.">Sign out</button>`
+            : ''
+        }</div>
+      </div>`;
+  }).join('');
+
   return `
     <div class="pane-main pane-wide">
-      <div class="kicker ${on ? 'done' : 'wait'}">${on ? 'Actions are on' : 'Read only'}</div>
+      <div class="kicker ${open ? 'broken' : 'done'}">${open ? 'Sign-in is off' : 'Sign-in required'}</div>
       <h1 class="display" style="margin-top:14px">
-        ${on ? 'This dashboard can change things.' : 'This dashboard can only look.'}
+        ${open
+          ? 'Anyone who opens this page is treated as you.'
+          : `${a.total} ${a.total === 1 ? 'person' : 'people'} can reach this bot.`}
       </h1>
       <div class="say-2">
-        ${on
-          ? 'A token is set on the bot, and nginx adds it to every request on the way through — so it is never in this page and never in your browser. Anyone who can open this page can approve a summary, spend an API call, and pause the queue.'
-          : 'No STATUS_TOKEN is set on the bot, so every action is refused rather than treated as open. Reading is allowed; nothing here can change anything.'}
+        ${open
+          ? `DASHBOARD_REQUIRE_LOGIN is not set, so the levels below are not being enforced — they are what
+             each person <em>would</em> see once it is. Sign in yourself first, then turn it on, or you lock
+             yourself out of your own bot.`
+          : `${a.signedIn} signed in right now. Everyone here can ask the bot for a code and get in at the
+             level shown; ending a session does not remove anyone from a table.`}
       </div>
 
-      <div class="steps" style="margin-top:30px">
+      <div class="grid access" style="margin-top:30px">
+        <div class="hd">
+          <div>Person</div><div>Level</div><div>Reaches</div>
+          <div class="r">Session</div><div class="r"></div>
+        </div>
+        ${nobody
+          ? '<div class="tr"><div class="quiet" style="grid-column:1/-1">Nobody has spoken or signed in yet.</div></div>'
+          : rows}
+      </div>
+
+      <div class="steps" style="margin-top:34px">
         <div>
-          <span class="mark ${on ? 'done' : ''}">${on ? '✓' : '!'}</span>
-          <div style="flex:1"><div class="what">Actions</div>
+          <span class="mark ${a.actionsEnabled ? 'done' : ''}">${a.actionsEnabled ? '✓' : '!'}</span>
+          <div style="flex:1"><div class="what">Actions ${a.actionsEnabled ? 'are on' : 'are refused'}</div>
             <div class="sub" style="font-family:var(--sans);font-size:13px">
-              ${on ? 'Approvals, corrections, pausing and imports all work from here.'
-                   : 'Set STATUS_TOKEN in pi-service/.env and in the dashboard container, then restart both.'}
+              ${a.actionsEnabled
+                ? 'A token is set on the bot and nginx adds it on the way through, so it is never in this page.'
+                : 'No STATUS_TOKEN is set, so every action fails closed rather than being treated as open.'}
             </div></div>
         </div>
         <div>
           <span class="mark done">✓</span>
           <div style="flex:1"><div class="what">Audio never leaves your network</div>
             <div class="sub" style="font-family:var(--sans);font-size:13px">
-              Recording, storage and transcription are all on hardware you own. Only finished transcript
+              Recording, storage and transcription all run on hardware you own. Only finished transcript
               text is sent to a summariser, and only when you release it.
             </div></div>
         </div>
@@ -2092,15 +2170,9 @@ function accessScreen() {
           <div style="flex:1"><div class="what">The page is behind a password</div>
             <div class="sub" style="font-family:var(--sans);font-size:13px">
               nginx allows the LAN outright and asks everyone else for the htpasswd credential.
-              Both are configured in <code>dashboard/config/</code> on the Pi.
+              Both live in <code>dashboard/config/</code> on the Pi.
             </div></div>
         </div>
-      </div>
-
-      <div class="quiet" style="margin-top:26px;max-width:74ch">
-        The transcript endpoint is behind the same door as everything else: a session transcript is exactly
-        the thing that should not be readable without one, so the page fetches it with the header rather
-        than linking to it.
       </div>
     </div>`;
 }
@@ -2506,8 +2578,12 @@ document.addEventListener('click', async (event) => {
   const dl = t.closest('button[data-download]');
   if (dl) return downloadTranscript(dl.dataset.download);
 
+  // A button inside a form is the submit handler's business -- handling the
+  // click here too would fire the action twice. Asking for .type instead was
+  // the bug: a <button> with no type attribute reports "submit", so this
+  // dropped every action click on the page.
   const btn = t.closest('button[data-act]');
-  if (!btn || btn.disabled || btn.type === 'submit') return;
+  if (!btn || btn.disabled || btn.closest('form')) return;
   if (btn.dataset.confirm && !confirm(btn.dataset.confirm)) return;
 
   const d = btn.dataset;

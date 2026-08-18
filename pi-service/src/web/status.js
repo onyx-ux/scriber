@@ -4,6 +4,7 @@ import { detectOpusBackend } from '../voice/opus-backend.js';
 import { configuredProviders } from '../pipeline/model-client.js';
 import { topModel, ladderFor, knownModels } from '../pipeline/model-choice.js';
 import { lastBackupCheck } from '../maintenance/backup-check.js';
+import { accessRoster } from './access.js';
 
 // The snapshot the dashboard renders.
 //
@@ -269,6 +270,10 @@ export function buildStatus({
     // Whether the newest snapshot has ever been opened, and what it said.
     // Machinery, so dev only — and null until something has checked, which
     // the page must render as "unknown" rather than as "fine".
+    // Who can get into this bot, at what level, and who is signed in now.
+    // Sits behind `everything`, because a roster of everyone the bot knows
+    // is exactly the thing a player should not be handed.
+    access: accessRoster({ db, cfg, client }),
     backup: lastBackupCheck(db),
     // Whether this bot will accept actions at all. Without it a dashboard with
     // no STATUS_TOKEN configured looks merely broken: every button returns 403

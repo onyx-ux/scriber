@@ -706,6 +706,46 @@ function wrap(db) {
     // for. Not the same as listCampaignsForUser, which is participation
     // (has spoken) and answers a different question — a player added to a
     // brand new campaign belongs to it before they have said a word.
+    // Everyone this bot knows, for the access page.
+    //
+    // Access is not one list. Somebody can reach this bot because they were
+    // added to a table, because they run one, because they have signed in, or
+    // simply because they once spoke while it was recording. All of those are
+    // access, so all of them are here: a page showing only live sessions would
+    // answer "who is signed in", which is a smaller and much less useful
+    // question than "who could sign in".
+    listKnownPeople() {
+      return db
+        .prepare(
+          `WITH people(user_id) AS (
+             SELECT user_id FROM campaign_members
+             UNION SELECT manager_user_id FROM campaigns WHERE manager_user_id IS NOT NULL
+             UNION SELECT user_id FROM campaign_consent
+             UNION SELECT user_id FROM auth_sessions
+             UNION SELECT user_id FROM auth_codes
+             UNION SELECT user_id FROM utterances
+           )
+           SELECT p.user_id AS userId,
+             COALESCE(
+               (SELECT s.username FROM auth_sessions s WHERE s.user_id = p.user_id
+                 ORDER BY s.created_at DESC LIMIT 1),
+               (SELECT a.username FROM auth_codes a WHERE a.user_id = p.user_id),
+               (SELECT u.display_name FROM utterances u WHERE u.user_id = p.user_id
+                 ORDER BY u.id DESC LIMIT 1)
+             ) AS name,
+             (SELECT COUNT(*) FROM auth_sessions s
+               WHERE s.user_id = p.user_id AND s.expires_at > datetime('now')) AS sessions,
+             (SELECT MAX(COALESCE(s.last_seen_at, s.created_at)) FROM auth_sessions s
+               WHERE s.user_id = p.user_id) AS lastSeen,
+             (SELECT COUNT(*) FROM auth_codes a
+               WHERE a.user_id = p.user_id AND a.expires_at > datetime('now')) AS codePending,
+             (SELECT COUNT(*) FROM utterances u WHERE u.user_id = p.user_id) AS lines
+           FROM people p
+           WHERE p.user_id IS NOT NULL AND p.user_id <> ''`
+        )
+        .all();
+    },
+
     listCampaignsForMember(userId) {
       return db
         .prepare(

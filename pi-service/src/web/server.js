@@ -114,6 +114,9 @@ const ACTION_NEEDS = {
   'corrections/remove': 'manage',
   'corrections/replay': 'manage',
   'campaign/output': 'manage',
+  // Ending somebody else's session is the operator's alone. A server owner
+  // has `servers` too, so gating on that would hand it to them as well.
+  'access/revoke': 'everything',
 };
 
 // The two actions you may aim at yourself wherever you are welcome.
@@ -135,6 +138,12 @@ function mayAct({ pathname, body, viewer, db }) {
   }
 
   const needs = ACTION_NEEDS[name] ?? 'machinery';
+
+  if (needs === 'everything') {
+    return viewer.can.everything
+      ? null
+      : { status: 403, message: 'Only the bot owner can change who has access.' };
+  }
 
   if (needs === 'machinery') {
     return viewer.can.machinery && viewer.can.approvals

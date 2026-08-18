@@ -76,6 +76,7 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
   assert.deepEqual(
     Object.keys(ACTIONS).sort(),
     [
+      'access/revoke',
       'campaign/output',
       'corrections/add',
       'corrections/remove',
