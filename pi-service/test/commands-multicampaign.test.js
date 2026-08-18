@@ -569,6 +569,14 @@ test('a player cannot run a manager subcommand', async (t) => {
 // resume, pending, import, transcribe and summarise spend the owner's GPU,
 // API budget and disk — they are on the dashboard, behind STATUS_TOKEN, and a
 // player opening the picker never sees them at all.
+//
+// correct, uncorrect and corrections used to be on this list, and came back.
+// They were moved out with the pipeline commands, but they never shared the
+// reason: a correction spends no GPU, no API budget and no disk — it is a text
+// substitution on the local database, made by whoever runs the campaign rather
+// than by whoever owns the Pi. Bundling them here made the dashboard compulsory
+// for the single most common thing a DM does with a transcription bot. See
+// dashboard-optional.test.js, which now asserts the opposite property.
 test('the pipeline is not in the command surface to be refused from', async () => {
   process.env.DISCORD_TOKEN ||= 'x';
   process.env.DISCORD_CLIENT_ID ||= 'x';
@@ -576,7 +584,7 @@ test('the pipeline is not in the command surface to be refused from', async () =
   const { commandDefs } = await import('../src/commands/index.js');
 
   const everything = commandDefs.flatMap((c) => [c.name, ...(c.options ?? []).filter((o) => o.type === 1).map((o) => o.name)]);
-  for (const gone of ['approve', 'pause', 'resume', 'pending', 'import', 'transcribe', 'summarise', 'correct', 'uncorrect', 'corrections', 'dm', 'status']) {
+  for (const gone of ['approve', 'pause', 'resume', 'pending', 'import', 'transcribe', 'summarise', 'dm', 'status']) {
     assert.ok(!everything.includes(gone), `/${gone} should have moved to the dashboard`);
   }
 });

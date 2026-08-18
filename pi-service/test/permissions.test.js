@@ -167,7 +167,12 @@ test('the command surface splits into the three intended tiers', async () => {
   // at all: approve, pause, transcribe, summarise, pending and import spend
   // the owner's GPU, API budget and disk, so they moved to the dashboard
   // rather than sitting in a picker every player can open.
-  assert.deepEqual([...MANAGER_SUBCOMMANDS].sort(), ['invite', 'output', 'remove', 'rename']);
+  // The corrections four sit here rather than a tier lower: they rewrite the
+  // transcript itself, which is the same authority as renaming the campaign,
+  // not the lesser one of reading it.
+  assert.deepEqual([...MANAGER_SUBCOMMANDS].sort(), [
+    'correct', 'corrections', 'invite', 'output', 'remove', 'rename', 'replay', 'uncorrect',
+  ]);
 
   const campaign = commandDefs.find((c) => c.name === 'campaign');
   const subs = campaign.options.filter((o) => o.type === 1).map((o) => o.name);

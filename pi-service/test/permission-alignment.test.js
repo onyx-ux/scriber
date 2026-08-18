@@ -44,6 +44,11 @@ const COMMANDS = {
   remove: { tier: 'manager', dashboard: null, why: 'Discord only' },
   output: { tier: 'manager', dashboard: 'creator', why: 'campaign/output' },
 
+  correct: { tier: 'manager', dashboard: 'creator', why: 'corrections/add' },
+  uncorrect: { tier: 'manager', dashboard: 'creator', why: 'corrections/remove' },
+  corrections: { tier: 'manager', dashboard: 'creator', why: 'the corrections tab' },
+  replay: { tier: 'manager', dashboard: 'creator', why: 'corrections/replay' },
+
   setchar: { tier: 'member', dashboard: 'player', why: 'roster/character, on yourself' },
   whoami: { tier: 'member', dashboard: null, why: 'the dashboard shows this without asking' },
   consent: { tier: 'player', dashboard: null, why: 'deliberately Discord-only — see below' },

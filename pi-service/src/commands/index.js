@@ -24,6 +24,7 @@ import {
 } from '../campaign/resolve.js';
 import { isOwner } from '../campaign/permissions.js';
 import { createCampaign } from '../campaign/create.js';
+import { handleCorrect, handleUncorrect, handleCorrections, handleReplay } from './corrections.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import {
@@ -137,7 +138,12 @@ const MEMBER_SUBCOMMANDS = new Set(['setchar', 'whoami']);
 // `create` and `list` are absent on purpose: creating has to work for someone
 // who runs nothing yet, and listing shows what is here. Both resolve for
 // themselves.
-export const MANAGER_SUBCOMMANDS = new Set(['rename', 'invite', 'remove', 'output']);
+export const MANAGER_SUBCOMMANDS = new Set([
+  'rename', 'invite', 'remove', 'output',
+  // Corrections reshape the record itself, which makes them the same
+  // authority as renaming the campaign rather than a lesser one.
+  'correct', 'uncorrect', 'corrections', 'replay',
+]);
 
 // /join and /leave are the only commands left outside /campaign, because they
 // are the only two that must be run from inside the voice channel being
@@ -294,6 +300,52 @@ export const commandDefs = [
           .addChannelOption((o) =>
             o.setName('channel').setDescription('Which channel (with mode: A specific channel)').setRequired(false)
           )
+          .addStringOption(campaignOption)
+      )
+
+      // --- what Whisper keeps getting wrong ---
+      //
+      // Flat rather than a `correction` subcommand group: the dispatcher and
+      // both permission tiers key off the bare subcommand name, so a group
+      // would put `correction list` and `correction remove` through the routes
+      // and tiers belonging to the top-level `list` and `remove`.
+      .addSubcommand((s) =>
+        s
+          .setName('correct')
+          .setDescription('Teach Quill a name it keeps mishearing — applies to old transcripts and new')
+          .addStringOption((o) =>
+            o.setName('heard').setDescription('What it writes, e.g. "Kaylen"').setRequired(true)
+          )
+          .addStringOption((o) =>
+            o.setName('write').setDescription('What it should write, e.g. "Kaelen"').setRequired(true)
+          )
+          .addBooleanOption((o) =>
+            o
+              .setName('confirm')
+              .setDescription('Apply it even if it would rewrite a large share of the campaign')
+              .setRequired(false)
+          )
+          .addStringOption(campaignOption)
+      )
+      .addSubcommand((s) =>
+        s
+          .setName('uncorrect')
+          .setDescription('Drop a correction — lines already rewritten stay rewritten')
+          .addStringOption((o) =>
+            o.setName('heard').setDescription('The wrong text it was matching on').setRequired(true)
+          )
+          .addStringOption(campaignOption)
+      )
+      .addSubcommand((s) =>
+        s
+          .setName('corrections')
+          .setDescription('List the corrections saved for this campaign')
+          .addStringOption(campaignOption)
+      )
+      .addSubcommand((s) =>
+        s
+          .setName('replay')
+          .setDescription('Re-apply every correction over this campaign’s existing transcripts')
           .addStringOption(campaignOption)
       )
 
@@ -536,6 +588,11 @@ const CAMPAIGN_ROUTES = {
   output: (i, db) => handleCampaignOutput(i, db, campaign(i)),
   invite: (i, db, cfg) => handleCampaignInvite(i, db, cfg, campaign(i)),
   remove: (i, db) => handleCampaignRemove(i, db, campaign(i)),
+
+  correct: (i, db) => handleCorrect(i, db, campaign(i)),
+  uncorrect: (i, db) => handleUncorrect(i, db, campaign(i)),
+  corrections: (i, db) => handleCorrections(i, db, campaign(i)),
+  replay: (i, db) => handleReplay(i, db, campaign(i)),
 
   setchar: (i, db) => handleSetCharacter(i, db),
   whoami: (i, db) => handleWhoAmI(i, db),
