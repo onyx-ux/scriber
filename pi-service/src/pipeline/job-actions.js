@@ -219,6 +219,10 @@ export function addCorrection(db, { campaignId, wrong, right, rewrite, force = f
   if (from.toLowerCase() === to.toLowerCase()) {
     return { ok: false, message: '⚠️ Those are the same thing — nothing to correct.' };
   }
+  // A correction belongs to a campaign. Without this a made-up id wrote a row
+  // attached to nothing, which nothing would ever read and nothing would ever
+  // clean up — corrections has no foreign key to lean on.
+  if (!db.getCampaign(campaignId)) return { ok: false, message: '⚠️ No such campaign.' };
 
   // Counted before anything is written. The rewrite is not reversible, so the
   // only safe place to find out how big it is, is beforehand.

@@ -151,9 +151,14 @@ function mayAct({ pathname, body, viewer, db }) {
   // trusted from it: an id you cannot manage is refused whatever else is true.
   const id = Number(body?.campaignId);
   if (!Number.isInteger(id) || id <= 0) return null; // the action's own validator will say so better
-  if (!db.getCampaign(id)) return null;
 
-  return mayManage(viewer, id)
+  // A campaign that does not exist is refused here too, rather than waved
+  // through for the action to sort out. It used to defer, on the reasoning
+  // that the action would validate — and corrections/add did not, so a made-up
+  // id wrote a correction row belonging to no campaign. "Not a campaign you
+  // run" is true of one that does not exist, and answering it here means every
+  // future manage action inherits the check instead of having to remember it.
+  return mayManage(viewer, id) && db.getCampaign(id)
     ? null
     : { status: 403, message: 'That is not a campaign you run.' };
 }

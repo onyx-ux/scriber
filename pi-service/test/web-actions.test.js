@@ -823,3 +823,21 @@ test('the dry run counts without changing anything', async (t) => {
   assert.deepEqual(db.listUtterances(1).map((u) => u.text), before, 'counting is not rewriting');
   assert.equal(db.countUtterancesIn(campaignId), 100);
 });
+
+// A made-up campaign id used to write a correction row belonging to nothing:
+// mayAct deferred to the action's validator, and the action did not have one.
+// Nothing would ever read that row and nothing would clean it up — corrections
+// has no foreign key to lean on.
+test('a correction for a campaign that does not exist is refused', async (t) => {
+  const { db, cfg } = await harness(t);
+
+  const res = runAction({
+    pathname: '/actions/corrections/add',
+    body: { campaignId: 999999, wrong: 'Vecks', right: 'Vex' },
+    db, cfg,
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /No such campaign/);
+  assert.equal(db.raw.prepare('SELECT COUNT(*) AS n FROM corrections').get().n, 0, 'and no orphan row');
+});

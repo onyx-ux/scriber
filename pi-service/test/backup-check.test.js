@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
-import { verifyNewestBackup, newestSnapshot, checkAndRecordBackup, lastBackupCheck } from '../src/maintenance/backup-check.js';
+import { verifyNewestBackup, newestSnapshot, checkAndRecordBackup, lastBackupCheck, startBackupTimer } from '../src/maintenance/backup-check.js';
 
 // Proving the backup is a backup.
 //
@@ -182,4 +182,39 @@ test('a fresh snapshot is not stale', async (t) => {
   const report = await verifyNewestBackup(db, cfg);
   assert.equal(report.stale, false);
   assert.ok(report.ageHours < 1);
+});
+
+// --- taking one on a timer, not only when somebody plays ---
+
+test('the timer fires an immediate snapshot and then repeats', async (t) => {
+  const { db, cfg } = await world(t);
+  let taken = 0;
+
+  const handle = startBackupTimer(db, { ...cfg, driveSyncEnabled: true }, {
+    backupAndSync: async () => { taken += 1; },
+    everyMs: 10,
+  });
+  t.after(() => clearInterval(handle.timer));
+
+  await handle.tick();
+  assert.equal(taken, 1, 'one straight away, so a restart is a backup');
+
+  await new Promise((r) => setTimeout(r, 45));
+  assert.ok(taken > 1, 'and again on the interval');
+});
+
+test('a failing backup does not take the bot down', async (t) => {
+  const { db, cfg } = await world(t);
+  const handle = startBackupTimer(db, { ...cfg, driveSyncEnabled: true }, {
+    backupAndSync: async () => { throw new Error('rclone exploded'); },
+    everyMs: 10_000,
+  });
+  t.after(() => clearInterval(handle.timer));
+
+  await assert.doesNotReject(() => handle.tick());
+});
+
+test('with drive sync off there is no timer at all', async (t) => {
+  const { db, cfg } = await world(t);
+  assert.equal(startBackupTimer(db, { ...cfg, driveSyncEnabled: false }, { backupAndSync: async () => {} }), null);
 });

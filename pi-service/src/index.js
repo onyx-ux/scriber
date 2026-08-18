@@ -9,6 +9,8 @@ import { migrateLedgerFolders } from './campaign/vault-migrate.js';
 import { describeOpusBackend } from './voice/opus-backend.js';
 import { startStatusServer } from './web/server.js';
 import { startRetentionTimer } from './maintenance/retention.js';
+import { startBackupTimer } from './maintenance/backup-check.js';
+import { backupAndSyncDatabase } from './sync/drive-sync.js';
 import { join } from 'node:path';
 
 // The umask that makes those files collectable over SFTP is set in
@@ -85,6 +87,16 @@ async function main() {
 
     startRetentionTimer(db, config);
     console.log(`Retention timer started (${config.audioRetentionDays || 'disabled'} day(s)).`);
+
+    // Backups used to fire only when a session was recorded or summarised,
+    // which meant a quiet fortnight had no snapshot — while consent decisions,
+    // character names and corrections all changed underneath. See
+    // maintenance/backup-check.js.
+    const backups = startBackupTimer(db, config, { backupAndSync: backupAndSyncDatabase });
+    if (backups) {
+      backups.tick();
+      console.log('Backup timer started (daily snapshot, verified after each one).');
+    }
 
     // An invitation nobody answered stops being one after a day. Swept hourly
     // as well as checked when a button is pressed: the button check is what

@@ -144,6 +144,38 @@ export async function checkAndRecordBackup(db, cfg) {
   return report;
 }
 
+// Take a snapshot on a timer, not only when a session finishes.
+//
+// Backups used to fire from exactly two places: the end of a recording and the
+// end of a summary. That is fine for transcripts, which is what everybody
+// thinks of as the data — and wrong for everything else. Consent decisions,
+// character names, corrections and the roster all change on days nobody plays,
+// and a table that has a quiet fortnight had no snapshot for a fortnight.
+//
+// Observed doing exactly that: the newest automatic snapshot was 40 hours old
+// and missing all six character names, because they were set after the last
+// session was transcribed.
+//
+// Cheap enough to be boring: SQLite's .backup() on a 950 KB database, once a
+// day, and the rolling window already keeps ten.
+export function startBackupTimer(db, cfg, { backupAndSync, everyMs = 24 * 60 * 60 * 1000 } = {}) {
+  if (!cfg.driveSyncEnabled) return null;
+
+  const tick = async () => {
+    try {
+      await backupAndSync(db, cfg);
+    } catch (err) {
+      // A failed backup must never take the bot down. It is already logged
+      // and, from today, the dashboard shows when the newest one went stale.
+      console.error('[backup] scheduled snapshot failed:', err.message);
+    }
+  };
+
+  const timer = setInterval(tick, everyMs);
+  timer.unref?.();
+  return { timer, tick };
+}
+
 export function lastBackupCheck(db) {
   try {
     const raw = db.getSetting('backup_last_check');
