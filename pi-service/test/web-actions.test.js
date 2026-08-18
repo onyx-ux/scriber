@@ -765,13 +765,51 @@ test('a tiny campaign is not blocked by the fraction alone', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
   await loaded(db, campaignId, 8);
 
+  // "door" is in half these lines, which is far over the fraction — but four
+  // lines is not a thousand, so the floor keeps the guard quiet.
   const res = runAction({
     pathname: '/actions/corrections/add',
-    body: { campaignId, wrong: 'a', right: 'b' },
+    body: { campaignId, wrong: 'door', right: 'gate' },
     db, cfg,
   });
 
   assert.equal(res.payload.ok, true, res.payload.message);
+});
+
+// The strong signal, and the one that would have caught the real incident:
+// word-boundary matching on one or two characters hits articles and initials,
+// never a name. The shortest real correction at this table is "Vex".
+test('a one or two character term is refused however small the campaign', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  await loaded(db, campaignId, 6);
+
+  for (const wrong of ['a', 'I', 'of']) {
+    const res = runAction({
+      pathname: '/actions/corrections/add',
+      body: { campaignId, wrong, right: 'something' },
+      db, cfg,
+    });
+    assert.equal(res.payload.ok, false, `"${wrong}" should be refused`);
+    assert.match(res.payload.message, /too short/);
+  }
+  assert.deepEqual(db.listCorrections(campaignId), []);
+});
+
+// The exact shape of the real incident: 1,010 of 6,844 lines is 14.8%, which
+// slipped under a quarter. The floor is what catches it.
+test('the real incident would now be refused', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  await loaded(db, campaignId, 6844);
+
+  const res = runAction({
+    pathname: '/actions/corrections/add',
+    body: { campaignId, wrong: 'door', right: 'gate' },
+    db, cfg,
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.equal(res.payload.wouldChange, 3422);
+  assert.deepEqual(db.listCorrections(campaignId), [], 'and nothing was written');
 });
 
 test('the dry run counts without changing anything', async (t) => {

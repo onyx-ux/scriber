@@ -186,20 +186,30 @@ export function transcribeAction(db, cfg, { jobId, action = ACTION_NOW } = {}) {
 // A correction is a fact about ONE game's invented names. Scoping is not a
 // nicety — rewriting another table's transcripts with it is silent corruption
 // that nobody would notice until a recap named the wrong NPC.
-// How much of a campaign one correction may rewrite before it has to be
-// confirmed.
+// What makes a correction dangerous, learned by doing it twice.
 //
-// Found the hard way, on live data: a correction of "a" to "b" is accepted by
-// every check above, and because the rewriter is word-boundary anchored it
-// replaced every standalone "a" in 1,011 of a campaign's 6,844 lines. There is
-// no undoing that — you cannot tell afterwards which "b" used to be an "a" —
-// and it took restoring from a snapshot to get the transcripts back.
+// A correction of "a" to "b" passes every other check here, and because the
+// rewriter is word-boundary anchored it replaced every standalone "a" in 1,010
+// of a campaign's 6,844 lines. There is no undoing that — afterwards there is
+// no telling which "b" used to be an "a" — and it took restoring from a
+// snapshot to get the transcripts back.
 //
-// A rule that rewrites a quarter of everything ever said at a table is almost
-// always a typo. Both thresholds have to be crossed, so a small campaign where
-// three lines are a quarter of the total is not blocked.
-const BLAST_FRACTION = 0.25;
-const BLAST_FLOOR = 100;
+// The first attempt at this guard used a fraction alone, at a quarter, and did
+// not fire: 1,010 of 6,844 is 14.8%. Which was the lesson. There are two
+// independent signals and the fraction is the weaker one:
+//
+//   LENGTH is the strong signal. Word-boundary matching on one or two
+//   characters hits articles, initials and stray letters, never a name. No
+//   legitimate correction target is that short — the shortest real one at this
+//   table is "Vex".
+//
+//   VOLUME catches the longer term that happens to be everywhere. A thousand
+//   lines is a lot however big the campaign is, so the floor does the work and
+//   the fraction only stops it firing on a tiny campaign where five lines is
+//   most of it.
+const MIN_TERM_LENGTH = 3;
+const BLAST_FRACTION = 0.1;
+const BLAST_FLOOR = 200;
 
 export function addCorrection(db, { campaignId, wrong, right, rewrite, force = false } = {}) {
   const from = String(wrong ?? '').trim();
@@ -215,16 +225,22 @@ export function addCorrection(db, { campaignId, wrong, right, rewrite, force = f
   const wouldChange = rewrite ? db.countRewrites(campaignId, (text) => rewrite(text, from, to)) : 0;
   const total = db.countUtterancesIn(campaignId);
 
-  if (!force && wouldChange >= BLAST_FLOOR && wouldChange > total * BLAST_FRACTION) {
+  const tooShort = from.length < MIN_TERM_LENGTH;
+  const tooBroad = wouldChange >= BLAST_FLOOR && wouldChange > total * BLAST_FRACTION;
+
+  if (!force && (tooShort || tooBroad)) {
     return {
       ok: false,
       wouldChange,
       total,
       needsConfirming: true,
       message:
-        `⚠️ "${from}" appears in ${wouldChange} of this campaign's ${total} lines. ` +
-        'Rewriting that many is almost always a typo in the correction rather than a fix — and it cannot be ' +
-        'undone, because afterwards there is no telling which words were changed. ' +
+        (tooShort
+          ? `⚠️ "${from}" is too short to correct safely — matching on ${from.length} character` +
+            `${from.length === 1 ? '' : 's'} catches articles and initials rather than a name. `
+          : `⚠️ "${from}" appears in ${wouldChange} of this campaign's ${total} lines. `) +
+        `It would rewrite ${wouldChange} line${wouldChange === 1 ? '' : 's'}, and that cannot be undone — ` +
+        'afterwards there is no telling which words were changed. ' +
         'Use a longer or more distinctive term, or confirm it if you really mean it.',
     };
   }
