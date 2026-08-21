@@ -43,6 +43,13 @@ const COMMANDS = {
   invite: { tier: 'manager', dashboard: 'creator', why: 'roster/invite' },
   remove: { tier: 'manager', dashboard: null, why: 'Discord only' },
   output: { tier: 'manager', dashboard: 'creator', why: 'campaign/output' },
+  delete: { tier: 'manager', dashboard: 'creator', why: 'campaign/delete' },
+
+  // `restore` sits at no tier, like `create` and `list`. It cannot: the
+  // resolver finds campaigns, and an archived campaign is invisible to it by
+  // design. The handler looks through the archive itself and shows only what
+  // the caller deleted, so being open costs nothing.
+  restore: { tier: 'open', dashboard: 'creator', why: 'campaign/restore' },
 
   correct: { tier: 'manager', dashboard: 'creator', why: 'corrections/add' },
   uncorrect: { tier: 'manager', dashboard: 'creator', why: 'corrections/remove' },

@@ -25,6 +25,7 @@ import {
 import { isOwner } from '../campaign/permissions.js';
 import { createCampaign } from '../campaign/create.js';
 import { handleCorrect, handleUncorrect, handleCorrections, handleReplay } from './corrections.js';
+import { handleCampaignDelete, handleCampaignRestore } from './archive.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import {
@@ -143,6 +144,10 @@ export const MANAGER_SUBCOMMANDS = new Set([
   // Corrections reshape the record itself, which makes them the same
   // authority as renaming the campaign rather than a lesser one.
   'correct', 'uncorrect', 'corrections', 'replay',
+  // Deleting is the manager tier too. Restoring is deliberately absent: an
+  // archived campaign cannot be resolved -- that is what archiving it means
+  // -- so its handler finds its own and scopes to what the caller ran.
+  'delete',
 ]);
 
 // /join and /leave are the only commands left outside /campaign, because they
@@ -301,6 +306,35 @@ export const commandDefs = [
             o.setName('channel').setDescription('Which channel (with mode: A specific channel)').setRequired(false)
           )
           .addStringOption(campaignOption)
+      )
+
+      // --- deleting one, and changing your mind ---
+      //
+      // `confirm` is a required option rather than a yes/no, because typing the
+      // name is the safety mechanism: it makes the hand slow down and look at
+      // which campaign this actually is. `restore` resolves nothing, like
+      // `create` and `list` — an archived campaign is invisible to the resolver
+      // by design, so a subcommand that goes looking for one has to do it
+      // itself.
+      .addSubcommand((s) =>
+        s
+          .setName('delete')
+          .setDescription('Delete a campaign you run — recoverable for 30 days')
+          .addStringOption((o) =>
+            o
+              .setName('confirm')
+              .setDescription('Type the campaign’s name exactly, to be sure this is the one')
+              .setRequired(true)
+          )
+          .addStringOption(campaignOption)
+      )
+      .addSubcommand((s) =>
+        s
+          .setName('restore')
+          .setDescription('Bring back a campaign you deleted in the last 30 days')
+          .addStringOption((o) =>
+            o.setName('campaign').setDescription('Which one — leave empty to see what is waiting').setRequired(false)
+          )
       )
 
       // --- what Whisper keeps getting wrong ---
@@ -588,6 +622,9 @@ const CAMPAIGN_ROUTES = {
   output: (i, db) => handleCampaignOutput(i, db, campaign(i)),
   invite: (i, db, cfg) => handleCampaignInvite(i, db, cfg, campaign(i)),
   remove: (i, db) => handleCampaignRemove(i, db, campaign(i)),
+
+  delete: (i, db, cfg) => handleCampaignDelete(i, db, cfg, campaign(i)),
+  restore: (i, db, cfg) => handleCampaignRestore(i, db, cfg),
 
   correct: (i, db) => handleCorrect(i, db, campaign(i)),
   uncorrect: (i, db) => handleUncorrect(i, db, campaign(i)),

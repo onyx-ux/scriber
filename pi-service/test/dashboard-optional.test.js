@@ -34,6 +34,8 @@ const REACHABLE_WITHOUT_DEV = {
   'roster/forget': '/campaign remove',
   'campaign/output': '/campaign output',
   'campaign/create': '/campaign create',
+  'campaign/delete': '/campaign delete',
+  'campaign/restore': '/campaign restore',
   'corrections/add': '/campaign correct',
   'corrections/remove': '/campaign uncorrect',
   'corrections/replay': '/campaign replay',

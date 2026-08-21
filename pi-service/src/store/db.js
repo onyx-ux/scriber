@@ -398,6 +398,18 @@ function migrate(db) {
   // one setting for every table it serves. A campaign that wants its recaps
   // in #session-notes and another that wants them DM'd to its DM cannot both
   // be expressed that way, so the choice belongs on the campaign.
+  // Deleting a campaign, with thirty days to change your mind.
+  //
+  // A campaign holds every session anybody ever recorded at that table, so
+  // erasing it on the spot is the one irreversible act in this whole bot that
+  // somebody might perform while angry. It is archived instead: invisible
+  // immediately, restorable until the window closes.
+  if (!campaignColumns.includes('archived_at')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN archived_at TEXT`);
+    db.exec(`ALTER TABLE campaigns ADD COLUMN archived_by TEXT`);
+    console.log('[db] migrated: added campaigns.archived_at / archived_by');
+  }
+
   if (!campaignColumns.includes('output_mode')) {
     db.exec(`ALTER TABLE campaigns ADD COLUMN output_mode TEXT`);
     db.exec(`ALTER TABLE campaigns ADD COLUMN output_channel_id TEXT`);
@@ -507,13 +519,26 @@ function migrate(db) {
 // nobody has named is shown by the channel it last recorded in, and a campaign
 // with no sessions at all still has to appear — it is brand new and needs
 // setting up, which is precisely when it must be selectable.
-const CAMPAIGN_VIEW = `
+const CAMPAIGN_COLUMNS = `
   SELECT c.*,
          (SELECT m.channel_name FROM meetings m
            WHERE m.campaign_id = c.id ORDER BY m.id DESC LIMIT 1)  AS channel_name,
          (SELECT COUNT(*)      FROM meetings m WHERE m.campaign_id = c.id) AS sessions,
          (SELECT MAX(m.started_at) FROM meetings m WHERE m.campaign_id = c.id) AS last_session_at
     FROM campaigns c`;
+
+// An archived campaign is invisible everywhere, and that is enforced here
+// rather than at the call sites. There are five listing methods and about
+// forty callers between them; a filter each one has to remember is a filter
+// one of them will forget, and the failure mode is a deleted campaign showing
+// up in a picker.
+//
+// Every query below therefore continues the WHERE with AND rather than
+// starting one. CAMPAIGN_VIEW_ALL is for the two places that must see through
+// the archive: restoring, and checking a new name against folders that still
+// exist on disk.
+const CAMPAIGN_VIEW = `${CAMPAIGN_COLUMNS} WHERE c.archived_at IS NULL`;
+const CAMPAIGN_VIEW_ALL = `${CAMPAIGN_COLUMNS} WHERE 1 = 1`;
 
 export function openDb(path) {
   mkdirSync(dirname(path), { recursive: true });
@@ -649,11 +674,11 @@ function wrap(db) {
     },
 
     listCampaignsInGuild(guildId) {
-      return db.prepare(`${CAMPAIGN_VIEW} WHERE c.guild_id = ? ORDER BY c.id`).all(guildId);
+      return db.prepare(`${CAMPAIGN_VIEW} AND c.guild_id = ? ORDER BY c.id`).all(guildId);
     },
 
     getCampaign(campaignId) {
-      return db.prepare(`${CAMPAIGN_VIEW} WHERE c.id = ?`).get(campaignId) ?? null;
+      return db.prepare(`${CAMPAIGN_VIEW} AND c.id = ?`).get(campaignId) ?? null;
     },
 
     createCampaign: db.transaction((guildId, name, managerUserId) => {
@@ -750,8 +775,8 @@ function wrap(db) {
       return db
         .prepare(
           `${CAMPAIGN_VIEW}
-            WHERE EXISTS (SELECT 1 FROM campaign_members cm
-                           WHERE cm.campaign_id = c.id AND cm.user_id = ?)
+            AND EXISTS (SELECT 1 FROM campaign_members cm
+                         WHERE cm.campaign_id = c.id AND cm.user_id = ?)
             ORDER BY c.guild_id, c.id`
         )
         .all(userId);
@@ -896,6 +921,39 @@ function wrap(db) {
     //
     // channel_name is the last channel it recorded in, kept only as the
     // display fallback for a campaign nobody has named yet.
+    // Sees through the archive. Only two callers should: restoring something,
+    // and checking whether a new name would collide with a folder that still
+    // exists on disk because the campaign that owns it is only archived.
+    listCampaignsIncludingArchived() {
+      return db.prepare(`${CAMPAIGN_VIEW_ALL} ORDER BY c.guild_id, c.id`).all();
+    },
+
+    getCampaignIncludingArchived(campaignId) {
+      return db.prepare(`${CAMPAIGN_VIEW_ALL} AND c.id = ?`).get(campaignId) ?? null;
+    },
+
+    listArchivedCampaigns({ userId = null, since = null } = {}) {
+      const clauses = ['c.archived_at IS NOT NULL'];
+      const args = [];
+      if (userId) { clauses.push('c.manager_user_id = ?'); args.push(userId); }
+      if (since) { clauses.push('c.archived_at >= ?'); args.push(since); }
+      return db
+        .prepare(`${CAMPAIGN_VIEW_ALL} AND ${clauses.join(' AND ')} ORDER BY c.archived_at DESC`)
+        .all(...args);
+    },
+
+    archiveCampaign(campaignId, archivedBy, at = new Date().toISOString()) {
+      return db
+        .prepare(`UPDATE campaigns SET archived_at = ?, archived_by = ? WHERE id = ? AND archived_at IS NULL`)
+        .run(at, archivedBy ?? null, campaignId).changes;
+    },
+
+    restoreCampaign(campaignId) {
+      return db
+        .prepare(`UPDATE campaigns SET archived_at = NULL, archived_by = NULL WHERE id = ? AND archived_at IS NOT NULL`)
+        .run(campaignId).changes;
+    },
+
     listCampaigns() {
       return db.prepare(`${CAMPAIGN_VIEW} ORDER BY c.guild_id, c.id`).all();
     },
@@ -1604,9 +1662,9 @@ function wrap(db) {
       return db
         .prepare(
           `${CAMPAIGN_VIEW}
-            WHERE EXISTS (SELECT 1 FROM utterances u
-                            JOIN meetings m ON m.id = u.meeting_id
-                           WHERE m.campaign_id = c.id AND u.user_id = ?)
+            AND EXISTS (SELECT 1 FROM utterances u
+                          JOIN meetings m ON m.id = u.meeting_id
+                         WHERE m.campaign_id = c.id AND u.user_id = ?)
             ORDER BY last_session_at DESC`
         )
         .all(userId);

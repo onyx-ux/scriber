@@ -139,6 +139,11 @@
   .camp.newcamp { border-style: dashed; opacity: .78; }
   .camp.newcamp:hover { opacity: 1; }
   .camp.newcamp .nm { color: var(--brass); }
+  .camp.gone { border-style: dashed; cursor: default; }
+  .camp.gone .nm { color: var(--dim); text-decoration: line-through; }
+  .card.danger { border-color: var(--red); }
+  .btn.danger { border-color: var(--red); color: var(--red-lit); }
+  .btn.danger:hover { background: var(--red); color: var(--ink); }
   .rail-list { padding: 0 12px; display: flex; flex-direction: column; gap: 6px;
                flex: 0 1 auto; min-height: 0; overflow-y: auto; }
   .rail-nav { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px;
@@ -471,10 +476,17 @@ const view = {
   meetingId: null,
   editing: null,        // the user id whose character name is being typed
   importing: false,
+  creating: false,
+  deleting: false,
   diagnosing: false,    // the degraded banner's detail is open
   search: '',
   speaker: null,        // transcript filter, a user id
 };
+
+// Only one dialog is ever open. Kept in one place because every opener has to
+// clear the others, and a page left with two flags set shows the first one
+// forever while every click on the second looks like a dead button.
+const closeDialogs = () => { view.importing = false; view.creating = false; view.deleting = false; };
 
 let me = null;          // last /me — who the bot thinks is looking
 let status = null;      // last /status
@@ -577,6 +589,14 @@ const cap = (name) => (me?.can ? Boolean(me.can[name]) : true);
 // only ever open a dialog with nothing to pick, so it is not drawn at all.
 const canCreate = () => status?.actionsEnabled !== false && (status?.canCreateIn?.length ?? 0) > 0;
 
+// Deleting is not the same authority as managing. A server owner can manage a
+// campaign in their Discord; only whoever actually runs it can delete it. The
+// bot decides — this only mirrors the answer so the button is not drawn for
+// somebody who would be refused.
+const RESTORE_DAYS = 30;
+const canDelete = () =>
+  status?.actionsEnabled !== false && Boolean(detail?.viewerCan?.delete);
+
 // Whether actions are possible at all: the bot must accept them, and this
 // viewer must be allowed to make them.
 const can = () => status?.actionsEnabled !== false && cap('approvals');
@@ -660,6 +680,19 @@ function renderRail() {
     $('rail-list').innerHTML +=
       '<button type="button" class="camp newcamp" data-new-campaign>' +
       '<div class="l1"><span class="nm">+ New campaign</span></div></button>';
+  }
+
+  // Anything deleted and still inside its window. Shown here rather than on a
+  // page of its own because this is where you would go looking for a campaign
+  // that has gone missing.
+  for (const gone of status?.restorable ?? []) {
+    $('rail-list').innerHTML += `
+      <div class="camp gone">
+        <div class="l1"><span class="nm">${esc(gone.name)}</span></div>
+        <div class="meta">deleted · ${gone.daysLeft} day${gone.daysLeft === 1 ? '' : 's'} to restore</div>
+        <button type="button" class="btn sm" style="margin-top:9px"
+                data-act="campaign/restore" data-campaign="${gone.id}">Restore</button>
+      </div>`;
   }
 
   const servers = status?.servers?.length ?? 0;
@@ -1746,6 +1779,17 @@ function settingsTab() {
             NPC and location ledgers. <code>/campaign export</code> attaches a transcript in Discord.
           </div>
         </div>
+        ${canDelete() ? `
+        <div class="card danger">
+          <div class="cap" style="color:var(--red-lit)">Deleting this campaign</div>
+          <div class="quiet" style="margin-top:10px;color:var(--text-2)">
+            It leaves every list straight away, and nothing is erased — not a session, not a line anybody
+            spoke. You have ${RESTORE_DAYS} days to change your mind.
+          </div>
+          <button type="button" class="btn wide danger" style="margin-top:16px" data-delete-campaign>
+            Delete ${esc(detail.name || detail.label || 'this campaign')}
+          </button>
+        </div>` : ''}
       </div>
     </div>`;
 }
@@ -2248,14 +2292,57 @@ function createDialog() {
     </div>`;
 }
 
+// Deleting a campaign.
+//
+// The name has to be typed. Not a yes/no box — the whole purpose is to make the
+// hand slow down and read which campaign this actually is, and a button you can
+// hit twice in a temper is not a confirmation. The bot checks the typed name
+// again on arrival, so this is a courtesy to whoever is looking at the screen
+// rather than the thing standing between a campaign and its deletion.
+function deleteDialog() {
+  const name = detail?.name || detail?.label || '';
+  return `
+    <div class="backdrop" data-backdrop>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Delete campaign">
+        <div class="kicker" style="color:var(--red-lit)">${esc(name)}</div>
+        <h1>Delete this campaign?</h1>
+        <div class="say-2" style="font-size:14.5px;margin-top:12px">
+          It leaves every list straight away. <b>Nothing is erased</b> — every session, every line and
+          every correction stays exactly where it is, and you have ${RESTORE_DAYS} days to bring it back
+          from the rail or with <code>/campaign restore</code>.
+        </div>
+
+        <form data-act="campaign/delete" data-campaign="${detail?.id ?? ''}">
+          <div class="field">
+            <label for="del-name">Type <b>${esc(name)}</b> to confirm</label>
+            <input class="in" id="del-name" name="confirm" required autocomplete="off"
+                   placeholder="${esc(name)}">
+          </div>
+          <div class="foot">
+            <button class="btn go big danger" type="submit" ${can() ? '' : 'disabled'}>Delete it</button>
+            <button class="btn big" type="button" data-close-modal>Keep it</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+}
+
 let modalShowing = null;
 
 function renderModal() {
-  const wanted = view.creating ? 'create' : view.importing && detail ? `import:${detail.id}` : null;
+  const wanted = view.deleting
+    ? 'delete'
+    : view.creating ? 'create' : view.importing && detail ? `import:${detail.id}` : null;
   if (wanted === modalShowing) return;
   modalShowing = wanted;
 
   if (!wanted) { $('modal').innerHTML = ''; return; }
+
+  if (view.deleting) {
+    $('modal').innerHTML = deleteDialog();
+    $('del-name')?.focus();
+    return;
+  }
 
   if (view.creating) {
     $('modal').innerHTML = createDialog();
@@ -2589,13 +2676,14 @@ document.addEventListener('click', async (event) => {
   const t = event.target;
 
   if (t.closest('[data-close-modal]') || t === $('modal')?.querySelector('[data-backdrop]')) {
-    view.importing = false; view.creating = false; return paint();
+    closeDialogs(); return paint();
   }
-  // One dialog at a time. Opening either has to close the other, or a page
-  // left with both flags set shows the first one forever and every later click
-  // on the second looks like a dead button.
-  if (t.closest('[data-new-campaign]')) { view.importing = false; view.creating = true; return paint(); }
-  if (t.closest('[data-import]')) { view.creating = false; view.importing = true; return paint(); }
+  // One dialog at a time. Opening any has to close the others, or a page left
+  // with two flags set shows the first one forever and every later click on
+  // the second looks like a dead button.
+  if (t.closest('[data-new-campaign]')) { closeDialogs(); view.creating = true; return paint(); }
+  if (t.closest('[data-import]')) { closeDialogs(); view.importing = true; return paint(); }
+  if (t.closest('[data-delete-campaign]')) { closeDialogs(); view.deleting = true; return paint(); }
   if (t.closest('[data-diagnose]')) { view.diagnosing = !view.diagnosing; return renderBanner(); }
   if (t.closest('[data-cancel-edit]')) { view.editing = null; return paint(); }
 
@@ -2793,6 +2881,19 @@ document.addEventListener('submit', async (event) => {
   const payload = await send(form.dataset.act, body);
   if (submit) submit.disabled = false;
 
+  // The delete dialog stays open when the typed name did not match, because
+  // closing it would throw the attempt away and say nothing about why.
+  if (form.dataset.act === 'campaign/delete' && payload?.ok) {
+    view.deleting = false;
+    view.campaignId = null;
+    detail = null;
+    // The campaign just left the list, so land somewhere that still exists
+    // rather than on a screen describing something the bot no longer returns.
+    const next = status?.campaigns?.[0];
+    if (next) await loadCampaign(next.id);
+    else paint();
+  }
+
   // Land in the campaign that was just made. Making one and then having to
   // find it in the rail yourself would be a strange way to finish.
   if (form.dataset.act === 'campaign/create' && payload?.campaignId) {
@@ -2828,7 +2929,7 @@ document.addEventListener('input', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (view.importing || view.creating) { view.importing = false; view.creating = false; return paint(); }
+  if (view.importing || view.creating || view.deleting) { closeDialogs(); return paint(); }
   if (view.editing) { view.editing = null; return paint(); }
   if (view.screen === 'transcript') { view.screen = 'campaign'; return paint(); }
 });

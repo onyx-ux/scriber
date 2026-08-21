@@ -95,6 +95,12 @@ async function world(t) {
   // its sign-out button is rendered rather than skipped.
   openSession(db, { statusToken: 'sesame' }, { userId: PLAYER, username: 'saf' });
 
+  // One deleted campaign inside its window, so the rail draws a restore button
+  // for the walk to press. Without it the control simply is not rendered, and
+  // "not rendered" is indistinguishable from "tested" in a walk like this.
+  const deleted = db.createCampaign('guild-1', 'Strahd', DEV);
+  db.archiveCampaign(deleted, DEV);
+
 
   const cfg = {
     statusHost: '127.0.0.1', statusPort: await freePort(), statusToken: 'sesame',

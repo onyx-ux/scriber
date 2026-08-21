@@ -58,7 +58,11 @@ export function campaignNameClash(db, name, exceptId = null) {
   const slug = refSlug(name).toLowerCase();
 
   return (
-    db.listCampaigns().find((c) => {
+    // Through the archive on purpose. An archived campaign still owns its
+    // notes folder on disk, so letting a new campaign take the same name
+    // would interleave the two the moment anything is written -- and worse,
+    // would do it to a campaign nobody can currently see to notice.
+    db.listCampaignsIncludingArchived().find((c) => {
       if (c.id === exceptId || !c.name) return false;
       return campaignFolder({ channel_name: c.name }, c.name) === folder || refSlug(c.name).toLowerCase() === slug;
     }) ?? null

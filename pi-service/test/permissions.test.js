@@ -171,7 +171,7 @@ test('the command surface splits into the three intended tiers', async () => {
   // transcript itself, which is the same authority as renaming the campaign,
   // not the lesser one of reading it.
   assert.deepEqual([...MANAGER_SUBCOMMANDS].sort(), [
-    'correct', 'corrections', 'invite', 'output', 'remove', 'rename', 'replay', 'uncorrect',
+    'correct', 'corrections', 'delete', 'invite', 'output', 'remove', 'rename', 'replay', 'uncorrect',
   ]);
 
   const campaign = commandDefs.find((c) => c.name === 'campaign');
@@ -182,7 +182,7 @@ test('the command surface splits into the three intended tiers', async () => {
   // claimable, and `list` because seeing what is here is not a privilege.
   assert.deepEqual(subs.filter((s) => !MANAGER_SUBCOMMANDS.has(s)).sort(), [
     'archive', 'ask', 'consent', 'create', 'export', 'funny', 'history', 'list',
-    'locations', 'npcs', 'recap', 'search', 'setchar', 'stats', 'whoami',
+    'locations', 'npcs', 'recap', 'restore', 'search', 'setchar', 'stats', 'whoami',
   ]);
 
   // `consent` must never drift into the manager tier. It is the one command

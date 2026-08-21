@@ -10,6 +10,7 @@ import { cookieFrom, readSession, closeSession, sessionCookie, clearedCookie } f
 import { handleAuthRoute, createRequestLimiter } from './auth-routes.js';
 import { scopeStatus, scopeCampaign } from './scope.js';
 import { guildsCreatableBy } from '../campaign/create.js';
+import { restorableBy, mayDelete } from '../campaign/archive.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -116,6 +117,12 @@ const ACTION_NEEDS = {
   'corrections/replay': 'manage',
   'campaign/output': 'manage',
   'campaign/create': 'manage',
+  'campaign/delete': 'manage',
+  // Restoring cannot go through the manage check: that check ends in
+  // db.getCampaign(), and an archived campaign is invisible to it -- which
+  // is the entire point of archiving. Ownership is checked instead by
+  // campaign/archive.js, against the archived row itself.
+  'campaign/restore': 'restore',
   // Ending somebody else's session is the operator's alone. A server owner
   // has `servers` too, so gating on that would hand it to them as well.
   'access/revoke': 'everything',
@@ -140,6 +147,12 @@ function mayAct({ pathname, body, viewer, db }) {
   }
 
   const needs = ACTION_NEEDS[name] ?? 'machinery';
+
+  if (needs === 'restore') {
+    return viewer.can.manage
+      ? null
+      : { status: 403, message: 'You can read this campaign, but not change it.' };
+  }
 
   if (needs === 'everything') {
     return viewer.can.everything
@@ -425,7 +438,20 @@ export function startStatusServer({
         send(res, 404, { ok: false, message: 'No such campaign.' });
         return;
       }
-      send(res, 200, scopeCampaign(view, viewer));
+      const scoped = scopeCampaign(view, viewer);
+      // Deleting is a narrower authority than managing: a server owner may
+      // manage a campaign in their Discord, but only whoever runs it may delete
+      // it. Answered here so the page draws the button for exactly the people
+      // the action would accept, rather than offering it and then refusing.
+      scoped.viewerCan = {
+        ...(scoped.viewerCan ?? {}),
+        delete: mayDelete({
+          campaign: db.getCampaign(id),
+          userId: viewer.userId ?? (viewer.can?.everything ? cfg.ownerUserId : null),
+          cfg,
+        }),
+      };
+      send(res, 200, scoped);
       return;
     }
 
@@ -501,6 +527,17 @@ export function startStatusServer({
       // one.
       const creatable = guildsCreatableBy({ db, viewer, guilds: ctx.guilds() });
       if (creatable.length) payload.canCreateIn = creatable;
+
+      // Campaigns this viewer deleted and can still bring back. Only ever
+      // their own, and only while the window is open.
+      const waiting = viewer.userId || viewer.can?.everything
+        ? restorableBy({ db, cfg, userId: viewer.userId ?? cfg.ownerUserId })
+        : [];
+      if (waiting.length) {
+        payload.restorable = waiting.map((c) => ({
+          id: c.id, name: c.name ?? c.channel_name, sessions: c.sessions, daysLeft: c.daysLeft,
+        }));
+      }
 
       const body = JSON.stringify(payload);
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(body);

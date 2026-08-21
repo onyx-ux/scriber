@@ -28,6 +28,7 @@ import {
 } from '../pipeline/job-actions.js';
 import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
 import { createCampaign, guildsCreatableBy } from '../campaign/create.js';
+import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { ROLES } from '../pipeline/model-choice.js';
 
@@ -178,6 +179,38 @@ export const ACTIONS = {
   // The server is checked against what this viewer may create in for the same
   // reason. Every rule after that -- the name, the folder clash, the ceilings --
   // is the slash command's, because it is literally the same function.
+  // Deleting a campaign, which does not delete it.
+  //
+  // The typed name is checked here rather than trusted from the page: a
+  // confirmation the client can skip is a confirmation that is not there. Who
+  // is asking comes from the session for the same reason it does on create.
+  'campaign/delete': (db, cfg, body, ctx) => {
+    const viewer = ctx?.viewer ?? null;
+    const userId = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+    if (!userId) {
+      return { status: 403, payload: { ok: false, message: 'Sign in before deleting a campaign.' } };
+    }
+
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+
+    const result = archiveCampaign({ db, cfg, campaignId: id, userId, typedName: body?.confirm });
+    return { status: result.ok ? 200 : 200, payload: result };
+  },
+
+  // Changing your mind, within the window.
+  'campaign/restore': (db, cfg, body, ctx) => {
+    const viewer = ctx?.viewer ?? null;
+    const userId = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+    if (!userId) {
+      return { status: 403, payload: { ok: false, message: 'Sign in before restoring a campaign.' } };
+    }
+
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+
+    return { status: 200, payload: restoreArchivedCampaign({ db, cfg, campaignId: id, userId }) };
+  },
   'campaign/create': (db, cfg, body, ctx) => {
     const viewer = ctx?.viewer ?? null;
 
