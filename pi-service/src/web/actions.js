@@ -29,6 +29,7 @@ import {
 import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
 import { createCampaign, guildsCreatableBy } from '../campaign/create.js';
 import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js';
+import { requestRestore, decideRestoreRequest, isOperator } from '../campaign/restore-request.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { ROLES } from '../pipeline/model-choice.js';
 
@@ -198,18 +199,57 @@ export const ACTIONS = {
     return { status: result.ok ? 200 : 200, payload: result };
   },
 
-  // Changing your mind, within the window.
+  // Asking for a campaign back, or -- if you are the person who decides
+  // these -- simply doing it.
+  //
+  // The web page must not be a way around the review. Deleting is the
+  // creator's decision and restoring is not, so anybody who is not the
+  // operator files a ticket here exactly as they would in Discord, answers
+  // and all.
   'campaign/restore': (db, cfg, body, ctx) => {
     const viewer = ctx?.viewer ?? null;
     const userId = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
     if (!userId) {
-      return { status: 403, payload: { ok: false, message: 'Sign in before restoring a campaign.' } };
+      return { status: 403, payload: { ok: false, message: 'Sign in before asking about a campaign.' } };
     }
 
     const id = campaignId(body);
     if (!id) return badRequest('A numeric campaignId is required.');
 
-    return { status: 200, payload: restoreArchivedCampaign({ db, cfg, campaignId: id, userId }) };
+    if (isOperator(userId, cfg)) {
+      return { status: 200, payload: restoreArchivedCampaign({ db, cfg, campaignId: id, userId }) };
+    }
+
+    const filed = requestRestore({
+      db, cfg, campaignId: id, userId,
+      requesterName: viewer?.username ?? null,
+      reason: body?.reason,
+      whyDeleted: body?.whyDeleted,
+      takingOwnership: body?.takingOwnership,
+    });
+
+    // Best-effort, like every other DM here: a request that was filed is
+    // filed whether or not Discord delivered the note about it, and it is
+    // waiting on the dashboard either way.
+    if (filed.ok) ctx?.notifyRestore?.(filed.requestId);
+    return { status: 200, payload: filed };
+  },
+
+  // Deciding one. The operator's alone -- checked again in the domain layer,
+  // because this is the gate the whole ticket exists to be.
+  'campaign/restore-review': (db, cfg, body, ctx) => {
+    const viewer = ctx?.viewer ?? null;
+    const decidedBy = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+
+    const requestId = Number(body?.requestId);
+    if (!Number.isInteger(requestId) || requestId <= 0) return badRequest('A numeric requestId is required.');
+
+    const decided = decideRestoreRequest({
+      db, cfg, requestId, decidedBy, approve: body?.approve === true || body?.approve === 'true',
+    });
+
+    if (decided.ok) ctx?.notifyRestoreDecided?.(decided);
+    return { status: 200, payload: decided };
   },
   'campaign/create': (db, cfg, body, ctx) => {
     const viewer = ctx?.viewer ?? null;

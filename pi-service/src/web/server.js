@@ -11,6 +11,8 @@ import { handleAuthRoute, createRequestLimiter } from './auth-routes.js';
 import { scopeStatus, scopeCampaign } from './scope.js';
 import { guildsCreatableBy } from '../campaign/create.js';
 import { restorableBy, mayDelete } from '../campaign/archive.js';
+import { pendingRestoreRequests } from '../campaign/restore-request.js';
+import { notifyRestoreRequested, notifyRestoreDecided } from '../delivery/restore-notify.js';
 import { runAction } from './actions.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { importAudio } from '../pipeline/import-audio.js';
@@ -123,6 +125,8 @@ const ACTION_NEEDS = {
   // is the entire point of archiving. Ownership is checked instead by
   // campaign/archive.js, against the archived row itself.
   'campaign/restore': 'restore',
+  // Deciding a request is the operator's, and only theirs.
+  'campaign/restore-review': 'everything',
   // Ending somebody else's session is the operator's alone. A server owner
   // has `servers` too, so gating on that would hand it to them as well.
   'access/revoke': 'everything',
@@ -273,6 +277,14 @@ export function startStatusServer({
     // Every Discord the bot is in, so an action can check a chosen server
     // against reality rather than against what the browser claimed.
     guilds: () => [...(client?.guilds?.cache?.values?.() ?? [])].map((g) => ({ id: g.id, name: g.name ?? g.id })),
+    // Started, not awaited. A DM that fails costs somebody knowing promptly,
+    // never the request itself.
+    notifyRestore: (requestId) => {
+      notifyRestoreRequested({ discordClient: client, db, cfg, requestId }).catch(() => {});
+    },
+    notifyRestoreDecided: ({ request, approved, name }) => {
+      notifyRestoreDecided({ discordClient: client, cfg, request, approved, name }).catch(() => {});
+    },
     // Fire-and-forget: the answer arrives in the next status poll, not in the
     // response to the click.
     probeNow: () => { probe(); },
@@ -533,6 +545,13 @@ export function startStatusServer({
       const waiting = viewer.userId || viewer.can?.everything
         ? restorableBy({ db, cfg, userId: viewer.userId ?? cfg.ownerUserId })
         : [];
+      // Restore tickets waiting on a decision. The operator's queue, so it
+      // rides behind the same capability as the access roster.
+      if (viewer.can?.everything) {
+        const queue = pendingRestoreRequests({ db });
+        if (queue.length) payload.restoreQueue = queue;
+      }
+
       if (waiting.length) {
         payload.restorable = waiting.map((c) => ({
           id: c.id, name: c.name ?? c.channel_name, sessions: c.sessions, daysLeft: c.daysLeft,

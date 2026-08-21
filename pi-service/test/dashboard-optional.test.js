@@ -52,6 +52,9 @@ const DEV_ONLY = new Set([
   'pause', 'transcribe', 'import', 'session/discard',
   'summary/approve', 'summary/approve-all', 'summary/park', 'summary/again',
   'model/choose', 'health/probe', 'access/revoke',
+  // Deciding a restore request is the operator reviewing their own queue.
+  // The requester never needs this; they file the ticket from Discord.
+  'campaign/restore-review',
 ]);
 
 test('every action is classified — no action escapes this file unnoticed', () => {

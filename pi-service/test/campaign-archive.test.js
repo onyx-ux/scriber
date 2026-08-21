@@ -302,21 +302,41 @@ test('an unidentified caller cannot delete anything', async (t) => {
   assert.ok(db.getCampaign(cipher));
 });
 
-test('the web action restores, for the person who deleted it', async (t) => {
+// Deleting is the creator's decision. Undoing it is not — not even for them,
+// and especially not for them, since the delete this exists to survive is the
+// one they made in a temper. See restore-request.test.js for the review itself.
+test('the web action does not hand the creator their campaign straight back', async (t) => {
   const { db, cipher } = await world(t);
   del(db, cipher, CREATOR, 'Cipher');
 
-  const mine = { level: 'creator', userId: CREATOR, can: { manage: true } };
-  const theirs = { level: 'creator', userId: OTHER_DM, can: { manage: true } };
+  const mine = { level: 'creator', userId: CREATOR, username: 'kez', can: { manage: true } };
+  const stranger = { level: 'creator', userId: OTHER_DM, can: { manage: true } };
 
-  const refused = runAction({
-    pathname: '/actions/campaign/restore', body: { campaignId: cipher }, db, cfg, ctx: { viewer: theirs },
+  const notTheirTable = runAction({
+    pathname: '/actions/campaign/restore',
+    body: { campaignId: cipher, reason: 'give it to me' },
+    db, cfg, ctx: { viewer: stranger },
   });
-  assert.equal(refused.payload.ok, false);
-  assert.equal(db.getCampaign(cipher), null, 'still deleted');
+  assert.equal(notTheirTable.payload.ok, false, 'a table they were never at is not theirs to ask about');
+
+  const asked = runAction({
+    pathname: '/actions/campaign/restore',
+    body: { campaignId: cipher, reason: 'I regret it', whyDeleted: 'lost my temper', takingOwnership: 'yes' },
+    db, cfg, ctx: { viewer: mine },
+  });
+  assert.equal(asked.payload.ok, true, 'the request is filed');
+  assert.equal(db.getCampaign(cipher), null, 'but the campaign is still deleted');
+  assert.equal(db.listRestoreRequests().length, 1, 'and somebody has to read it first');
+});
+
+test('the operator restores directly, being the person who decides these', async (t) => {
+  const { db, cipher } = await world(t);
+  del(db, cipher, CREATOR, 'Cipher');
 
   const back = runAction({
-    pathname: '/actions/campaign/restore', body: { campaignId: cipher }, db, cfg, ctx: { viewer: mine },
+    pathname: '/actions/campaign/restore',
+    body: { campaignId: cipher },
+    db, cfg, ctx: { viewer: { level: 'dev', userId: DEV, can: { manage: true, everything: true } } },
   });
   assert.equal(back.payload.ok, true);
   assert.ok(db.getCampaign(cipher));
@@ -365,6 +385,9 @@ function say({ user, sub, options = {} }) {
       getChannel: () => null, getAttachment: () => null, getFocused: () => '',
     },
     reply: take, editReply: take, followUp: take, deferReply: () => Promise.resolve(),
+    // Asking for a campaign back opens a form, so the fake has to be able to
+    // be shown one.
+    showModal: (modal) => { said.modal = modal?.data?.custom_id ?? true; return Promise.resolve(); },
   };
 }
 
@@ -380,20 +403,34 @@ test('/campaign delete needs the name, then works', async (t) => {
   assert.equal(db.getCampaign(cipher), null);
 });
 
-test('/campaign restore lists what is waiting, then brings it back', async (t) => {
+test('/campaign restore lists what is waiting, and opens a form rather than restoring', async (t) => {
   const { db, dispatch, cipher } = await dispatcher(t);
   await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'Cipher', campaign: cipher } }));
 
   const listed = await fire(dispatch, say({ user: CREATOR, sub: 'restore' }));
   assert.match(listed, /Cipher/);
   assert.match(listed, /day/);
+  assert.match(listed, /bot owner/, 'and it says where the decision goes');
 
-  const back = await fire(dispatch, say({ user: CREATOR, sub: 'restore', options: { campaign: 'Cipher' } }));
-  assert.match(back, /back/i);
-  assert.ok(db.getCampaign(cipher), 'restored through a resolver that cannot see archived campaigns');
+  const asking = say({ user: CREATOR, sub: 'restore', options: { campaign: 'Cipher' } });
+  await dispatch(asking);
+  assert.ok(asking.said.modal, 'the three questions are asked');
+  assert.equal(db.getCampaign(cipher), null, 'and nothing was restored by asking');
 });
 
-test('/campaign restore shows a player nothing, because they deleted nothing', async (t) => {
+test('/campaign restore brings it straight back for the operator', async (t) => {
+  const { db, dispatch, cipher } = await dispatcher(t);
+  await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'Cipher', campaign: cipher } }));
+
+  const back = await fire(dispatch, say({ user: DEV, sub: 'restore', options: { campaign: 'Cipher' } }));
+  assert.match(back, /back/i);
+  assert.ok(db.getCampaign(cipher), 'found through a resolver that cannot see archived campaigns');
+});
+
+// Someone who WAS at the table can now see it and ask — that is the point of
+// the review. Someone who never played there still sees nothing, because a
+// deleted campaign is not something to advertise to a whole Discord.
+test('/campaign restore shows nothing to somebody who was never at the table', async (t) => {
   const { dispatch, cipher } = await dispatcher(t);
   await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'Cipher', campaign: cipher } }));
 

@@ -101,6 +101,19 @@ async function world(t) {
   const deleted = db.createCampaign('guild-1', 'Strahd', DEV);
   db.archiveCampaign(deleted, DEV);
 
+  // And one ticket waiting on a decision, so the review dialog and its two
+  // buttons are rendered for the walk to press.
+  const waiting = db.createCampaign('guild-1', 'Ashfall', PLAYER);
+  db.archiveCampaign(waiting, PLAYER);
+  const requestId = db.createRestoreRequest({
+    campaignId: waiting,
+    requestedBy: PLAYER,
+    requesterName: 'saf',
+    reason: 'We still play every week.',
+    whyDeleted: 'A row about scheduling.',
+    takingOwnership: 'yes',
+  });
+
 
   const cfg = {
     statusHost: '127.0.0.1', statusPort: await freePort(), statusToken: 'sesame',
@@ -135,7 +148,7 @@ async function world(t) {
     await rm(dir, { recursive: true, force: true });
   });
 
-  return { db, cfg, campaignId, parked, base: `http://127.0.0.1:${server.address().port}` };
+  return { db, cfg, campaignId, parked, requestId, base: `http://127.0.0.1:${server.address().port}` };
 }
 
 const camel = (s) => s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
@@ -301,7 +314,7 @@ const PAYLOAD = ['confirm', 'job', 'meeting', 'user', 'wrong', 'provider',
                  'queue', 'paused', 'mode', 'action', 'role', 'campaign'];
 
 test('every control the dashboard renders does something', async (t) => {
-  const { campaignId, parked, base } = await world(t);
+  const { campaignId, parked, requestId, base } = await world(t);
   const page = await driver({ base });
 
   // The campaign is selected by id rather than by opening whatever screen
@@ -322,6 +335,7 @@ test('every control the dashboard renders does something', async (t) => {
     // Both dialogs get their own stop, because the controls inside one only
     // exist while it is open and are invisible to the walk otherwise.
     ['new campaign dialog', [CAMPAIGN, nav({ newCampaign: '' })]],
+    ['restore review dialog', [CAMPAIGN, nav({ review: String(requestId) })]],
   ];
 
   const reset = async (steps) => { for (const step of steps) await page.fire(step); };

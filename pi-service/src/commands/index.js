@@ -26,6 +26,8 @@ import { isOwner } from '../campaign/permissions.js';
 import { createCampaign } from '../campaign/create.js';
 import { handleCorrect, handleUncorrect, handleCorrections, handleReplay } from './corrections.js';
 import { handleCampaignDelete, handleCampaignRestore } from './archive.js';
+import { handleRestoreModal } from './restore-request.js';
+import { notifyRestoreRequested } from '../delivery/restore-notify.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
 import { moveCampaignFolder } from '../campaign/vault-migrate.js';
 import {
@@ -900,6 +902,19 @@ export function registerCommandHandlers(client, db, cfg) {
         return await handleApprovalButton(interaction, db, cfg);
       } catch (err) {
         console.error('[button] error:', err);
+        return;
+      }
+    }
+
+    // The restore ticket's three answers come back as a modal submission.
+    if (interaction.isModalSubmit?.()) {
+      try {
+        return await handleRestoreModal(interaction, db, cfg, {
+          notify: ({ requestId }) =>
+            notifyRestoreRequested({ discordClient: client, db, cfg, requestId }),
+        });
+      } catch (err) {
+        console.error('[modal] error:', err);
         return;
       }
     }

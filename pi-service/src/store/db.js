@@ -118,6 +118,32 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 
+-- Asking for a deleted campaign back.
+--
+-- Restoring is not the requester's decision, because deleting was not
+-- everybody's. A campaign belongs to whoever runs it, but the sessions in it
+-- belong to everyone who sat at the table, and a table that was deleted in a
+-- temper should not be restorable by the same temper an hour later. So the
+-- answers are recorded and the operator decides, one at a time.
+CREATE TABLE IF NOT EXISTS restore_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL,
+  requested_by TEXT NOT NULL,
+  requester_name TEXT,
+  -- The three answers, kept verbatim. They are the whole point of the ticket:
+  -- a request with no reasoning is a button, and a button is what this replaced.
+  reason TEXT NOT NULL,
+  why_deleted TEXT,
+  taking_ownership TEXT,
+  -- pending | approved | denied
+  state TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  decided_at TEXT,
+  decided_by TEXT,
+  decision_note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_restore_requests_state ON restore_requests(state, created_at);
+
 -- What the models have actually cost.
 --
 -- Neither provider will tell you how much of your allowance is left: Anthropic
@@ -942,6 +968,50 @@ function wrap(db) {
         .all(...args);
     },
 
+    // --- asking for one back ---
+
+    createRestoreRequest({ campaignId, requestedBy, requesterName = null, reason, whyDeleted = null, takingOwnership = null }) {
+      return db
+        .prepare(
+          `INSERT INTO restore_requests
+             (campaign_id, requested_by, requester_name, reason, why_deleted, taking_ownership)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(campaignId, requestedBy, requesterName, reason, whyDeleted, takingOwnership).lastInsertRowid;
+    },
+
+    getRestoreRequest(id) {
+      return db.prepare(`SELECT * FROM restore_requests WHERE id = ?`).get(id) ?? null;
+    },
+
+    // One open ticket per person per campaign. Without this, somebody told
+    // "no" can simply ask again, which is the pestering the review exists to
+    // slow down.
+    pendingRestoreRequest(campaignId, requestedBy) {
+      return db
+        .prepare(
+          `SELECT * FROM restore_requests
+            WHERE campaign_id = ? AND requested_by = ? AND state = 'pending'`
+        )
+        .get(campaignId, requestedBy) ?? null;
+    },
+
+    listRestoreRequests({ state = 'pending' } = {}) {
+      const rows = state
+        ? db.prepare(`SELECT * FROM restore_requests WHERE state = ? ORDER BY created_at`).all(state)
+        : db.prepare(`SELECT * FROM restore_requests ORDER BY created_at DESC`).all();
+      return rows;
+    },
+
+    decideRestoreRequest(id, { state, decidedBy, note = null, at = new Date().toISOString() }) {
+      return db
+        .prepare(
+          `UPDATE restore_requests
+              SET state = ?, decided_by = ?, decision_note = ?, decided_at = ?
+            WHERE id = ? AND state = 'pending'`
+        )
+        .run(state, decidedBy ?? null, note, at, id).changes;
+    },
     archiveCampaign(campaignId, archivedBy, at = new Date().toISOString()) {
       return db
         .prepare(`UPDATE campaigns SET archived_at = ?, archived_by = ? WHERE id = ? AND archived_at IS NULL`)

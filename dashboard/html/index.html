@@ -140,6 +140,8 @@
   .camp.newcamp:hover { opacity: 1; }
   .camp.newcamp .nm { color: var(--brass); }
   .camp.gone { border-style: dashed; cursor: default; }
+  .camp.asked { border-color: var(--brass); cursor: default; }
+  .camp.asked .nm { color: var(--brass-lit); }
   .camp.gone .nm { color: var(--dim); text-decoration: line-through; }
   .card.danger { border-color: var(--red); }
   .btn.danger { border-color: var(--red); color: var(--red-lit); }
@@ -478,6 +480,8 @@ const view = {
   importing: false,
   creating: false,
   deleting: false,
+  askingRestore: null,   // { id, name } of a deleted campaign being asked about
+  reviewing: null,       // the id of a restore request being read
   diagnosing: false,    // the degraded banner's detail is open
   search: '',
   speaker: null,        // transcript filter, a user id
@@ -486,7 +490,13 @@ const view = {
 // Only one dialog is ever open. Kept in one place because every opener has to
 // clear the others, and a page left with two flags set shows the first one
 // forever while every click on the second looks like a dead button.
-const closeDialogs = () => { view.importing = false; view.creating = false; view.deleting = false; };
+const closeDialogs = () => {
+  view.importing = false;
+  view.creating = false;
+  view.deleting = false;
+  view.askingRestore = null;
+  view.reviewing = null;
+};
 
 let me = null;          // last /me — who the bot thinks is looking
 let status = null;      // last /status
@@ -685,13 +695,35 @@ function renderRail() {
   // Anything deleted and still inside its window. Shown here rather than on a
   // page of its own because this is where you would go looking for a campaign
   // that has gone missing.
+  //
+  // The operator restores; everybody else asks. Deleting is the creator's
+  // decision and restoring is not, so the page offers the same ticket Discord
+  // does rather than a shortcut around it.
   for (const gone of status?.restorable ?? []) {
     $('rail-list').innerHTML += `
       <div class="camp gone">
         <div class="l1"><span class="nm">${esc(gone.name)}</span></div>
-        <div class="meta">deleted · ${gone.daysLeft} day${gone.daysLeft === 1 ? '' : 's'} to restore</div>
-        <button type="button" class="btn sm" style="margin-top:9px"
-                data-act="campaign/restore" data-campaign="${gone.id}">Restore</button>
+        <div class="meta">deleted · ${gone.daysLeft} day${gone.daysLeft === 1 ? '' : 's'} left</div>
+        ${cap('everything')
+          ? `<button type="button" class="btn sm" style="margin-top:9px"
+                     data-act="campaign/restore" data-campaign="${gone.id}">Restore</button>`
+          : `<button type="button" class="btn sm" style="margin-top:9px"
+                     data-ask-restore="${gone.id}" data-name="${esc(gone.name)}">Ask to restore</button>`}
+      </div>`;
+  }
+
+  // What is waiting on a decision. Only the operator is ever sent this.
+  for (const req of status?.restoreQueue ?? []) {
+    $('rail-list').innerHTML += `
+      <div class="camp asked">
+        <div class="l1"><span class="nm">${esc(req.name)}</span></div>
+        <div class="meta">
+          ${esc(req.requesterName || req.requestedBy)} asked${req.isTheCreator ? ' — they deleted it' : ' — they played here'}
+          <br>${req.sessions} session${req.sessions === 1 ? '' : 's'} · ${req.daysLeft} day${req.daysLeft === 1 ? '' : 's'} left
+        </div>
+        <div class="row-btns" style="margin-top:9px">
+          <button type="button" class="btn sm" data-review="${req.id}">Read it</button>
+        </div>
       </div>`;
   }
 
@@ -2327,12 +2359,94 @@ function deleteDialog() {
     </div>`;
 }
 
+// Asking for a campaign back.
+//
+// The same three questions the Discord modal asks, in the same order and for
+// the same reason: they are meant to be read together. "Why was it deleted in
+// the first place" and "are you taking ownership" are what separate a delete
+// somebody regrets from a table that ended on purpose and should stay ended.
+const RESTORE_QUESTIONS = [
+  ['reason', 'What is the reason for requesting the restore?'],
+  ['whyDeleted', 'Why was the campaign deleted in the first place?'],
+  ['takingOwnership', 'Are you intending to take ownership of the campaign?'],
+];
+
+function askRestoreDialog() {
+  const { id, name } = view.askingRestore ?? {};
+  return `
+    <div class="backdrop" data-backdrop>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Ask to restore">
+        <div class="kicker">${esc(name ?? '')}</div>
+        <h1>Ask for this back</h1>
+        <div class="say-2" style="font-size:14.5px;margin-top:12px">
+          Restoring is not automatic. What you write here goes to the bot owner, who decides these one at
+          a time — you will hear back either way.
+        </div>
+
+        <form data-act="campaign/restore" data-campaign="${id ?? ''}">
+          ${RESTORE_QUESTIONS.map(([field, question], n) => `
+            <div class="field">
+              <label for="ask-${field}">${question}</label>
+              ${n === 2
+                ? `<input class="in" id="ask-${field}" name="${field}" required autocomplete="off"
+                          placeholder="yes / no, and why">`
+                : `<textarea class="in" id="ask-${field}" name="${field}" required rows="3"></textarea>`}
+            </div>`).join('')}
+          <div class="foot">
+            <button class="btn go big" type="submit" ${can() ? '' : 'disabled'}>Send it</button>
+            <button class="btn big" type="button" data-close-modal>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+}
+
+// Reading one, and deciding it.
+function reviewDialog() {
+  const req = (status?.restoreQueue ?? []).find((r) => r.id === view.reviewing);
+  if (!req) return '';
+
+  const answer = (question, text) => `
+    <div class="field">
+      <label>${question}</label>
+      <div class="quiet" style="color:var(--text-2);white-space:pre-wrap">${esc(text || '(left blank)')}</div>
+    </div>`;
+
+  return `
+    <div class="backdrop" data-backdrop>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Restore request">
+        <div class="kicker">${esc(req.name)}</div>
+        <h1>${esc(req.requesterName || req.requestedBy)} wants this back</h1>
+        <div class="say-2" style="font-size:14.5px;margin-top:12px">
+          ${req.isTheCreator ? 'They are the person who deleted it.' : 'They played at this table — they are not who deleted it.'}
+          ${req.sessions} session${req.sessions === 1 ? '' : 's'}, ${req.daysLeft} day${req.daysLeft === 1 ? '' : 's'} left in the window.
+        </div>
+
+        ${answer(RESTORE_QUESTIONS[0][1], req.reason)}
+        ${answer(RESTORE_QUESTIONS[1][1], req.whyDeleted)}
+        ${answer(RESTORE_QUESTIONS[2][1], req.takingOwnership)}
+
+        <div class="foot">
+          <button type="button" class="btn go big" data-act="campaign/restore-review"
+                  data-request="${req.id}" data-approve="true">Restore it</button>
+          <button type="button" class="btn big danger" data-act="campaign/restore-review"
+                  data-request="${req.id}" data-approve="false">Turn it down</button>
+          <button type="button" class="btn big" data-close-modal>Later</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 let modalShowing = null;
 
 function renderModal() {
   const wanted = view.deleting
     ? 'delete'
-    : view.creating ? 'create' : view.importing && detail ? `import:${detail.id}` : null;
+    : view.askingRestore ? `ask:${view.askingRestore.id}`
+    : view.reviewing ? `review:${view.reviewing}`
+    : view.creating ? 'create'
+    : view.importing && detail ? `import:${detail.id}`
+    : null;
   if (wanted === modalShowing) return;
   modalShowing = wanted;
 
@@ -2341,6 +2455,17 @@ function renderModal() {
   if (view.deleting) {
     $('modal').innerHTML = deleteDialog();
     $('del-name')?.focus();
+    return;
+  }
+
+  if (view.askingRestore) {
+    $('modal').innerHTML = askRestoreDialog();
+    $('ask-reason')?.focus();
+    return;
+  }
+
+  if (view.reviewing) {
+    $('modal').innerHTML = reviewDialog();
     return;
   }
 
@@ -2684,6 +2809,16 @@ document.addEventListener('click', async (event) => {
   if (t.closest('[data-new-campaign]')) { closeDialogs(); view.creating = true; return paint(); }
   if (t.closest('[data-import]')) { closeDialogs(); view.importing = true; return paint(); }
   if (t.closest('[data-delete-campaign]')) { closeDialogs(); view.deleting = true; return paint(); }
+
+  const asking = t.closest('[data-ask-restore]');
+  if (asking) {
+    closeDialogs();
+    view.askingRestore = { id: Number(asking.dataset.askRestore), name: asking.dataset.name ?? '' };
+    return paint();
+  }
+
+  const reading = t.closest('[data-review]');
+  if (reading) { closeDialogs(); view.reviewing = Number(reading.dataset.review); return paint(); }
   if (t.closest('[data-diagnose]')) { view.diagnosing = !view.diagnosing; return renderBanner(); }
   if (t.closest('[data-cancel-edit]')) { view.editing = null; return paint(); }
 
@@ -2765,10 +2900,16 @@ document.addEventListener('click', async (event) => {
   if (d.queue) body.queue = d.queue;
   if (d.mode) body.mode = d.mode;
   if (d.paused) body.paused = d.paused === 'true';
+  if (d.request) body.requestId = Number(d.request);
+  if (d.approve) body.approve = d.approve === 'true';
 
   const was = btn.textContent;
   btn.disabled = true; btn.textContent = '…';
-  await send(d.act, body);
+  const said = await send(d.act, body);
+
+  // A decision made is a dialog finished. Left open it would keep offering
+  // buttons for a request that is no longer waiting on anything.
+  if (d.act === 'campaign/restore-review' && said?.ok) { view.reviewing = null; paint(); }
   btn.disabled = false; btn.textContent = was;
 });
 
@@ -2877,6 +3018,7 @@ document.addEventListener('submit', async (event) => {
   if (submit) submit.disabled = true;
   if (form.dataset.act === 'import') view.importing = false;
   if (form.dataset.act === 'campaign/create') view.creating = false;
+  if (form.dataset.act === 'campaign/restore') view.askingRestore = null;
   if (form.dataset.act === 'roster/character') view.editing = null;
   const payload = await send(form.dataset.act, body);
   if (submit) submit.disabled = false;
@@ -2929,7 +3071,9 @@ document.addEventListener('input', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (view.importing || view.creating || view.deleting) { closeDialogs(); return paint(); }
+  if (view.importing || view.creating || view.deleting || view.askingRestore || view.reviewing) {
+    closeDialogs(); return paint();
+  }
   if (view.editing) { view.editing = null; return paint(); }
   if (view.screen === 'transcript') { view.screen = 'campaign'; return paint(); }
 });
