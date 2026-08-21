@@ -462,3 +462,73 @@ test('the sign-in card works end to end', async (t) => {
   assert.ok(out.requested, 'signing out does nothing');
   assert.match(page.body(), /Sign in to Quill/, 'signing out returns to the card');
 });
+
+// Signing in while sign-in is still OPTIONAL.
+//
+// The card used to render only when DASHBOARD_REQUIRE_LOGIN was on, which made
+// the one safe order for turning that on — sign in first, so you cannot lock
+// yourself out of your own Pi — impossible to follow through the interface.
+// This walks it the way a person would: press sign in, get a code, use it, and
+// end up as somebody narrower than the operator.
+test('you can sign in before sign-in is required', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'quill-optional-signin-'));
+  const db = openDb(join(dir, 'db.sqlite'));
+
+  const campaignId = db.createCampaign('guild-1', 'Cipher', 'someone-else');
+  const meeting = db.createMeeting({
+    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'The Cellar',
+    startedAt: '2026-08-01T19:00:00Z', audioDir: '/tmp',
+  });
+  db.finalizeTranscription(meeting, [
+    { userId: PLAYER, displayName: 'saf', startMs: 0, endMs: 1, text: 'I paid the fee.' },
+  ]);
+
+  const codes = [];
+  const cfg = {
+    statusHost: '127.0.0.1', statusPort: await freePort(), statusToken: 'sesame',
+    // The whole point: OFF, as it is on a fresh install.
+    ownerUserId: DEV, dashboardRequireLogin: false, dataDir: dir,
+    scheduleTimeZone: 'Europe/London', transcribeWindowStartHour: 8, transcribeWindowEndHour: 16,
+    transcribeWeekdaysOnly: true, transcribeRequireApproval: true,
+    summaryProvider: 'gemini', geminiApiKey: 'k', geminiModel: 'gemini-3.6-flash',
+    whisperServerUrl: `http://127.0.0.1:${await freePort()}/`,
+  };
+
+  const { server, close } = startStatusServer({
+    db, cfg, activeSessions: new Map(),
+    client: { user: { tag: 'Quill#0233' }, guilds: { cache: new Map() } },
+    discord: {
+      findKnownMember: async () => ({ userId: PLAYER, username: 'saf' }),
+      sendCode: async ({ code }) => { codes.push(code); return { ok: true }; },
+      findPeople: async () => ({ ok: true, people: [] }),
+      invite: async () => ({ ok: true, message: 'x' }),
+    },
+  });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  t.after(async () => {
+    close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const page = await driver({ base: `http://127.0.0.1:${server.address().port}`, typed: { 'signin-name': 'saf' } });
+
+  // The operator's view, with a way in rather than no way in.
+  assert.match(page.body(), /Sign in as yourself/, 'the offer is there while it is still optional');
+
+  const opened = await page.fire({ tag: 'button', classes: ['btn'], dataset: { signin: '' }, type: 'button' });
+  assert.ok(opened.changed);
+  assert.match(page.body(), /Sign in to Quill/, 'and it opens the card');
+
+  await page.fire({ tag: 'form', classes: [], dataset: { signinRequest: '' }, fields: [] }, 'submit');
+  assert.equal(codes.length, 1, 'the bot DMed a code');
+
+  page.input('signin-code').value = codes.at(-1);
+  await page.fire({ tag: 'form', classes: [], dataset: { signinVerify: '' }, fields: [] }, 'submit');
+
+  // Signed in as a player, which is NARROWER than the operator they were
+  // before — sign-in taking things away is the safe direction.
+  assert.match(page.body(), /the games you play in/, 'signed in at the level the account earns');
+  assert.doesNotMatch(page.body(), /Sign in as yourself/, 'and the offer is gone');
+});

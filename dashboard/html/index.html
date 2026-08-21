@@ -473,6 +473,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':
 // mid-click.
 const view = {
   screen: 'campaign',   // campaign | transcript | servers | access
+  signingIn: false,     // asked for the sign-in card while it was optional
   campaignId: null,
   tab: 'notes',         // notes | table | corrections | settings
   meetingId: null,
@@ -751,6 +752,13 @@ function renderRail() {
       </div>
       <div style="margin-bottom:10px">sees ${esc(me.sees ?? '')}</div>
       <button class="btn sm" data-logout style="width:100%">Sign out</button>
+      <div style="margin-top:12px"></div>`
+    : me?.signInAvailable ? `
+      <div style="margin-bottom:10px;color:var(--text-2)">the operator</div>
+      <button class="btn sm" data-signin style="width:100%">Sign in as yourself</button>
+      <div class="quiet" style="font-size:11.5px;margin-top:8px">
+        try your account before requiring it
+      </div>
       <div style="margin-top:12px"></div>` : ''}
     ${b ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}<br><span id="stamp" style="opacity:.75"></span>`
         : 'connecting…'}`;
@@ -962,6 +970,11 @@ function signInScreen() {
       ${login.message ? `<div class="quiet" style="margin-top:18px;color:${
         login.failed ? 'var(--red-lit)' : 'var(--brass-lit)'}">${esc(login.message)}</div>` : ''}
 
+      ${me?.loginRequired ? '' : `
+        <div style="margin-top:22px">
+          <button class="btn" type="button" data-signin-cancel>Not now — keep looking as the operator</button>
+        </div>`}
+
       ${me && !me.signInAvailable ? `<div class="quiet" style="margin-top:18px;color:var(--red-lit)">
         This bot has no sign-in secret set, so nobody can sign in. Set <code>STATUS_TOKEN</code> or
         <code>AUTH_SECRET</code> in <code>pi-service/.env</code>.
@@ -981,7 +994,12 @@ function renderScreen() {
   // Nobody home. Shown instead of the app rather than over it: a dashboard
   // that renders its chrome and then refuses every request is a worse way to
   // learn you are signed out than being asked to sign in.
-  if (me && me.loginRequired && !me.signedIn) {
+  // Sign-in is shown when this install demands it, and also when somebody
+  // asks for it. Without the second case there was no way to sign in at all
+  // while DASHBOARD_REQUIRE_LOGIN was off — which made the one safe order
+  // for turning it on (sign in first, so you cannot lock yourself out)
+  // impossible to follow.
+  if (me && !me.signedIn && (me.loginRequired || view.signingIn)) {
     el.className = '';
     el.innerHTML = signInScreen();
     return;
@@ -2810,6 +2828,15 @@ document.addEventListener('click', async (event) => {
   if (t.closest('[data-import]')) { closeDialogs(); view.importing = true; return paint(); }
   if (t.closest('[data-delete-campaign]')) { closeDialogs(); view.deleting = true; return paint(); }
 
+  if (t.closest('[data-signin-cancel]')) { view.signingIn = false; return paint(); }
+
+  if (t.closest('[data-signin]')) {
+    closeDialogs();
+    view.signingIn = true;
+    login.stage = 'name'; login.message = ''; login.failed = false;
+    return paint();
+  }
+
   const asking = t.closest('[data-ask-restore]');
   if (asking) {
     closeDialogs();
@@ -2955,6 +2982,7 @@ document.addEventListener('submit', async (event) => {
         login.stage = 'name';
         login.name = '';
         login.message = '';
+        view.signingIn = false;
         me = null;
         await tick();
         return;
