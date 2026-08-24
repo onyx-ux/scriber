@@ -30,3 +30,8 @@ dashboard/.env
 # installed so they can be reinstalled reproducibly.
 .agents/
 .claude/skills/
+
+# Design exports and scratch. The UI zip is 4MB of binary that would sit in
+# history for ever once pushed, and it is a build output rather than a source.
+*.zip
+temp.md
