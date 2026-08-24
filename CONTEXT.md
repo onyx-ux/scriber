@@ -30,6 +30,44 @@ him. Practical implications for how to work with him:
   rules, PATH edits, PowerShell admin elevation) once told exactly what
   to click/type — the gap is unfamiliarity, not capability.
 
+## The words this codebase uses
+
+Added 2026-08-21, because this file was a session handoff with no glossary in
+it and an architecture review needed names for things. These are the terms the
+code actually uses — use them rather than inventing synonyms.
+
+- **Campaign** — one table's ongoing game. The unit everything is filed under:
+  a vault folder, a ledger, a roster, a session numbering. Not a Discord
+  server; one server can hold several, and one campaign can be read from
+  anywhere. Claimed by whoever ran `/campaign create`, who is its **manager**.
+- **Session** — one recorded evening. Stored as a `meeting` row, numbered per
+  campaign (`Cipher_02`), and made of **utterances** — one row per speaking
+  turn, per person.
+- **Ledger** — the campaign's flat index: `NPCs.md`, `Locations.md`, one line
+  per name. Written by the pipeline after every session, synced to Drive.
+- **Entity note** — a PAGE per NPC, place or player character, read from the
+  full transcripts rather than the recaps. Distinct from a ledger entry: the
+  ledger says a name exists, the note says who they are and carries the
+  **aliases** that make `[[Yusdrayl]]` resolve when whisper spelled it three
+  ways. Lives under `NPCs/`, `Locations/`, `Characters/` in the vault.
+- **Subject** — which of those three an extraction run is about. A subject is
+  a description — prompt, merge rule, renderer, folder — handed to one shared
+  run in `campaign/entity-notes.js`, not a copy of it.
+- **Vault** — the Obsidian directory the notes are written into.
+- **Viewer** — who is looking at the dashboard, and what that entitles them
+  to. Four **levels** (dev, owner, creator, player), each derived from a fact
+  about Discord the bot can check rather than a role anybody grants.
+- **Authority** — whether a request may do a thing, and as whom. One module,
+  `web/authority.js`: the door, the name, the act, the acting id, the cut.
+- **Correction** — a rename rule scoped to one campaign, for names whisper
+  mishears. Rewriting transcripts with one cannot be undone, hence the
+  blast-radius guard in `pipeline/job-actions.js`.
+- **Job** — a queued piece of work against a session: transcribe or summarise.
+  The **queue** is the list of them, and it is **machinery** — it spends the
+  owner's GPU or API budget, so every control over it is theirs.
+
+Architecture decisions that should not be re-litigated live in `docs/adr/`.
+
 ## What this project is
 
 Self-hosted Discord bot ("Scriber") that records a D&D group's voice

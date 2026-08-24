@@ -134,7 +134,7 @@ export function createDiscordBridge({ client, db, cfg }) {
         ? await channel
             .send(
               `🪶 **${code}** is your code for the Quill dashboard.\n\n` +
-                'It lasts ten minutes and works once. Type it on the sign-in page along with the name ' +
+                'It lasts ten minutes and works once. Type it on the sign-in page along with your username ' +
                 `**${username}**.\n\n` +
                 '_If you did not just try to sign in, ignore this — nothing has happened to your account, and ' +
                 'Quill will never ask you for a password._'
@@ -149,14 +149,13 @@ export function createDiscordBridge({ client, db, cfg }) {
 
 // --- signing in ---
 
-// One person, found across every server the bot is in.
+// One person, found across every server the bot is in, by Discord username.
 //
-// Used only by the sign-in flow, and scoped hard on purpose: a name that
+// Used only by the sign-in flow, and scoped hard on purpose: a username that
 // matches nobody the bot shares a server with resolves to nothing, so this
-// cannot become a way to make the bot DM a stranger. An exact username match
-// wins over a nickname, and an ambiguous match resolves to nothing rather than
-// guessing — sending somebody else's sign-in code to the wrong account is the
-// one outcome worth refusing over.
+// cannot become a way to make the bot DM a stranger. An ambiguous match
+// resolves to nothing rather than guessing — sending somebody else's sign-in
+// code to the wrong account is the one outcome worth refusing over.
 async function findAcrossGuilds(client, query) {
   const term = String(query ?? '').trim().toLowerCase();
   if (term.length < 2) return null;
@@ -176,14 +175,19 @@ async function findAcrossGuilds(client, query) {
   }
 
   const people = [...hits.values()];
+
+  // The Discord username, and nothing else.
+  //
+  // Discord's member search matches nicknames and display names as well, and
+  // this used to accept either — an exact nickname, or a lone hit of any kind.
+  // Both are the wrong key to send a sign-in code on. A nickname is per-server
+  // and a display name can be changed at will, so either can point at a
+  // different person next week, or at somebody else's account today if two
+  // people at the same table have picked the same one. The username is the
+  // handle Discord itself treats as the identity, so it is the only thing that
+  // resolves here.
   const exact = people.filter((p) => p.username.toLowerCase() === term);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) return null;
-
-  const byNick = people.filter((p) => (p.nick ?? '').toLowerCase() === term);
-  if (byNick.length === 1) return byNick[0];
-
-  return people.length === 1 ? people[0] : null;
+  return exact.length === 1 ? exact[0] : null;
 }
 
 // What the dashboard needs to show a row: who they are, what the table calls

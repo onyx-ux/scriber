@@ -13,6 +13,7 @@ import {
   entryKey,
 } from '../campaign/ledger.js';
 import { splitEntryName } from '../campaign/entry-name.js';
+import { updateEntityNotesForSession } from '../campaign/entity-notes.js';
 import { rosterNames } from '../campaign/character-names.js';
 import {
   readVaultEntities,
@@ -201,6 +202,46 @@ export async function tick(db, discordClient, cfg) {
     // Ledger update uses the unfiltered notes so it stays authoritative.
     await updateCampaignLedger({ meeting, notes, cfg, folder });
     await pushLedgerToDrive(ledgerDir, ledgerRemote, cfg);
+
+    // Bring the vault's per-entity notes up to date with this session.
+    //
+    // This worker has always READ those notes — the alias lists a few lines
+    // above come from NPCs/ and Locations/ — while nothing in the pipeline
+    // wrote them. They only appeared when somebody remembered to run three
+    // scripts by hand, so the aliases that make recurring names link were as
+    // current as the last time that happened.
+    //
+    // Off unless the owner turned it on: it is three model calls reading the
+    // whole transcript, which is a real bill. See ENTITY_NOTES_AFTER_SESSION.
+    //
+    // Best-effort, like the archive page below it: a session that was
+    // transcribed, summarised and posted is finished, and a model that would
+    // not answer about its NPCs must not turn that into a failure.
+    if (cfg.entityNotesAfterSession) {
+      await updateEntityNotesForSession({
+        db,
+        cfg,
+        campaign: db.getCampaign(campaignId),
+        sessionNumber: meeting.session_number ?? meeting.id,
+        onEvent: (event) => {
+          if (event.type === 'subject-failed') {
+            console.warn(`[entities] ${event.subject} not updated: ${event.message}`);
+          } else if (event.type === 'incremental-refused') {
+            // Not a failure, and the one event here that needs an instruction
+            // attached: nothing is wrong with this session, there is simply no
+            // record of the earlier ones to merge it with. Writing anyway would
+            // rewrite every note as if the campaign started tonight.
+            console.warn(
+              `[entities] left alone — no cached extraction for session(s) ${event.uncovered.join(', ')}. ` +
+                'Run scripts/build-npc-notes.mjs <campaign> --write once (and the location and character ' +
+                'builders) to fill the cache, and updates after that will be automatic.'
+            );
+          } else if (event.type === 'finished') {
+            console.log(`[entities] ${event.written} note(s) written to ${event.outDir}`);
+          }
+        },
+      }).catch((err) => console.warn(`[entities] not updated: ${err.message}`));
+    }
 
     // Regenerate the browsable archive page. Best-effort — a failure here
     // must not fail an otherwise-complete session.

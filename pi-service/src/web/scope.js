@@ -14,6 +14,21 @@
 //     it. A player reading last week's notes does not need to know, and telling
 //     them invites a conversation about it that is not theirs to have.
 import { maySee, mayManage } from './viewer.js';
+// Which capability each section rides behind. Declared once, next to the code
+// that builds it, and used here to decide what may be SENT — so a section
+// cannot be added to the snapshot with its audience decided in only one of the
+// two places. See web/status.js.
+import { SECTIONS } from './status.js';
+
+// The sections that are not simply kept or dropped, but cut down first.
+//
+// A server owner may see servers, but only the ones that are theirs or that
+// hold a campaign they can reach. Everything else in SECTIONS is all-or-
+// nothing, which is why this map has one entry rather than nine.
+const TRANSFORMS = {
+  servers: (servers, viewer, guildIds) =>
+    (servers ?? []).filter((g) => viewer.guildIds.includes(g.id) || guildIds.has(g.id)),
+};
 
 // The status snapshot, cut to size.
 //
@@ -52,10 +67,10 @@ export function scopeStatus(status, viewer) {
     viewer: { level: viewer?.level ?? 'none', username: viewer?.username ?? null, can: viewer?.can },
   };
 
-  if (viewer?.can?.servers) {
-    scoped.servers = (status.servers ?? []).filter((g) => viewer.guildIds.includes(g.id) || guildIds.has(g.id));
-  }
-
+  // The metrics totals are computed rather than passed through: they are this
+  // viewer's own numbers, added up over the campaigns they can actually see.
+  // Applied BEFORE the section table below, because a viewer who has machinery
+  // as well gets the install-wide totals instead and that has to win.
   if (viewer?.can?.metrics) {
     scoped.totals = {
       campaigns: campaigns.length,
@@ -66,17 +81,22 @@ export function scopeStatus(status, viewer) {
     };
   }
 
-  // The queue is machinery: it is a list of what is about to spend the GPU and
-  // the API budget, and every control over it is the owner's.
-  if (viewer?.can?.machinery) {
-    scoped.working = status.working;
-    scoped.queue = status.queue;
-    scoped.schedule = status.schedule;
-    scoped.providers = status.providers;
-    scoped.totals = status.totals;
-    // The API bill, and which model is spending it. One person's business.
-    scoped.models = status.models;
-    scoped.backup = status.backup;
+  // Everything the snapshot declared a capability for.
+  //
+  // Still a list of what goes IN — the loop only ever ADDS a section, and only
+  // when this viewer holds the capability the section named. A section whose
+  // capability nobody thought about does not appear here at all, because it
+  // does not appear in SECTIONS. The queue, the schedule and the model bill are
+  // machinery by that declaration: they are a list of what is about to spend
+  // the GPU and the API budget, and every control over them is the owner's.
+  for (const [name, capability] of Object.entries(SECTIONS)) {
+    if (!viewer?.can?.[capability]) continue;
+    // Absent because the snapshot did not build it for this viewer, which is
+    // the same answer as "not allowed" and reaches here for the same reason.
+    if (!(name in status)) continue;
+
+    const transform = TRANSFORMS[name];
+    scoped[name] = transform ? transform(status[name], viewer, guildIds) : status[name];
   }
 
   return scoped;

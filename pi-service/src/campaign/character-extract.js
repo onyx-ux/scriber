@@ -11,7 +11,7 @@
 // character something else entirely ("BenTen"), and whisper spells both
 // several ways. Both have to end up as aliases or half the mentions in the
 // vault link to nothing.
-import { npcKey, parseEntityList } from './npc-extract.js';
+import { npcKey, parseEntityList, npcFileName } from './npc-extract.js';
 
 export const CHARACTER_SYSTEM_PROMPT = `You are a meticulous D&D campaign archivist.
 
@@ -282,3 +282,52 @@ export function renderCharacterNote(pc, { campaign, knownEntities = [] } = {}) {
 
   return fm.join('\n') + body.join('\n');
 }
+
+// What this subject is, for the shared run in campaign/entity-notes.js.
+//
+// The one subject that is not merged on the name. A player character has
+// something better to key on — the roster fixes who plays whom — and the roster
+// is authoritative over the model's reading of it afterwards, so `merge` here
+// is two steps rather than one.
+//
+// It also has no alias reconciliation: applyRoster does that job better, from a
+// fact somebody typed rather than a fuzzy match against the ledger.
+export const CHARACTER_SUBJECT = {
+  key: 'characters',
+  noun: 'character',
+  folder: 'Characters',
+  systemPrompt: CHARACTER_SYSTEM_PROMPT,
+  userMessage: ({ transcript, sessionNumber, date, existingNames, extras }) =>
+    buildCharacterUserMessage({
+      transcript,
+      sessionNumber,
+      date,
+      existingNames,
+      roster: extras.roster ?? [],
+      dm: extras.dm ?? null,
+    }),
+  parse: parseCharacterResponse,
+  merge: (perSession, extras) => {
+    const roster = extras.roster ?? [];
+    return applyRoster(mergeCharacters(perSession, roster), roster);
+  },
+  reconcile: null,
+  fileName: npcFileName,
+  render: renderCharacterNote,
+  detail: (pc) =>
+    [
+      [pc.race, pc.class].filter(Boolean).join(' '),
+      pc.player ? `played by ${pc.player}` : null,
+      `sessions ${pc.sessions.join(', ')}`,
+      pc.aliases.length ? `${pc.aliases.length} alias(es)` : null,
+      pc.quotes.length ? `${pc.quotes.length} quote(s)` : null,
+    ]
+      .filter(Boolean)
+      .join(' · '),
+  // Said after the report, because "no note for Priya" is a fact about the
+  // roster rather than about any record that was built.
+  missing: (records, extras) =>
+    (extras.roster ?? [])
+      .filter((r) => !records.some((c) => c.player?.toLowerCase() === r.player.toLowerCase()))
+      .map((r) => r.player),
+};

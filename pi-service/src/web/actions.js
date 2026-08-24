@@ -32,6 +32,12 @@ import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js
 import { requestRestore, decideRestoreRequest, isOperator } from '../campaign/restore-request.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { ROLES } from '../pipeline/model-choice.js';
+// Whose name an act happens under. Asked rather than re-derived: four actions
+// here used to each decide for themselves what the operator's console is.
+import { actingUserId } from './authority.js';
+// Ending somebody's sessions goes through the module that owns credentials,
+// not straight at the store — see web/auth.js.
+import { revokeAllSessions } from './auth.js';
 
 // An id arriving over HTTP is a string from a JSON body written by a page that
 // could have been edited. "12abc" must not become 12.
@@ -157,7 +163,7 @@ export const ACTIONS = {
     const userId = String(body?.userId ?? '').trim();
     if (!userId) return badRequest('A userId is required.');
 
-    const ended = db.closeAllAuthSessions(userId);
+    const ended = revokeAllSessions(db, userId);
     return {
       status: 200,
       payload: {
@@ -187,7 +193,7 @@ export const ACTIONS = {
   // is asking comes from the session for the same reason it does on create.
   'campaign/delete': (db, cfg, body, ctx) => {
     const viewer = ctx?.viewer ?? null;
-    const userId = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+    const userId = actingUserId(viewer, cfg);
     if (!userId) {
       return { status: 403, payload: { ok: false, message: 'Sign in before deleting a campaign.' } };
     }
@@ -208,7 +214,7 @@ export const ACTIONS = {
   // and all.
   'campaign/restore': (db, cfg, body, ctx) => {
     const viewer = ctx?.viewer ?? null;
-    const userId = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+    const userId = actingUserId(viewer, cfg);
     if (!userId) {
       return { status: 403, payload: { ok: false, message: 'Sign in before asking about a campaign.' } };
     }
@@ -239,7 +245,7 @@ export const ACTIONS = {
   // because this is the gate the whole ticket exists to be.
   'campaign/restore-review': (db, cfg, body, ctx) => {
     const viewer = ctx?.viewer ?? null;
-    const decidedBy = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+    const decidedBy = actingUserId(viewer, cfg);
 
     const requestId = Number(body?.requestId);
     if (!Number.isInteger(requestId) || requestId <= 0) return badRequest('A numeric requestId is required.');
@@ -256,7 +262,7 @@ export const ACTIONS = {
 
     // With login off there is no session, and the page is the operator by
     // definition -- so the campaign belongs to whoever the bot calls its owner.
-    const userId = viewer?.userId || (viewer?.can?.everything ? cfg?.ownerUserId : null);
+    const userId = actingUserId(viewer, cfg);
     if (!userId) {
       return {
         status: 403,

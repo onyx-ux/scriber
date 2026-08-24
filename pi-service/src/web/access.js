@@ -10,7 +10,10 @@
 // right now, and -- the part that matters most -- whether the front door is
 // even asking for a name yet.
 
-import { buildViewer, LEVEL_WORDS } from './viewer.js';
+// Through web/authority.js rather than straight at viewer.js: "what would this
+// person's level be" is an authority question, and there is one module that
+// answers those now.
+import { buildViewer, LEVEL_WORDS } from './authority.js';
 
 const ORDER = { dev: 0, owner: 1, creator: 2, player: 3, none: 4 };
 

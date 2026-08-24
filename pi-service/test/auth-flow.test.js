@@ -38,8 +38,15 @@ function fakeDiscord() {
   return {
     sent,
     bridge: {
-      findKnownMember: async ({ query }) =>
-        query.toLowerCase() === 'saf' ? { userId: PLAYER, username: 'saf' } : null,
+      findKnownMember: async ({ query }) => {
+        const q = query.toLowerCase();
+        if (q === 'saf') return { userId: PLAYER, username: 'saf' };
+        // Whoever runs Cipher. On the campaign as its manager, and never once
+        // recorded saying anything -- a DM who set the table up from the
+        // dashboard has no utterances to their name.
+        if (q === 'dm') return { userId: CREATOR, username: 'dm' };
+        return null;
+      },
       sendCode: async ({ userId, code }) => {
         sent.push({ userId, code });
         return { ok: true };
@@ -329,4 +336,31 @@ test('a player cannot name themselves at a table they do not play at', async (t)
 
   assert.equal(res.status, 403);
   assert.equal(db.getCharacterName(theirs, PLAYER), null);
+});
+
+// The person who runs the table, locked out of the dashboard for their own
+// campaign.
+//
+// /auth/request finds them through Discord's member search -- the fallback that
+// exists for somebody the bot has not recorded yet -- and DMs a working code.
+// /auth/verify then resolved the typed name against the utterances table alone,
+// so the code it had just sent came back "not right". A DM who set their
+// campaign up from the dashboard could not sign in to it until somebody
+// recorded them speaking.
+test('a DM who has never been recorded can sign in to the campaign they run', async (t) => {
+  const { base, discord, mine } = await serving(t);
+
+  const cookie = await signIn(base, discord, 'dm');
+
+  const me = await json(await call(base, '/me', { cookie }));
+  assert.equal(me.body.signedIn, true);
+  assert.equal(me.body.level, 'creator', 'and is recognised as running a table, not as a stranger');
+
+  // Not merely a cookie: the campaign they manage is actually there.
+  const status = await json(await call(base, '/status', { cookie }));
+  assert.deepEqual(
+    status.body.campaigns.map((c) => c.id),
+    [mine],
+    'their own campaign, and only theirs'
+  );
 });

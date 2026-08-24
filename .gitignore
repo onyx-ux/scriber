@@ -24,3 +24,9 @@ pc-whisper/models/
 # Dashboard credentials
 dashboard/config/.htpasswd
 dashboard/.env
+
+# Agent skills installed via `npx skills add` (third-party content + local symlinks).
+# skills-lock.json is deliberately NOT ignored - it records which skills are
+# installed so they can be reinstalled reproducibly.
+.agents/
+.claude/skills/

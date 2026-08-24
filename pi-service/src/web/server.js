@@ -5,10 +5,20 @@ import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
 import { buildTranscriptView } from './transcript-view.js';
 import { createDiscordBridge } from './discord-bridge.js';
-import { buildViewer, OPERATOR, maySee, mayManage, atLeast, LEVEL_WORDS } from './viewer.js';
-import { cookieFrom, readSession, closeSession, sessionCookie, clearedCookie } from './auth.js';
+// Every question about who may do what goes through this one module — the
+// door, the name, the act, the acting id, and the cut. See web/authority.js.
+import {
+  checkDoor,
+  identify,
+  mayAct,
+  actingUserId,
+  maySee,
+  LEVEL_WORDS,
+  scopeStatus,
+  scopeCampaign,
+} from './authority.js';
 import { handleAuthRoute, createRequestLimiter } from './auth-routes.js';
-import { scopeStatus, scopeCampaign } from './scope.js';
+import { sweepExpired } from './auth.js';
 import { guildsCreatableBy } from '../campaign/create.js';
 import { restorableBy, mayDelete } from '../campaign/archive.js';
 import { pendingRestoreRequests } from '../campaign/restore-request.js';
@@ -35,161 +45,6 @@ const PROBE_INTERVAL_MS = 60_000;
 
 // A body big enough for any action here is a body someone is playing with.
 const MAX_BODY_BYTES = 64 * 1024;
-
-// Reads and writes are authenticated differently, on purpose.
-//
-// While this API was read-only, "no STATUS_TOKEN set" meaning "open" was a
-// reasonable default on a home LAN: the worst it leaked was how many sessions
-// had been recorded. Writes end that. An unauthenticated POST can spend the
-// owner's API budget, seize the PC's GPU mid-evening, or stop the queue.
-//
-// So writes fail CLOSED: with no token configured there is no correct
-// credential to present, and rather than treat that as "open to everyone" the
-// server refuses every action and says why. Turning the dashboard from a
-// window into a control panel has to be something the operator did on purpose.
-function authorise({ req, url, cfg, mutating }) {
-  if (!mutating) {
-    if (!cfg.statusToken) return null;
-    const given = url.searchParams.get('token') || req.headers['x-status-token'];
-    return given === cfg.statusToken ? null : { status: 401, message: 'bad token' };
-  }
-
-  if (!cfg.statusToken) {
-    return {
-      status: 403,
-      message:
-        'This bot has no STATUS_TOKEN set, so it will not accept actions from the dashboard. ' +
-        'Set STATUS_TOKEN in pi-service/.env (and in the dashboard) to enable them.',
-    };
-  }
-  const given = url.searchParams.get('token') || req.headers['x-status-token'];
-  return given === cfg.statusToken ? null : { status: 401, message: 'bad token' };
-}
-
-// WHO is asking, which is a different question from whether they may ask.
-//
-// The token above is a door key shared by everyone who can reach the dashboard;
-// this is the name on the person walking through it. Both exist because they
-// answer different things, and the order matters:
-//
-//   1. a signed-in Discord account, if there is one. Its level comes from what
-//      that account owns, runs and plays in — see web/viewer.js.
-//   2. otherwise the operator's own console, which is what the token has always
-//      meant and still does.
-//
-// Sign-in therefore NARROWS what a request can see rather than widening it,
-// which is the safe direction: a bug here shows somebody too little.
-//
-// DASHBOARD_REQUIRE_LOGIN flips (2) off, so an install that has invited its
-// players in stops handing anyone with the token the keys to the machinery. It
-// is off by default on purpose — turning it on before you have signed in once
-// would lock you out of your own Pi.
-function identify({ req, db, cfg, client }) {
-  const token = cookieFrom(req.headers.cookie);
-  const session = token ? readSession(db, cfg, token) : null;
-
-  if (session) {
-    const guildsOwned = [...(client?.guilds?.cache?.values?.() ?? [])]
-      .filter((g) => g.ownerId === session.userId)
-      .map((g) => g.id);
-    return buildViewer({ db, cfg, userId: session.userId, username: session.username, guildsOwned });
-  }
-
-  return cfg.dashboardRequireLogin ? buildViewer({ db, cfg, userId: null }) : OPERATOR;
-}
-
-// What each action costs, and therefore who may fire it.
-//
-// Grouped by what is actually at stake rather than by what it is called:
-//
-//   machinery — spends the owner's GPU, API budget or disk, or stops the queue
-//               for everybody. The owner's hardware, so the owner's decision.
-//   manage    — reshapes one campaign's records. Whoever runs that table.
-//
-// Anything not listed is machinery. That default is the point: a new action
-// added later is locked to dev until somebody deliberately decides otherwise,
-// which is the failure direction that does not hand a player the pause button.
-const ACTION_NEEDS = {
-  'roster/search': 'manage',
-  'roster/invite': 'manage',
-  'roster/character': 'manage',
-  'roster/forget': 'manage',
-  'corrections/add': 'manage',
-  'corrections/remove': 'manage',
-  'corrections/replay': 'manage',
-  'campaign/output': 'manage',
-  'campaign/create': 'manage',
-  'campaign/delete': 'manage',
-  // Restoring cannot go through the manage check: that check ends in
-  // db.getCampaign(), and an archived campaign is invisible to it -- which
-  // is the entire point of archiving. Ownership is checked instead by
-  // campaign/archive.js, against the archived row itself.
-  'campaign/restore': 'restore',
-  // Deciding a request is the operator's, and only theirs.
-  'campaign/restore-review': 'everything',
-  // Ending somebody else's session is the operator's alone. A server owner
-  // has `servers` too, so gating on that would hand it to them as well.
-  'access/revoke': 'everything',
-};
-
-// The two actions you may aim at yourself wherever you are welcome.
-//
-// /campaign setchar has always let a player name their own character, and it
-// is obviously theirs to name — the dashboard being stricter than the slash
-// command for the same act was an accident of grouping it with the rest of the
-// roster, not a decision.
-const OWN_BUSINESS = new Set(['roster/character', 'roster/forget']);
-
-function mayAct({ pathname, body, viewer, db }) {
-  const name = /^\/actions\/(.+?)\/?$/.exec(pathname)?.[1];
-  if (!name) return null; // unknown path — runAction 404s it properly
-
-  if (OWN_BUSINESS.has(name) && viewer.userId && body?.userId === viewer.userId) {
-    return maySee(viewer, Number(body?.campaignId))
-      ? null
-      : { status: 403, message: 'That is not a table you play at.' };
-  }
-
-  const needs = ACTION_NEEDS[name] ?? 'machinery';
-
-  if (needs === 'restore') {
-    return viewer.can.manage
-      ? null
-      : { status: 403, message: 'You can read this campaign, but not change it.' };
-  }
-
-  if (needs === 'everything') {
-    return viewer.can.everything
-      ? null
-      : { status: 403, message: 'Only the bot owner can change who has access.' };
-  }
-
-  if (needs === 'machinery') {
-    return viewer.can.machinery && viewer.can.approvals
-      ? null
-      : { status: 403, message: 'That is the bot owner\'s to decide — it spends their hardware or their API budget.' };
-  }
-
-  if (!viewer.can.manage) {
-    return { status: 403, message: 'You can read this campaign, but not change it.' };
-  }
-
-  // Manage actions name a campaign, and a campaign you may manage is not the
-  // same set as a campaign you may see. Resolved from the body rather than
-  // trusted from it: an id you cannot manage is refused whatever else is true.
-  const id = Number(body?.campaignId);
-  if (!Number.isInteger(id) || id <= 0) return null; // the action's own validator will say so better
-
-  // A campaign that does not exist is refused here too, rather than waved
-  // through for the action to sort out. It used to defer, on the reasoning
-  // that the action would validate — and corrections/add did not, so a made-up
-  // id wrote a correction row belonging to no campaign. "Not a campaign you
-  // run" is true of one that does not exist, and answering it here means every
-  // future manage action inherits the check instead of having to remember it.
-  return mayManage(viewer, id) && db.getCampaign(id)
-    ? null
-    : { status: 403, message: 'That is not a campaign you run.' };
-}
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -256,10 +111,10 @@ export function startStatusServer({
   // of dead credentials is a table of things that could come back if a clock
   // moved. Swept hourly and checked again on every use, the same belt-and-
   // braces the consent invites get.
-  db.sweepAuth();
+  sweepExpired(db);
   const sweepTimer = setInterval(() => {
     try {
-      db.sweepAuth();
+      sweepExpired(db);
     } catch (err) {
       console.error('[auth] sweep failed:', err.message);
     }
@@ -347,7 +202,7 @@ export function startStatusServer({
     // has it either way. Skipping the check here would leave a bot on an
     // exposed port able to be told "DM this person a code" by a stranger, at
     // whatever rate the limiter allowed.
-    const doorman = authorise({ req, url, cfg, mutating });
+    const doorman = checkDoor({ req, url, cfg, mutating });
     if (doorman) {
       send(res, doorman.status, { ok: false, message: doorman.message });
       return;
@@ -459,7 +314,7 @@ export function startStatusServer({
         ...(scoped.viewerCan ?? {}),
         delete: mayDelete({
           campaign: db.getCampaign(id),
-          userId: viewer.userId ?? (viewer.can?.everything ? cfg.ownerUserId : null),
+          userId: actingUserId(viewer, cfg),
           cfg,
         }),
       };
@@ -529,7 +384,13 @@ export function startStatusServer({
 
     try {
       const payload = scopeStatus(
-        buildStatus({ db, cfg, client, activeSessions, reachability, startedAtMs }),
+        // The viewer goes IN as well as being applied after. A section this
+        // person may not read is not built, which is what stops a player's
+        // five-second poll paying to assemble the access roster and the queue
+        // before scopeStatus throws them away. scopeStatus still runs: it is
+        // the fail-closed list of what may leave, and it stays the thing that
+        // decides, the same belt-and-braces the auth sweep gets.
+        buildStatus({ db, cfg, client, activeSessions, reachability, startedAtMs, viewer }),
         viewer
       );
 
@@ -542,9 +403,13 @@ export function startStatusServer({
 
       // Campaigns this viewer deleted and can still bring back. Only ever
       // their own, and only while the window is open.
-      const waiting = viewer.userId || viewer.can?.everything
-        ? restorableBy({ db, cfg, userId: viewer.userId ?? cfg.ownerUserId })
-        : [];
+      //
+      // Asked as a single question now: a request with no acting id has nobody
+      // to list campaigns FOR, and asking anyway used to reach
+      // listArchivedCampaigns({ userId: undefined }) on an install whose owner
+      // was never configured.
+      const acting = actingUserId(viewer, cfg);
+      const waiting = acting ? restorableBy({ db, cfg, userId: acting }) : [];
       // Restore tickets waiting on a decision. The operator's queue, so it
       // rides behind the same capability as the access roster.
       if (viewer.can?.everything) {

@@ -192,9 +192,34 @@ async function driver({ base, typed = {} }) {
   const listeners = {};
   let cookie = null;
 
+  // Panels the page owns and rewrites; everything else that gets an id is a
+  // field living INSIDE one of them. Also what body() reads back.
+  const PANELS = ['top', 'rail-list', 'rail-nav', 'rail-foot', 'banner', 'screen', 'modal', 'toast'];
+
+  // Rewriting a panel throws its children away, exactly as a browser does.
+  //
+  // This stub used to keep every element it had ever handed out, for ever, so
+  // a field the page had just re-rendered still answered with what the test
+  // typed into the old one. That is not what a browser does, and the gap hid a
+  // real bug: the sign-in handler painted before reading its input, so what
+  // somebody typed was destroyed and the page posted an empty name. Every test
+  // here passed while signing in was impossible in an actual browser.
+  //
+  // A field that survives a repaint does so because the page put its value
+  // back into the markup, so that is what gets read back here.
+  const reseed = (markup) => {
+    for (const [id, node] of Object.entries(panels)) {
+      if (PANELS.includes(id)) continue;
+      if (!markup.includes(`id="${id}"`)) { node.value = ''; continue; }
+      const declared = new RegExp(`id="${id}"[^>]*?\\svalue="([^"]*)"`).exec(markup);
+      node.value = declared ? declared[1] : '';
+    }
+  };
+
   const el = (id) => (panels[id] ??= {
     id, _html: '', className: '', _text: '', dataset: {}, value: typed[id] ?? (id === 'people-q' ? 'newbie' : ''),
-    set innerHTML(v) { this._html = v; }, get innerHTML() { return this._html; },
+    set innerHTML(v) { this._html = v; if (PANELS.includes(this.id)) reseed(v); },
+    get innerHTML() { return this._html; },
     set textContent(v) { this._text = v; }, get textContent() { return this._text; },
     focus() {}, setSelectionRange() {}, closest: () => null, querySelector: () => null,
   });
@@ -231,9 +256,14 @@ async function driver({ base, typed = {} }) {
       // Every listener, not just the last: the page registers three separate
       // submit handlers, and keeping one meant two of them never ran.
       addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
-      body: { classList: { add() {}, remove() {} } },
+      // `toggle` as well as add/remove: renderScreen dresses the body for the
+      // sign-in gate, and a stub missing one method fails as "not a function"
+      // from inside a render, which surfaces as an unrelated empty screen.
+      body: { classList: { add() {}, remove() {}, toggle() {} } },
       activeElement: null,
       createElement: () => ({ click() {}, style: {} }),
+      // The gate appends a stylesheet link for the landing page's typefaces.
+      head: { appendChild() {} },
       get title() { return this._t; }, set title(v) { this._t = v; },
     },
   };
@@ -241,7 +271,6 @@ async function driver({ base, typed = {} }) {
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox, { filename: 'dashboard.js' });
 
-  const PANELS = ['top', 'rail-list', 'rail-nav', 'rail-foot', 'banner', 'screen', 'modal', 'toast'];
   // The toast speaks through textContent rather than innerHTML, so a control
   // whose only effect is a message would otherwise look wired to nothing.
   const body = () =>

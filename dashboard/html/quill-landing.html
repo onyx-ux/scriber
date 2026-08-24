@@ -1,0 +1,1203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quill — a scribe that sits in the voice channel</title>
+
+<!--
+  ── The one thing left to fill in ────────────────────────────────────────
+  Paste the Discord install URL into QUILL_INVITE below when the application
+  exists. Every "Add to Discord" on the page reads from it, so it goes in one
+  place and not four.
+
+  ── How this page reaches the dashboard ──────────────────────────────────
+  Every "Log in" points at /app/#signin.
+
+  /app/ is where templates/default.conf.template now serves index.html from —
+  this page took the root. Move one and you move the other.
+
+  '#signin' is the connection. The dashboard's sign-in card is view state
+  rather than a screen with a URL, so a link from outside had no way to ask
+  for it; the reader that answers this sits at the bottom of index.html. A
+  fragment on purpose — it never reaches the server, so it needs no location
+  block of its own.
+-->
+<script>
+  // The Discord install URL, e.g.
+  // https://discord.com/oauth2/authorize?client_id=…&scope=bot+applications.commands
+  var QUILL_INVITE = '';
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1;1,9..144,300..700,0..100,0..1&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── tokens ─────────────────────────────────────────────────────────── */
+:root{
+  color-scheme: light;
+  --paper:#E6E8E3;        /* cool grey-green stock, not parchment */
+  --paper-2:#DEE2DA;
+  --paper-3:#D4D9CF;
+  --ink:#171C22;          /* near-black, blue cast */
+  --ink-soft:#5C665E;
+  --rule:#C4CABE;
+  --pen:#2434A8;          /* the one accent: correction ink */
+  --mark:#E1EC97;         /* highlighter, only for kept lines */
+
+  --display:'Fraunces', 'Hoefler Text', Georgia, serif;
+  --body:'Newsreader', Georgia, 'Times New Roman', serif;
+  --mono:'Spline Sans Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --shell:1200px;
+  --gutter:172px;
+  --pad:40px;
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:17px;
+  line-height:1.65;
+  font-optical-sizing:auto;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{
+  font-family:var(--display);
+  font-variation-settings:'SOFT' 0,'WONK' 1;
+  font-weight:400;
+  margin:0;
+  text-wrap:balance;
+}
+p{margin:0}
+a{color:var(--pen)}
+:focus-visible{outline:2px solid var(--pen);outline-offset:3px;border-radius:2px}
+
+/* ── shared structure: a page with a machine gutter ─────────────────── */
+.band{
+  max-width:var(--shell);
+  margin:0 auto;
+  padding-left:var(--pad);
+  padding-right:var(--pad);
+  display:grid;
+  grid-template-columns:var(--gutter) minmax(0,1fr);
+  gap:40px;
+}
+.band + .band{border-top:1px solid var(--rule)}
+.band-inner{padding-top:88px;padding-bottom:88px}
+
+/* The hero runs tighter than the other bands. The transcript panel is the
+   whole argument of the page, and at the original rhythm it began below the
+   fold on a 900px laptop — the one thing a visitor had to see was the one
+   thing they had to scroll for. */
+.band-hero .band-inner{padding-top:52px;padding-bottom:76px}
+.band-hero .rail{padding-top:56px}
+
+/* the gutter carries the real machine artifact for its section */
+.rail{
+  padding-top:92px;
+  font-family:var(--mono);
+  font-size:11.5px;
+  line-height:1.85;
+  letter-spacing:.055em;
+  color:var(--ink-soft);
+  text-transform:uppercase;
+}
+.rail-stick{position:sticky;top:28px}
+.rail b{display:block;font-weight:500;color:var(--ink);text-transform:none;letter-spacing:.02em;font-size:12px}
+.rail hr{border:0;border-top:1px solid var(--rule);margin:12px 0}
+
+.eyebrow{
+  font-family:var(--mono);
+  font-size:11.5px;
+  letter-spacing:.19em;
+  text-transform:uppercase;
+  color:var(--pen);
+  margin:0 0 18px;
+}
+.h2{font-size:clamp(28px,3.6vw,42px);line-height:1.08;letter-spacing:-.018em}
+.lead{font-size:19px;line-height:1.62;color:var(--ink-soft);margin-top:16px;max-width:54ch}
+.lead + .lead{margin-top:14px}
+
+/* ── buttons ────────────────────────────────────────────────────────── */
+.btns{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.btn{
+  font-family:var(--mono);
+  font-size:13px;
+  letter-spacing:.02em;
+  text-decoration:none;
+  padding:12px 22px;
+  border-radius:5px;
+  border:1px solid var(--pen);
+  background:var(--pen);
+  color:var(--paper);
+  transition:background .16s ease, color .16s ease, border-color .16s ease;
+}
+.btn:hover{background:#1B2A92;border-color:#1B2A92}
+.btn-quiet{background:transparent;color:var(--pen);border-color:var(--rule)}
+.btn-quiet:hover{background:transparent;color:var(--pen);border-color:var(--pen)}
+/* An invite button with nowhere to go yet. Left looking exactly right so the
+   design still reads true, but it does not pretend to be clickable. */
+[data-invite]:not([href]){cursor:default}
+
+/* ── masthead ───────────────────────────────────────────────────────── */
+.masthead{
+  max-width:var(--shell);
+  margin:0 auto;
+  padding:26px var(--pad);
+  display:flex;
+  align-items:center;
+  gap:26px;
+}
+.brand{
+  display:flex;align-items:center;gap:10px;
+  margin-right:auto;
+  font-family:var(--display);
+  font-variation-settings:'SOFT' 0,'WONK' 1;
+  font-size:22px;
+  letter-spacing:-.01em;
+  text-decoration:none;
+  color:var(--ink);
+}
+.navlinks{display:flex;gap:22px;font-family:var(--mono);font-size:12.5px;letter-spacing:.04em}
+.navlinks a{color:var(--ink-soft);text-decoration:none}
+.navlinks a:hover{color:var(--pen)}
+
+/* ── hero ───────────────────────────────────────────────────────────── */
+.hero-h1{
+  font-size:clamp(36px,5.1vw,62px);
+  line-height:1.04;
+  letter-spacing:-.024em;
+  max-width:17ch;
+}
+.hero-h1 em{
+  font-style:italic;
+  color:var(--pen);
+  font-variation-settings:'SOFT' 20,'WONK' 1;
+}
+.hero-sub{font-size:18.5px;line-height:1.6;color:var(--ink-soft);margin-top:20px;max-width:52ch}
+.hero-btns{margin-top:26px}
+.hero-note{font-family:var(--mono);font-size:12px;color:var(--ink-soft);margin-top:16px;letter-spacing:.02em}
+
+/* ── SIGNATURE: the transcript that corrects itself ─────────────────── */
+.tx{
+  margin-top:34px;
+  border:1px solid var(--rule);
+  border-radius:6px;
+  background:var(--paper-2);
+  overflow:hidden;
+}
+.tx-head{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:12px 20px;
+  border-bottom:1px solid var(--rule);
+  background:var(--paper-3);
+  font-family:var(--mono);
+  font-size:11.5px;
+  letter-spacing:.05em;
+  color:var(--ink-soft);
+}
+.tx-state{margin-left:auto;color:var(--pen);text-transform:uppercase;letter-spacing:.14em}
+.tx-state .s-raw{display:none}
+.tx.is-raw .tx-state .s-raw{display:inline}
+.tx.is-raw .tx-state .s-fixed{display:none}
+
+.tx-body{padding:22px 20px}
+.tx-line{
+  display:grid;
+  grid-template-columns:62px 76px minmax(0,1fr);
+  gap:14px;
+  padding:5px 0;
+  font-family:var(--mono);
+  font-size:13.5px;
+  line-height:1.6;
+  transition:opacity .32s ease, transform .32s ease;
+}
+.tx-t{color:var(--ink-soft);font-size:12px;letter-spacing:.02em}
+.tx-s{color:var(--ink);font-weight:500;font-size:12px;letter-spacing:.03em}
+.tx-x{color:var(--ink)}
+.tx-line.pending{opacity:0;transform:translateY(4px)}
+
+/* both spellings live in the DOM; corrected is the resting state */
+.was{display:none}
+.now{display:inline;color:var(--pen);font-weight:500}
+.tx.is-raw .was{display:inline;color:var(--ink-soft)}
+.tx.is-raw .now{display:none}
+.tx.is-fixed .now{animation:settle .55s ease-out}
+@keyframes settle{
+  0%{background:var(--mark);box-shadow:0 0 0 3px var(--mark)}
+  100%{background:transparent;box-shadow:0 0 0 3px transparent}
+}
+
+.tx-fix{
+  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+  margin-top:18px;padding-top:16px;
+  border-top:1px solid var(--rule);
+  font-family:var(--mono);
+  font-size:11.5px;
+  letter-spacing:.035em;
+  color:var(--ink-soft);
+  transition:opacity .4s ease;
+}
+.tx.is-raw .tx-fix{opacity:0}
+.tx-fix s{color:var(--ink-soft);opacity:.75}
+.tx-fix strong{color:var(--pen);font-weight:500}
+
+/* ── outputs ────────────────────────────────────────────────────────── */
+.outs{margin-top:44px;display:flex;flex-direction:column}
+.out{
+  display:grid;
+  grid-template-columns:minmax(0,210px) minmax(0,1fr);
+  gap:32px;
+  padding:26px 0;
+  border-top:1px solid var(--rule);
+}
+.out:last-child{border-bottom:1px solid var(--rule)}
+.out-key{
+  font-family:var(--mono);
+  font-size:11.5px;
+  line-height:1.8;
+  letter-spacing:.04em;
+  color:var(--pen);
+  word-break:break-word;
+}
+.out-h{
+  font-family:var(--display);
+  font-variation-settings:'SOFT' 0,'WONK' 1;
+  font-size:23px;line-height:1.25;letter-spacing:-.012em;
+}
+.out-p{margin-top:9px;color:var(--ink-soft);max-width:56ch}
+.quote{
+  margin-top:14px;
+  font-family:var(--body);
+  font-style:italic;
+  font-size:17px;
+  color:var(--ink);
+}
+.quote mark{background:var(--mark);color:var(--ink);padding:.06em .18em}
+.quote span{
+  display:block;
+  font-family:var(--mono);
+  font-style:normal;
+  font-size:11px;
+  letter-spacing:.05em;
+  color:var(--ink-soft);
+  margin-top:6px;
+}
+
+/* ── entity note card ───────────────────────────────────────────────── */
+.note{
+  margin-top:36px;
+  border:1px solid var(--rule);
+  border-radius:6px;
+  background:var(--paper-2);
+  max-width:520px;
+  overflow:hidden;
+}
+.note-head{
+  padding:11px 18px;
+  border-bottom:1px solid var(--rule);
+  background:var(--paper-3);
+  font-family:var(--mono);
+  font-size:11.5px;
+  letter-spacing:.05em;
+  color:var(--ink-soft);
+}
+.note-body{padding:6px 18px 14px}
+.note-row{
+  display:grid;
+  grid-template-columns:88px minmax(0,1fr);
+  gap:16px;
+  padding:9px 0;
+  font-family:var(--mono);
+  font-size:12.5px;
+  line-height:1.6;
+}
+.note-row + .note-row{border-top:1px solid var(--rule)}
+.note-k{color:var(--ink-soft);letter-spacing:.06em;text-transform:uppercase;font-size:11px}
+.note-v{color:var(--ink)}
+.note-v s{color:var(--ink-soft);opacity:.8}
+
+.aside{
+  margin-top:28px;
+  border-left:2px solid var(--pen);
+  padding:2px 0 2px 18px;
+  color:var(--ink-soft);
+  max-width:52ch;
+}
+
+/* ── consent ────────────────────────────────────────────────────────── */
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:44px 60px;align-items:start}
+.rights{margin-top:4px}
+.right{
+  display:flex;justify-content:space-between;align-items:baseline;gap:22px;
+  padding:15px 0;
+  border-bottom:1px solid var(--rule);
+}
+.right:first-child{border-top:1px solid var(--rule)}
+.right-a{font-family:var(--display);font-variation-settings:'SOFT' 0,'WONK' 1;font-size:17px}
+.right-b{font-family:var(--mono);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--pen);white-space:nowrap}
+
+/* ── close: two doors, new table and returning player ───────────────── */
+.close .h2{max-width:18ch}
+
+.doors{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));
+  gap:0 52px;
+  margin-top:34px;
+}
+/* A column each, so the two actions sit on one line however the steps above
+   them wrap. The doors are parallel by construction — same card, same three
+   steps, same button — rather than by one of them being padded to match. */
+.door{
+  display:flex;
+  flex-direction:column;
+  padding-top:26px;
+  border-top:1px solid var(--rule);
+}
+.door-k{
+  font-family:var(--mono);
+  font-size:11px;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  color:var(--pen);
+  margin-bottom:12px;
+}
+.door-h{
+  font-family:var(--display);
+  font-variation-settings:'SOFT' 0,'WONK' 1;
+  font-size:26px;line-height:1.15;letter-spacing:-.015em;
+}
+.door-p{margin-top:10px;color:var(--ink-soft);max-width:46ch}
+.door-btns{margin-top:auto;padding-top:26px}
+
+/* The first thing each door hands you: a command on one side, a code on the
+   other. Same card so they read as the same kind of promise. */
+.face{
+  margin-top:22px;
+  border:1px solid var(--rule);
+  border-radius:6px;
+  background:var(--paper-2);
+  padding:15px 18px 12px;
+  text-align:center;
+  max-width:272px;
+}
+.face-v{display:block;font-family:var(--mono);color:var(--ink-soft)}
+.face-v.digits{
+  font-size:25px;
+  letter-spacing:.4em;
+  text-indent:.4em;   /* letter-spacing leaves a trailing gap; pull it back */
+}
+.face-v.cmd{font-size:18px;letter-spacing:.02em}
+.face-cap{
+  display:block;
+  margin-top:8px;
+  font-family:var(--mono);
+  font-size:10.5px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+}
+
+.steps{margin:20px 0 0;padding:0;list-style:none;counter-reset:s;max-width:44ch}
+/* Absolutely positioned marker rather than a two-column grid. As a grid, each
+   inline `code` element and each run of text between them became a grid item
+   of its own — a step carrying a command flowed into implicit rows 22px wide
+   and wrapped one word per line. Normal flow is what lets a step mix prose
+   and commands. */
+.steps li{
+  counter-increment:s;
+  position:relative;
+  padding:8px 0 8px 32px;
+  color:var(--ink-soft);
+  font-size:16px;
+  line-height:1.5;
+}
+.steps li + li{border-top:1px solid var(--rule)}
+.steps li::before{
+  content:counter(s);
+  position:absolute;
+  left:0;
+  top:8px;
+  font-family:var(--mono);
+  font-size:11px;
+  line-height:1.95;
+  color:var(--pen);
+}
+.steps code{font-family:var(--mono);font-size:.86em;color:var(--pen);white-space:nowrap}
+
+.foot{
+  max-width:var(--shell);
+  margin:0 auto;
+  padding:26px var(--pad) 46px;
+  display:flex;align-items:center;gap:24px;flex-wrap:wrap;
+  border-top:1px solid var(--rule);
+  font-family:var(--mono);
+  font-size:11.5px;
+  letter-spacing:.045em;
+  color:var(--ink-soft);
+}
+.foot nav{margin-left:auto;display:flex;gap:22px}
+.foot a{color:var(--ink-soft);text-decoration:none}
+.foot a:hover{color:var(--pen)}
+
+/* ── responsive ─────────────────────────────────────────────────────── */
+@media (max-width:900px){
+  :root{--pad:24px}
+  .band{grid-template-columns:minmax(0,1fr);gap:0}
+
+  /* The gutter follows its section here rather than leading it. Stacked, it
+     used to put the session counts above the headline — opening the page on
+     metadata nobody has been given a reason to care about yet. It reads as a
+     footnote once the section it annotates has been read, which is what it
+     always was. */
+  .band-inner{order:1;padding-top:56px;padding-bottom:24px}
+  .rail{order:2;padding-top:0;padding-bottom:52px;line-height:1.7}
+  .band-hero .band-inner{padding-top:36px;padding-bottom:24px}
+  .band-hero .rail{padding-top:0}
+
+  .rail-stick{position:static}
+  .rail hr{margin:9px 0;max-width:180px}
+  .out{grid-template-columns:minmax(0,1fr);gap:12px}
+  /* Stacked, each door needs its own floor — margin-top:auto buys nothing in
+     a single column, so the button ended up hard against the next door's rule. */
+  .door{padding-bottom:36px}
+  .tx-line{grid-template-columns:60px minmax(0,1fr);row-gap:2px}
+  .tx-x{grid-column:1 / -1}
+  .navlinks{display:none}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  /* Two buttons and a wordmark do not fit at 390px without this; without it
+     "Log in" and "Add to Discord" wrap onto separate lines. */
+  .masthead{gap:10px;padding:18px var(--pad)}
+  .masthead .btn{padding:10px 14px;font-size:12px}
+  .note-row{grid-template-columns:minmax(0,1fr);gap:2px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <a class="brand" href="#top">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z" stroke="#2434A8" stroke-width="1.4" stroke-linejoin="round"/>
+      <path d="M5.1 19.6 2.6 22.2" stroke="#2434A8" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    Quill
+  </a>
+  <nav class="navlinks">
+    <a href="#writes">What it writes</a>
+    <a href="#names">Names</a>
+    <a href="#consent">Consent</a>
+  </nav>
+  <a class="btn btn-quiet" href="/app/#signin">Log in</a>
+  <a class="btn" data-invite>Add to Discord</a>
+</header>
+
+<main id="top">
+
+<!-- ── HERO ────────────────────────────────────────────────────────── -->
+<section class="band band-hero">
+  <div class="rail">
+    <div class="rail-stick">
+      <b>Cipher</b>
+      <span data-tx-session>session 14</span>
+      <hr>
+      6 at the table<br>
+      6 consented
+      <hr>
+      23 sessions kept<br>
+      38,204 lines
+    </div>
+  </div>
+  <div class="band-inner">
+    <p class="eyebrow">A scribe that sits in the voice channel</p>
+    <h1 class="hero-h1">Your table talks for four hours. <em>Quill writes the page.</em></h1>
+    <p class="hero-sub">It joins the voice channel with everyone's consent, takes down every word, and posts the recap before the dice are back in the bag.</p>
+    <div class="btns hero-btns">
+      <a class="btn" data-invite>Add to Discord</a>
+      <a class="btn btn-quiet" href="#writes">See what it posts</a>
+    </div>
+    <p class="hero-note">/campaign join — then close the tab and play</p>
+
+    <div class="tx" id="tx">
+      <div class="tx-head">
+        <span data-tx-file>transcript/cipher/session-14.md</span>
+        <span class="tx-state"><span class="s-raw">as heard</span><span class="s-fixed">as written</span></span>
+      </div>
+      <div class="tx-body">
+        <!-- One session here as the no-JS floor; the script swaps in another
+             on each load. See SESSIONS at the bottom of this file. -->
+        <div data-tx-lines>
+          <div class="tx-line"><span class="tx-t">0:41:02</span><span class="tx-s">Bex</span><span class="tx-x">I roll to seduce the ledger.</span></div>
+          <div class="tx-line"><span class="tx-t">0:41:06</span><span class="tx-s">Marn</span><span class="tx-x">You cannot seduce a ledger.</span></div>
+          <div class="tx-line"><span class="tx-t">0:41:11</span><span class="tx-s">DM</span><span class="tx-x"><span class="was">Yusdrail</span><span class="now">Yusdrayl</span> has heard worse offers.</span></div>
+          <div class="tx-line"><span class="tx-t">0:41:18</span><span class="tx-s">Bex</span><span class="tx-x">Who?</span></div>
+          <div class="tx-line"><span class="tx-t">0:41:21</span><span class="tx-s">DM</span><span class="tx-x"><span class="was">Use Drail</span><span class="now">Yusdrayl</span>. The kobold. From session six.</span></div>
+        </div>
+        <div class="tx-fix">
+          <span>correction applied</span>
+          <span data-tx-alias><s>Yusdrail</s> &nbsp;<s>Use Drail</s> &nbsp;&rarr;&nbsp; <strong>Yusdrayl</strong></span>
+          <span data-tx-count>&middot; 3 sessions rewritten</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── WHAT IT WRITES ──────────────────────────────────────────────── -->
+<section class="band" id="writes">
+  <div class="rail">
+    <div class="rail-stick">
+      /campaign create<br>
+      /campaign join<br>
+      /campaign leave
+    </div>
+  </div>
+  <div class="band-inner">
+    <p class="eyebrow">What lands in the channel</p>
+    <h2 class="h2">Four things, posted without anyone asking</h2>
+    <p class="lead">Set a campaign up once — a name, a voice channel, a channel to post in. Quill handles the rest of the season on its own.</p>
+
+    <div class="outs">
+      <article class="out">
+        <div class="out-key">#cipher-notes<br>posted at session end</div>
+        <div>
+          <h3 class="out-h">The recap</h3>
+          <p class="out-p">What happened, in order, in about a page. It lands in the campaign channel when the last person leaves the voice channel.</p>
+        </div>
+      </article>
+
+      <article class="out">
+        <div class="out-key">NPCs/<br>Locations/<br>Characters/</div>
+        <div>
+          <h3 class="out-h">A page per name</h3>
+          <p class="out-p">Every NPC, place, and player character gets a note that grows each session — who they are, where they turned up, and what they wanted. Written from the full transcript, not from the recap.</p>
+        </div>
+      </article>
+
+      <article class="out">
+        <div class="out-key">react with 📌<br>to keep a line</div>
+        <div>
+          <h3 class="out-h">Lines worth keeping</h3>
+          <p class="out-p">Quill pulls the quotable ones out of the transcript. Pin any line yourself and it joins the list.</p>
+          <p class="quote" data-quote>&ldquo;The door is not warded. It is not trapped. <mark>It is pull.&rdquo;</mark><span>DM &middot; session 12 &middot; 1:04:38</span></p>
+        </div>
+      </article>
+
+      <article class="out">
+        <div class="out-key">transcript/<br>session-14.md</div>
+        <div>
+          <h3 class="out-h">The whole transcript</h3>
+          <p class="out-p">Every line, every speaker, every timestamp, kept and searchable for as long as the campaign runs. Session three is as easy to find as last week's.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ── NAMES ───────────────────────────────────────────────────────── -->
+<section class="band" id="names">
+  <div class="rail">
+    <div class="rail-stick">
+      <b>/correct</b>
+      <span data-nm-heard>heard: use drail</span><br>
+      <span data-nm-write>write: yusdrayl</span>
+    </div>
+  </div>
+  <div class="band-inner">
+    <p class="eyebrow">Names</p>
+    <h2 class="h2">It mishears &ldquo;<span data-nm-name>Yusdrayl</span>&rdquo; once. Then never again.</h2>
+    <p class="lead">Invented names come back mangled — it is the one thing transcription is reliably bad at. Write the fix once and Quill rewrites every transcript and recap that carried the wrong spelling, then keeps the mistake as an alias so the old links still resolve.</p>
+
+    <div class="note">
+      <div class="note-head" data-nm-file>NPCs/Yusdrayl.md</div>
+      <div class="note-body">
+        <div class="note-row"><span class="note-k">Name</span><span class="note-v" data-nm-name>Yusdrayl</span></div>
+        <div class="note-row"><span class="note-k">Aliases</span><span class="note-v" data-nm-alias><s>Yusdrail</s> &middot; <s>Use Drail</s></span></div>
+        <div class="note-row"><span class="note-k">First seen</span><span class="note-v" data-nm-first>session 12</span></div>
+        <div class="note-row"><span class="note-k">Last seen</span><span class="note-v" data-nm-last>session 14</span></div>
+        <div class="note-row"><span class="note-k">Mentions</span><span class="note-v" data-nm-mentions>26</span></div>
+      </div>
+    </div>
+
+    <p class="aside">A correction rewrites history, so Quill tells you how many sessions it is about to touch and waits for you to say yes.</p>
+  </div>
+</section>
+
+<!-- ── CONSENT ─────────────────────────────────────────────────────── -->
+<section class="band" id="consent">
+  <div class="rail">
+    <div class="rail-stick">
+      <b>/consent</b>
+      per person<br>
+      per campaign
+    </div>
+  </div>
+  <div class="band-inner">
+    <div class="split">
+      <div>
+        <p class="eyebrow">Consent</p>
+        <h2 class="h2">Nothing is recorded without asking</h2>
+        <p class="lead">Quill asks every player before it keeps a second of audio. Consent is per person and per campaign, and anyone who declines is never recorded — not in session one, not in session forty.</p>
+        <p class="lead">Withdraw and Quill drops that voice from the recordings it holds and from the transcripts already written. The recaps stay. The audio does not.</p>
+      </div>
+      <div>
+        <div class="rights">
+          <div class="right"><span class="right-a">Being recorded at all</span><span class="right-b">Their call</span></div>
+          <div class="right"><span class="right-a">Being quoted by name</span><span class="right-b">Their call</span></div>
+          <div class="right"><span class="right-a">Withdrawing later</span><span class="right-b">Any time</span></div>
+          <div class="right"><span class="right-a">Reading what was kept</span><span class="right-b">/consent</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── START ───────────────────────────────────────────────────────── -->
+<section class="band" id="start">
+  <div class="rail">
+    <div class="rail-stick">
+      /campaign invite<br>
+      /consent
+    </div>
+  </div>
+  <div class="band-inner close">
+    <p class="eyebrow">Start</p>
+    <h2 class="h2">Two ways in</h2>
+
+    <div class="doors">
+      <div class="door">
+        <p class="door-k">New table</p>
+        <h3 class="door-h">Bring a scribe to your table</h3>
+        <p class="door-p">Set it up once and Quill handles the rest of the season on its own.</p>
+
+        <div class="face" aria-hidden="true">
+          <span class="face-v cmd">/campaign create</span>
+          <span class="face-cap">the command that starts one</span>
+        </div>
+
+        <ol class="steps">
+          <li>Add Quill to the Discord server you play in.</li>
+          <li><code>/campaign create</code> — name it, and you are its DM.</li>
+          <li><code>/campaign join</code> when you sit down, <code>/campaign leave</code> when you are done.</li>
+        </ol>
+
+        <div class="btns door-btns">
+          <a class="btn" data-invite>Add to Discord</a>
+        </div>
+      </div>
+
+      <div class="door">
+        <p class="door-k">Already playing</p>
+        <h3 class="door-h">Sign in to your table&rsquo;s Quill</h3>
+        <p class="door-p">Read past recaps, fix a name Quill misheard, or change what it keeps of your voice.</p>
+
+        <div class="face" aria-hidden="true">
+          <span class="face-v digits">000000</span>
+          <span class="face-cap">the code Quill DMs you</span>
+        </div>
+
+        <ol class="steps">
+          <li>Type your Discord username — the @handle, not your display name.</li>
+          <li>Quill DMs you six digits, good for ten minutes.</li>
+          <li>Type them back. There is no password to set.</li>
+        </ol>
+
+        <div class="btns door-btns">
+          <a class="btn" href="/app/#signin">Log in</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <span>Quill — the scribe at your table</span>
+  <nav>
+    <a href="#writes">What it writes</a>
+    <a href="#consent">Consent</a>
+    <a href="/app/#signin">Log in</a>
+    <a data-invite>Add to Discord</a>
+  </nav>
+</footer>
+
+<script>
+/* Every "Add to Discord" reads the one constant at the top of this file.
+   Until it holds a URL they stay hrefless: not focusable, not clickable, and
+   skipped by the keyboard rather than swallowing a press. */
+(function () {
+  var url = String(window.QUILL_INVITE || '').trim();
+  Array.prototype.forEach.call(document.querySelectorAll('[data-invite]'), function (el) {
+    if (url) {
+      el.href = url;
+      el.removeAttribute('aria-disabled');
+      el.removeAttribute('title');
+    } else {
+      el.setAttribute('aria-disabled', 'true');
+      el.title = 'The Discord invite link is not set yet';
+    }
+  });
+})();
+
+/* ── What the page shows this time round ────────────────────────────────
+   Four sessions and eight kept lines, one of each per load. A landing page
+   that says the same thing every visit is a poster; one that has clearly
+   been running for a while has a back catalogue. Every name in here is
+   invented, and each session carries its own mishearing so the correction
+   in the hero is a different one each time.
+
+   {0} and {1} in a line are where the name goes — the index picks which
+   spelling whisper produced that time, so the same NPC can come back wrong
+   in two different ways inside one session, which is the actual failure
+   this feature exists for.                                                */
+var SESSIONS = [
+  {
+    file: 'transcript/cipher/session-14.md',
+    heard: ['Yusdrail', 'Use Drail'], written: 'Yusdrayl', rewritten: 3,
+    lines: [
+      ['0:41:02', 'Bex',  'I roll to seduce the ledger.'],
+      ['0:41:06', 'Marn', 'You cannot seduce a ledger.'],
+      ['0:41:11', 'DM',   '{0} has heard worse offers.'],
+      ['0:41:18', 'Bex',  'Who?'],
+      ['0:41:21', 'DM',   '{1}. The kobold. From session six.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-12.md',
+    heard: ['Ill Verris', 'Ilvarus'], written: 'Ilvaris', rewritten: 2,
+    lines: [
+      ['1:03:44', 'Marn', 'I check the door for traps.'],
+      ['1:03:51', 'DM',   'It is not trapped.'],
+      ['1:03:55', 'Marn', 'I check it again.'],
+      ['1:04:31', 'DM',   '{0} walks over and opens it. It was pull.'],
+      ['1:04:38', 'Bex',  'Ten minutes. We gave that door ten minutes.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-09.md',
+    heard: ['Thessily', 'Tess Alie'], written: 'Thessaly', rewritten: 4,
+    lines: [
+      ['2:12:40', 'Bex',  'I want to talk to the horse.'],
+      ['2:12:44', 'DM',   'You do not speak Horse.'],
+      ['2:12:47', 'Bex',  'I want to talk to the horse.'],
+      ['2:12:55', 'DM',   '{0} the horse regards you with enormous pity.'],
+      ['2:13:02', 'Marn', 'Bex named her. {1} is ours now, Bex named her.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-07.md',
+    heard: ['Aldrith', 'All Dreth'], written: 'Aldreth', rewritten: 5,
+    lines: [
+      ['0:18:03', 'DM',   'The council has argued this point for a hundred—'],
+      ['0:18:07', 'Bex',  'I set the table on fire.'],
+      ['0:18:10', 'DM',   'You. What?'],
+      ['0:18:14', 'Bex',  'A distraction. For the thing we discussed.'],
+      ['0:18:22', 'DM',   'Councillor {0} is on fire. {1} is on fire, Bex.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-11.md',
+    heard: ['Vash Tor', 'Vastorr'], written: 'Vashtorr', rewritten: 2,
+    lines: [
+      ['1:52:14', 'DM',   '{0} unfurls, and speaks.'],
+      ['1:52:19', 'Marn', 'Wait. Dragons can talk?'],
+      ['1:52:22', 'Bex',  'You speak Draconic. It is on your sheet.'],
+      ['1:52:26', 'Marn', 'I thought that was decorative.'],
+      ['1:52:33', 'DM',   '{1} would like a word with you about that.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-04.md',
+    heard: ['Sur Wick', 'Serwyck'], written: 'Serwick', rewritten: 1,
+    lines: [
+      ['0:57:22', 'DM',   'You fall ten feet and land face down in the mud.'],
+      ['0:57:29', 'Bex',  'I roll to intimidate the dirt.'],
+      ['0:57:34', 'DM',   'Go on, then.'],
+      ['0:57:38', 'Marn', 'Natural twenty. That is a natural twenty.'],
+      ['0:57:46', 'DM',   'The dirt yields. {0} watched the whole thing.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-13.md',
+    heard: ['Core Vane', 'Corvain'], written: 'Corvane', rewritten: 2,
+    lines: [
+      ['2:44:02', 'Bex',  'I pick {0}’s pocket.'],
+      ['2:44:06', 'DM',   'While they are looking directly at you.'],
+      ['2:44:09', 'Bex',  'While they are looking directly at me.'],
+      ['2:44:13', 'DM',   'Roll initiative.'],
+      ['2:44:19', 'Marn', 'Every time. {1} is going to remember this.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-06.md',
+    heard: ['Ell Sabeth', 'Elsabeth'], written: 'Elsbeth', rewritten: 3,
+    lines: [
+      ['1:31:40', 'Bex',  'What if we burned the archive down.'],
+      ['1:31:45', 'Marn', 'We are in the archive.'],
+      ['1:31:48', 'Bex',  'After we leave.'],
+      ['1:31:56', 'DM',   '{0} is standing right there. You said that aloud.'],
+      ['1:32:07', 'DM',   'I am considering rocks. A great many rocks.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-02.md',
+    heard: ['Thal Grim', 'Tholgrim'], written: 'Thalgrim', rewritten: 2,
+    lines: [
+      ['0:22:11', 'Marn', 'I cast Sleep on the hobgoblins.'],
+      ['0:22:16', 'DM',   'It has a radius.'],
+      ['0:22:19', 'Marn', 'It has a what.'],
+      ['0:22:26', 'DM',   '{0} is asleep. The hobgoblins are not.'],
+      ['0:22:33', 'Bex',  'Wake up. {1}, please wake up.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-03.md',
+    heard: ['May Liss', 'Maelis'], written: 'Maelys', rewritten: 2,
+    lines: [
+      ['1:14:20', 'Bex',  'I search the body.'],
+      ['1:14:24', 'DM',   'You have searched it twice.'],
+      ['1:14:27', 'Bex',  'I search it a third time.'],
+      ['1:14:34', 'DM',   '{0} has been dead six hundred years. There is nothing left.'],
+      ['1:14:41', 'Marn', 'There is always something left. Keep going.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-05.md',
+    heard: ['Ee Solde', 'Isolde'], written: 'Ysolde', rewritten: 3,
+    lines: [
+      ['2:02:14', 'Bex',  'Fireball. Right there, in the middle of them.'],
+      ['2:02:18', 'Marn', 'I am in the middle of them.'],
+      ['2:02:21', 'Bex',  'I know.'],
+      ['2:02:29', 'DM',   '{0} takes twenty-eight. So does Marn.'],
+      ['2:02:36', 'Marn', 'I would like that on the record.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-08.md',
+    heard: ['Bran Ock', 'Brannock'], written: 'Brannoch', rewritten: 1,
+    lines: [
+      ['0:33:02', 'DM',   'You should not split the party.'],
+      ['0:33:06', 'Bex',  'We are splitting the party.'],
+      ['0:33:09', 'Marn', 'We are absolutely splitting the party.'],
+      ['0:33:18', 'DM',   '{0} goes north. Everyone else walks into the dark.'],
+      ['0:33:25', 'Bex',  'This is going to be fine.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-10.md',
+    heard: ['Ken Ell', 'Quenelle'], written: 'Quennel', rewritten: 2,
+    lines: [
+      ['0:09:41', 'DM',   '{0} offers you two hundred gold and a map.'],
+      ['0:09:47', 'Bex',  'I attack.'],
+      ['0:09:49', 'Marn', 'Bex.'],
+      ['0:09:52', 'Bex',  'I attack the one holding the map.'],
+      ['0:09:59', 'DM',   '{1} was the only person who knew where it led.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-01.md',
+    heard: ['Om Brisk', 'Ombrik'], written: 'Ombrisk', rewritten: 1,
+    lines: [
+      ['0:41:55', 'Bex',  'Can I eat it?'],
+      ['0:41:58', 'DM',   'It is a mimic.'],
+      ['0:42:01', 'Bex',  'Can I eat it.'],
+      ['0:42:08', 'DM',   '{0} watches you approach a mimic holding a fork.'],
+      ['0:42:15', 'Marn', '{1} is not going to stop this. Nobody is.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-16.md',
+    heard: ['Wind Ell', 'Windle'], written: 'Wyndle', rewritten: 5,
+    lines: [
+      ['1:47:03', 'Marn', 'There is no way across.'],
+      ['1:47:09', 'Bex',  'I have had a folding boat since session four.'],
+      ['1:47:13', 'Marn', 'You have had a what.'],
+      ['1:47:21', 'DM',   '{0} is going to be so disappointed in all of you.'],
+      ['1:47:28', 'Bex',  'Session four.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-17.md',
+    heard: ['Dol Vane', 'Dolvain'], written: 'Dolvaine', rewritten: 2,
+    lines: [
+      ['0:52:11', 'Bex',  'I offer four gold.'],
+      ['0:52:14', 'DM',   'It costs six.'],
+      ['0:52:16', 'Bex',  'I offer four gold.'],
+      ['0:52:24', 'DM',   '{0} has been standing here for forty minutes.'],
+      ['0:52:31', 'Marn', 'So have we. Pay the six.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-18.md',
+    heard: ['Sith Ara', 'Sitara'], written: 'Sithara', rewritten: 3,
+    lines: [
+      ['2:58:40', 'DM',   '{0} steps out of the dark and begins to speak—'],
+      ['2:58:45', 'Marn', 'Crit. Forty-one.'],
+      ['2:58:49', 'DM',   '—and stops.'],
+      ['2:58:57', 'Bex',  'Was that the whole speech?'],
+      ['2:59:04', 'DM',   'It was going to be four paragraphs.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-19.md',
+    heard: ['Hal Var', 'Halvar'], written: 'Halvarr', rewritten: 4,
+    lines: [
+      ['0:14:22', 'DM',   'A hooded figure slides a sealed letter across the table.'],
+      ['0:14:28', 'Bex',  'We go to the market.'],
+      ['0:14:30', 'DM',   'The letter.'],
+      ['0:14:33', 'Marn', 'We are going to the market.'],
+      ['0:14:41', 'DM',   '{0} watches you leave. The letter is still there.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-20.md',
+    heard: ['Perry Green', 'Peregryn'], written: 'Peregrine', rewritten: 6,
+    lines: [
+      ['1:22:08', 'DM',   'The owlbear cub is orphaned, and hostile.'],
+      ['1:22:14', 'Bex',  'We are keeping it.'],
+      ['1:22:16', 'DM',   'It is hostile.'],
+      ['1:22:20', 'Marn', 'We are keeping it. Its name is {0}.'],
+      ['1:22:29', 'DM',   '{1} has taken a finger off. You are still keeping it.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-21.md',
+    heard: ['Cassie El', 'Casiel'], written: 'Cassiel', rewritten: 2,
+    lines: [
+      ['0:08:14', 'DM',   'Roll to open the door. It is unlocked.'],
+      ['0:08:18', 'Bex',  'One.'],
+      ['0:08:21', 'DM',   'A natural one. On an unlocked door.'],
+      ['0:08:28', 'DM',   '{0} opens it for you, and says nothing at all.'],
+      ['0:08:34', 'Marn', 'The silence was worse.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-22.md',
+    heard: ['Moro', 'Morro'], written: 'Morrow', rewritten: 1,
+    lines: [
+      ['1:05:44', 'Marn', 'I cast Detect Magic.'],
+      ['1:05:47', 'DM',   'On the soup.'],
+      ['1:05:49', 'Marn', 'On the soup.'],
+      ['1:05:57', 'DM',   'The soup is not magical. {0} made it this morning.'],
+      ['1:06:03', 'Marn', 'That is what a magical soup would want me to think.'],
+    ],
+  },
+  {
+    file: 'transcript/cipher/session-23.md',
+    heard: ['Nix Ah', 'Nyx A'], written: 'Nyxa', rewritten: 2,
+    lines: [
+      ['2:19:30', 'Bex',  'We take a long rest.'],
+      ['2:19:33', 'DM',   'Here. In the corridor.'],
+      ['2:19:35', 'Bex',  'Here, in the corridor.'],
+      ['2:19:44', 'DM',   '{0} and forty associates also live in this corridor.'],
+      ['2:19:51', 'Marn', 'A short rest. We take a short rest.'],
+    ],
+  },
+];
+
+var KEPT = [
+  { lead: 'The door is not warded. It is not trapped.', mark: 'It is pull.', who: 'DM',   session: 12, at: '1:04:31' },
+  { lead: '',                                            mark: 'I roll to seduce the ledger.', who: 'Bex', session: 14, at: '0:41:02' },
+  { lead: 'Bex named the horse.',                         mark: 'She is a party member now.', who: 'Marn', session: 9,  at: '2:13:02' },
+  { lead: '',                                            mark: 'I have three hit points and a plan.', who: 'Bex', session: 11, at: '3:22:15' },
+  { lead: 'We are not lost.',                            mark: 'We are exploring aggressively.', who: 'Marn', session: 4, at: '0:57:40' },
+  { lead: 'The prophecy was very specific.',             mark: 'It said nothing about a goat.', who: 'DM',   session: 8,  at: '1:41:09' },
+  { lead: '',                                            mark: 'I would like to un-say that.', who: 'Bex', session: 6,  at: '2:04:53' },
+  { lead: 'You used a third-level spell on a door.',     mark: 'The door was open.', who: 'DM', session: 12, at: '1:05:02' },
+  { lead: '',                                            mark: 'I roll to intimidate the dirt.', who: 'Bex', session: 4, at: '0:57:29' },
+  { lead: '',                                            mark: 'You have punched a ghost to death.', who: 'DM', session: 13, at: '2:31:07' },
+  { lead: '',                                            mark: 'I thought Draconic was decorative.', who: 'Marn', session: 11, at: '1:52:26' },
+  { lead: 'Can the goblin join the band?',               mark: 'We are short a tambourine.', who: 'Bex', session: 5, at: '1:12:44' },
+  { lead: '',                                            mark: 'I am considering rocks. A great many rocks.', who: 'DM', session: 6, at: '1:32:07' },
+  { lead: '',                                            mark: 'It has a radius, Marn. It has always had a radius.', who: 'DM', session: 2, at: '0:22:16' },
+  { lead: '',                                            mark: 'I search it a third time.', who: 'Bex', session: 3, at: '1:14:27' },
+  { lead: 'There is nothing left in there.',             mark: 'There is always something left. Keep going.', who: 'Marn', session: 3, at: '1:14:41' },
+  { lead: 'You are standing in the fireball.',           mark: 'I would like that on the record.', who: 'Marn', session: 5, at: '2:02:36' },
+  { lead: '',                                            mark: 'We are absolutely splitting the party.', who: 'Marn', session: 8, at: '0:33:09' },
+  { lead: 'Everyone else walks into the dark.',          mark: 'This is going to be fine.', who: 'Bex', session: 8, at: '0:33:25' },
+  { lead: '',                                            mark: 'I attack the one holding the map.', who: 'Bex', session: 10, at: '0:09:52' },
+  { lead: '',                                            mark: 'I know it is a mimic. Can I eat it.', who: 'Bex', session: 1, at: '0:42:01' },
+  { lead: '',                                            mark: 'I have had a folding boat since session four.', who: 'Bex', session: 16, at: '1:47:09' },
+  { lead: '',                                            mark: 'So have we. Pay the six.', who: 'Marn', session: 17, at: '0:52:31' },
+  { lead: 'The villain died mid-sentence.',              mark: 'It was going to be four paragraphs.', who: 'DM', session: 18, at: '2:59:04' },
+  { lead: 'They walked to the market instead.',          mark: 'The letter is still there.', who: 'DM', session: 19, at: '0:14:41' },
+  { lead: 'It has taken a finger off.',                  mark: 'You are still keeping it.', who: 'DM', session: 20, at: '1:22:29' },
+  { lead: 'A natural one.',                              mark: 'On an unlocked door.', who: 'DM', session: 21, at: '0:08:21' },
+  { lead: '',                                            mark: 'The silence was worse.', who: 'Marn', session: 21, at: '0:08:34' },
+  { lead: 'The soup is not magical.',                    mark: 'That is what a magical soup would want me to think.', who: 'Marn', session: 22, at: '1:06:03' },
+  { lead: '',                                            mark: 'A short rest. We take a short rest.', who: 'Marn', session: 23, at: '2:19:51' },
+];
+
+(function () {
+  var esc = function (s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+    });
+  };
+
+  // Not the same one twice running. sessionStorage can throw outright in a
+  // private window, and a landing page is not worth an exception, so the
+  // whole thing falls back to plain chance.
+  function pick(list, key) {
+    var last = -1;
+    try { last = Number(sessionStorage.getItem(key)); } catch (e) { /* fine */ }
+    var i = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && i === last) i = (i + 1) % list.length;
+    try { sessionStorage.setItem(key, String(i)); } catch (e) { /* fine */ }
+    return list[i];
+  }
+
+  var tx = document.getElementById('tx');
+  if (tx) {
+    var s = pick(SESSIONS, 'quill-session');
+    var name = function (i) {
+      return '<span class="was">' + esc(s.heard[i]) + '</span>' +
+             '<span class="now">' + esc(s.written) + '</span>';
+    };
+    tx.querySelector('[data-tx-file]').textContent = s.file;
+    // The gutter names the session the panel is showing. Left static it read
+    // "session 14" over a session-03 transcript, which is the sort of small
+    // lie that makes a reader stop trusting the rest of the numbers.
+    var num = s.file.match(/session-(\d+)/);
+    var railSession = document.querySelector('[data-tx-session]');
+    if (num && railSession) railSession.textContent = 'session ' + Number(num[1]);
+    tx.querySelector('[data-tx-lines]').innerHTML = s.lines.map(function (l) {
+      var said = esc(l[2]).replace(/\{(\d)\}/g, function (_, i) { return name(Number(i)); });
+      return '<div class="tx-line">' +
+               '<span class="tx-t">' + esc(l[0]) + '</span>' +
+               '<span class="tx-s">' + esc(l[1]) + '</span>' +
+               '<span class="tx-x">' + said + '</span>' +
+             '</div>';
+    }).join('');
+    tx.querySelector('[data-tx-alias]').innerHTML =
+      s.heard.map(function (h) { return '<s>' + esc(h) + '</s>'; }).join(' &nbsp;') +
+      ' &nbsp;&rarr;&nbsp; <strong>' + esc(s.written) + '</strong>';
+    tx.querySelector('[data-tx-count]').innerHTML =
+      '&middot; ' + s.rewritten + ' session' + (s.rewritten === 1 ? '' : 's') + ' rewritten';
+
+    // The Names section is about the mishearing the panel just showed, so it
+    // follows the same pick. Left fixed on Yusdrayl it explained a correction
+    // the reader had not been shown, and the page argued with itself.
+    //
+    // The note's dates come off the session number and the rewrite count
+    // rather than being carried per entry: a name that took N sessions to
+    // catch was first heard N-1 sessions before this one. Nothing here can
+    // point at a session before the campaign started.
+    var last = num ? Number(num[1]) : 14;
+    var first = Math.max(1, last - s.rewritten + 1);
+    var set = function (sel, value) {
+      var nodes = document.querySelectorAll(sel);
+      for (var i = 0; i < nodes.length; i += 1) nodes[i].textContent = value;
+    };
+    set('[data-nm-name]', s.written);
+    set('[data-nm-file]', 'NPCs/' + s.written + '.md');
+    set('[data-nm-mentions]', String(s.rewritten * 4 + 7 + (last % 7)));
+
+    // A name caught in a single session has the same first and last sighting.
+    // Two rows saying "session 4" is true and still reads as a bug, so that
+    // case collapses to one row instead.
+    var firstEl = document.querySelector('[data-nm-first]');
+    var lastEl = document.querySelector('[data-nm-last]');
+    if (firstEl && lastEl) {
+      var lastRow = lastEl.parentNode;
+      // Written even when the row is hidden. A hidden node holding a stale
+      // "session 14" is wrong the moment anything shows it again, and it is
+      // exactly the sort of thing nobody notices until it is on screen.
+      lastEl.textContent = 'session ' + last;
+      if (first === last) {
+        firstEl.previousElementSibling.textContent = 'Seen in';
+        firstEl.textContent = 'session ' + last;
+        lastRow.style.display = 'none';
+      } else {
+        firstEl.previousElementSibling.textContent = 'First seen';
+        firstEl.textContent = 'session ' + first;
+        lastRow.style.display = '';
+      }
+    }
+    set('[data-nm-heard]', 'heard: ' + s.heard[0].toLowerCase());
+    set('[data-nm-write]', 'write: ' + s.written.toLowerCase());
+    var alias = document.querySelector('[data-nm-alias]');
+    if (alias) {
+      alias.innerHTML = s.heard.map(function (h) {
+        return '<s>' + esc(h) + '</s>';
+      }).join(' &middot; ');
+    }
+  }
+
+  var q = document.querySelector('[data-quote]');
+  if (q) {
+    var k = pick(KEPT, 'quill-kept');
+    // The highlighter runs through the punctuation, the way a real one would.
+    // With a lead-in the opening quote sits outside it; without one the whole
+    // line is the kept part, so the mark takes both quote marks or the opening
+    // one is left stranded on its own.
+    q.innerHTML =
+      (k.lead ? '&ldquo;' + esc(k.lead) + ' ' : '') +
+      '<mark>' + (k.lead ? '' : '&ldquo;') + esc(k.mark) + '&rdquo;</mark>' +
+      '<span>' + esc(k.who) + ' &middot; session ' + k.session + ' &middot; ' + esc(k.at) + '</span>';
+  }
+})();
+
+/* One orchestrated moment: the transcript arrives as heard, then corrects.
+   Corrected is the resting state, so no-JS and reduced-motion both land there. */
+(function () {
+  var tx = document.getElementById('tx');
+  if (!tx) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  var lines = Array.prototype.slice.call(tx.querySelectorAll('.tx-line'));
+  tx.classList.add('is-raw');
+  lines.forEach(function (l) { l.classList.add('pending'); });
+
+  var i = 0;
+  function step() {
+    if (i < lines.length) {
+      lines[i].classList.remove('pending');
+      i += 1;
+      setTimeout(step, 400);
+    } else {
+      setTimeout(function () {
+        tx.classList.remove('is-raw');
+        tx.classList.add('is-fixed');
+      }, 750);
+    }
+  }
+
+  // Everything above hides the lines first and reveals them on a signal, so
+  // the one unacceptable outcome is the signal never arriving: an empty panel
+  // where the argument of the page should be. On a phone the panel sits just
+  // below the fold, which is exactly the case where the observer waits — and
+  // it would wait for ever if anything went wrong with the scroll.
+  //
+  // So: whoever gets here first wins, and a timer is always one of them.
+  var started = false;
+  function begin() {
+    if (started) return;
+    started = true;
+    step();
+  }
+
+  if (!('IntersectionObserver' in window)) { begin(); return; }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { io.disconnect(); setTimeout(begin, 300); }
+    });
+  }, { threshold: 0.25 });
+  io.observe(tx);
+  setTimeout(begin, 2600);
+})();
+</script>
+</body>
+</html>

@@ -5,7 +5,7 @@
 // against links the vault already contains, and turning a name into a
 // filename are all the same problem whether the subject is a person or a
 // place. Only the prompt and the rendered shape differ.
-import { npcKey, reconcileAliases, parseNpcResponse } from './npc-extract.js';
+import { npcKey, reconcileAliases, parseNpcResponse, npcFileName } from './npc-extract.js';
 
 export {
   // Re-exported so a caller doing locations doesn't have to import from a
@@ -206,3 +206,29 @@ export function renderLocationNote(loc, { campaign, knownEntities = [] } = {}) {
 
   return fm.join('\n') + body.join('\n');
 }
+
+// What this subject is, for the shared run in campaign/entity-notes.js.
+//
+// The only differences from the NPC subject are the prompt, the merge rules and
+// how a note reads. That was true before this descriptor existed too — it was
+// just spread across a second copy of the whole run.
+export const LOCATION_SUBJECT = {
+  key: 'locations',
+  noun: 'place',
+  folder: 'Locations',
+  systemPrompt: LOCATION_SYSTEM_PROMPT,
+  userMessage: ({ transcript, sessionNumber, date, existingNames }) =>
+    buildLocationUserMessage({ transcript, sessionNumber, date, existingNames }),
+  parse: parseLocationResponse,
+  merge: (perSession) => mergeLocations(perSession),
+  reconcile: (records, existingNames) => reconcileAliases(records, existingNames),
+  fileName: npcFileName,
+  // A place's note names who lives there, and those have pages of their own —
+  // written by the NPC build that ran before this one.
+  linksTo: ['NPCs'],
+  render: renderLocationNote,
+  detail: (loc) =>
+    [loc.kind, loc.status, `danger ${loc.danger}`, `sessions ${loc.sessions.join(', ')}`]
+      .filter(Boolean)
+      .join(' · '),
+};

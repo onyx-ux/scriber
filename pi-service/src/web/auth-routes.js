@@ -10,12 +10,26 @@
 // written to give a stranger nothing.
 //
 // The rule that shapes all of it: never confirm or deny that an account exists.
-// "If that name is on a table here, the code is on its way" is the same answer
-// whether or not it is, so this cannot be used to find out who plays what.
-import { issueCode, checkCode, openSession, closeSession, sessionCookie, clearedCookie, cookieFrom } from './auth.js';
+// "If that username is on a table here, the code is on its way" is the same
+// answer whether or not it is, so this cannot be used to find out who plays
+// what.
+//
+// Identity here is the Discord USERNAME — not a display name, not a server
+// nickname, not a character name. See findKnownPerson at the foot of this file.
+import {
+  issueCode,
+  checkCode,
+  openSession,
+  closeSession,
+  abandonCode,
+  whoWasSentACode,
+  sessionCookie,
+  clearedCookie,
+  cookieFrom,
+} from './auth.js';
 
 // Deliberately identical for every outcome that is not a successful sign-in.
-const SENT = 'If that name belongs to somebody at a table on this bot, a code is on its way to their Discord DMs.';
+const SENT = 'If that username belongs to somebody at a table on this bot, a code is on its way to their Discord DMs.';
 
 // A person asking for codes in a loop is either locked out or probing. Either
 // way one every thirty seconds is plenty, and the limiter is keyed on the
@@ -54,7 +68,7 @@ export async function handleAuthRoute({ pathname, body, req, db, cfg, ctx, secur
 async function requestCode({ body, db, cfg, ctx, tooSoon }) {
   const name = String(body?.name ?? '').trim().replace(/^@/, '');
   if (name.length < 2) {
-    return { status: 400, payload: { ok: false, message: 'Type the Discord name you use here.' } };
+    return { status: 400, payload: { ok: false, message: 'Type your Discord username — the @handle, not your display name.' } };
   }
   if (tooSoon?.(name.toLowerCase())) {
     return { status: 429, payload: { ok: true, message: SENT } };
@@ -62,7 +76,7 @@ async function requestCode({ body, db, cfg, ctx, tooSoon }) {
 
   // Resolved against people the bot already knows, never against Discord at
   // large: this must not become a way to make the bot DM a stranger.
-  const person = await findKnownPerson({ db, ctx, name });
+  const person = await findKnownPerson({ ctx, name });
   if (!person) return { status: 200, payload: { ok: true, message: SENT } };
 
   const issued = issueCode(db, cfg, { userId: person.userId, username: person.username });
@@ -80,7 +94,7 @@ async function requestCode({ body, db, cfg, ctx, tooSoon }) {
     // The one case worth breaking the uniform answer for, because it is not
     // about whether the account exists — it is about that account's DM
     // settings, and without saying so the person retries for ever.
-    db.dropAuthCode(person.userId);
+    abandonCode(db, person.userId);
     return {
       status: 200,
       payload: {
@@ -102,10 +116,19 @@ function verify({ body, db, cfg, secure }) {
     return { status: 400, payload: { ok: false, message: 'The code is six digits.' } };
   }
 
-  // The code was issued against a user id, so the name has to resolve to the
-  // same person it was sent to. Looked up in the local tables only — by this
-  // point the account is one the bot has already DMed.
-  const person = findLocalPerson(db, name);
+  // Who did we actually send a code to under this username?
+  //
+  // The live code row is the record of that, so it is the only thing consulted
+  // here. This used to try a transcript-display-name lookup first, which could
+  // answer with a DIFFERENT person than the one the code went to — the request
+  // step DMs whoever owns the username, and this step resolved whoever had
+  // been recorded under it. Two accounts, one typed string, and a code that
+  // could never verify.
+  //
+  // Deliberately not asking Discord again: only /auth/request is rate limited,
+  // and putting a member search behind this route would hand a stranger an
+  // unrated one.
+  const person = whoWasSentACode(db, name);
   if (!person) return { status: 401, payload: { ok: false, message: 'That code is not right.' } };
 
   const result = checkCode(db, cfg, { userId: person.userId, code });
@@ -138,39 +161,23 @@ function logout({ body, req, db, cfg, secure }) {
 
 // --- who is this ---
 
-// People the bot has actually seen: anybody with a consent record, a character
-// name, or a transcribed line. Matched case-insensitively against the display
-// name transcripts are filed under.
+// Who is this, by Discord username.
 //
-// A local match is tried first because it costs nothing and covers everyone who
-// has ever played. Discord's member search is the fallback, for the player who
-// has been invited but has not spoken yet.
-function findLocalPerson(db, name) {
-  const wanted = name.toLowerCase();
-  const rows = db.raw
-    .prepare(
-      `SELECT DISTINCT u.user_id AS userId, u.display_name AS username
-         FROM utterances u
-        WHERE lower(u.display_name) = ?
-        LIMIT 2`
-    )
-    .all(wanted);
-
-  // Two people at different tables sharing a display name is a real thing, and
-  // guessing which one is worse than refusing: the wrong person would get a
-  // code for somebody else's account.
-  return rows.length === 1 ? rows[0] : null;
-}
-
-async function findKnownPerson({ db, ctx, name }) {
-  const local = findLocalPerson(db, name);
-  if (local) return local;
-
+// This used to try the local transcript table first, matching whatever display
+// name a person happened to be recorded under, and only fall back to Discord.
+// That made the display name an identity, which it is not: it is per-server,
+// changeable at will, and frequently the character rather than the person. A
+// player who typed their real username got nowhere, while somebody typing a
+// display name could be routed to whoever else had used it.
+//
+// So there is one lookup now, against the one handle Discord treats as
+// identity. Scoped to guilds the bot is in and to members of them — a username
+// matching nobody the bot shares a server with resolves to nothing. See
+// findAcrossGuilds in web/discord-bridge.js.
+async function findKnownPerson({ ctx, name }) {
   const finder = ctx?.discord?.findKnownMember;
   if (typeof finder !== 'function') return null;
 
-  // Scoped to guilds the bot is in, and to members of them. A name that
-  // matches nobody the bot shares a server with resolves to nothing.
   const found = await finder({ query: name });
   return found ?? null;
 }

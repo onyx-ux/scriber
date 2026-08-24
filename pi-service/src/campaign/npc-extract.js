@@ -366,3 +366,46 @@ export function npcFileName(name) {
     .trim();
   return cleaned ? `${cleaned}.md` : null;
 }
+
+// What this subject is, for the shared run in campaign/entity-notes.js.
+//
+// Everything above is the part that is genuinely about NPCs — the prompt, how
+// their records merge across sessions, how a note reads. Everything the RUN
+// does (find the sessions, call the model once each, cache, reconcile, report,
+// write) used to be copied into scripts/build-npc-notes.mjs and copied again
+// into the location and character builders. This is the seam between them.
+export const NPC_SUBJECT = {
+  key: 'npcs',
+  noun: 'NPC',
+  folder: 'NPCs',
+  systemPrompt: NPC_SYSTEM_PROMPT,
+  userMessage: ({ transcript, sessionNumber, date, existingNames, extras }) =>
+    buildNpcUserMessage({
+      transcript,
+      sessionNumber,
+      date,
+      existingNames,
+      // Who is NOT an NPC. A player whose character is named something other
+      // than their Discord name was being written up as a stranger the party
+      // met — see campaign/character-names.js.
+      playerCharacters: extras.playerCharacters ?? [],
+    }),
+  parse: parseNpcResponse,
+  merge: (perSession) => mergeNpcs(perSession),
+  // Enforced rather than trusted: the prompt asks the model to carry existing
+  // spellings into aliases, and a model that obeys most of the time is not
+  // good enough when the failure is a silently orphaned link.
+  reconcile: (records, existingNames) => reconcileAliases(records, existingNames),
+  fileName: npcFileName,
+  render: renderNpcNote,
+  detail: (npc) =>
+    [
+      npc.race,
+      npc.status !== 'unknown' ? npc.status : null,
+      `sessions ${npc.sessions.join(', ')}`,
+      npc.quotes.length ? `${npc.quotes.length} quote(s)` : null,
+      npc.hooks.length ? `${npc.hooks.length} open thread(s)` : null,
+    ]
+      .filter(Boolean)
+      .join(' · '),
+};

@@ -145,9 +145,14 @@ async function render({ base, cookie }) {
     document: {
       getElementById: el,
       addEventListener: (type, fn) => { listeners[type] = fn; },
-      body: { classList: { add() {}, remove() {} } },
+      // `toggle` as well as add/remove: renderScreen dresses the body for the
+      // sign-in gate, and a stub missing one method fails as "not a function"
+      // from inside a render, which surfaces as an unrelated empty screen.
+      body: { classList: { add() {}, remove() {}, toggle() {} } },
       activeElement: null,
       createElement: () => ({ click() {}, style: {} }),
+      // The gate appends a stylesheet link for the landing page's typefaces.
+      head: { appendChild() {} },
       get title() { return this._t; },
       set title(v) { this._t = v; },
     },

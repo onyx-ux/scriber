@@ -195,3 +195,64 @@ export function cookieFrom(header) {
   }
   return null;
 }
+
+// The three things somebody outside this module used to reach past it for.
+//
+// Every other function here goes through auth.js because the hashing lives
+// here — a caller cannot look a code up without knowing how it was stored. But
+// dropping a code, ending a person's sessions and sweeping the expired ones do
+// not need the secret, so three callers reached straight into the store for
+// them: auth-routes.js, actions.js and server.js.
+//
+// That is the credential tables being read and written from four modules
+// rather than one. Nothing was wrong with any single call — it is that "where
+// do sessions get destroyed" had four answers, and a rule about credentials
+// added here would not have covered three of them.
+
+// Give up on a code that was issued but could not be delivered.
+//
+// The one case worth breaking the uniform "if that name is on a table here,
+// the code is on its way" answer for: it is not about whether the account
+// exists, it is about that account's DM settings, and without saying so the
+// person retries for ever.
+export function abandonCode(db, userId) {
+  return db.dropAuthCode(userId);
+}
+
+// Who the bot DMed a code to under this name, if anybody.
+//
+// Here rather than in auth-routes.js because the credential tables are reached
+// from one module -- see docs/adr/0001. Verifying needs a user id and is given
+// a typed name, and for somebody the bot has never recorded speaking there is
+// no other local record connecting the two: campaign_members and
+// campaign_consent hold ids, and characters holds a character name. The live
+// code row is the one place the display name was written down, by the request
+// that sent it.
+//
+// This grants nothing on its own. It answers "who was this code sent to", and
+// the code still has to be right.
+export function whoWasSentACode(db, name) {
+  const wanted = String(name ?? '').trim();
+  return wanted ? db.findAuthCodeByUsername(wanted) : null;
+}
+
+// Sign somebody out of the dashboard, everywhere at once.
+//
+// Distinct from closeSession(everywhere) above, which ends the sessions of
+// whoever is holding a particular cookie. This ends a NAMED person's, which is
+// the operator revoking somebody else's access rather than anyone logging
+// themselves out — and it deliberately touches nothing but sessions. Revoking
+// access and deleting somebody's history are different acts, and only one of
+// them belongs on a button.
+export function revokeAllSessions(db, userId) {
+  return db.closeAllAuthSessions(userId);
+}
+
+// Delete dead codes and sessions rather than merely ignoring them.
+//
+// A table of dead credentials is a table of things that could come back if a
+// clock moved. Swept on a timer and checked again on every use, the same
+// belt-and-braces the consent invites get.
+export function sweepExpired(db) {
+  return db.sweepAuth();
+}

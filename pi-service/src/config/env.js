@@ -235,6 +235,24 @@ export const config = validate({
   // at the wrong time of day — so it is stated explicitly rather than
   // inferred from the host.
   scheduleTimeZone: optional('SCHEDULE_TIMEZONE', 'Australia/Brisbane'),
+
+  // Whether a finished session also updates the vault's per-entity notes —
+  // one page per NPC, place and player character, read from the transcript.
+  //
+  // OFF by default, and deliberately so. It is three extra model calls after
+  // every session, on top of the summary, and it reads the whole transcript
+  // rather than the recap — which is the most expensive thing this bot can be
+  // asked to do. Turning that on is the owner's decision about their own API
+  // budget, exactly as transcription scheduling is a decision about their GPU.
+  //
+  // With it off, the notes are built by hand:
+  //   node scripts/build-npc-notes.mjs <campaign> --write
+  //
+  // The cost is bounded either way: the extraction is cached per session, so
+  // this reads ONE transcript per subject after a session however many
+  // sessions the campaign already has.
+  entityNotesAfterSession: optional('ENTITY_NOTES_AFTER_SESSION', 'false') === 'true',
+
   transcribeRequireApproval: optional('TRANSCRIBE_REQUIRE_APPROVAL', 'true') !== 'false',
   transcribeWindowStartHour: parseInt(optional('TRANSCRIBE_WINDOW_START_HOUR', '8'), 10),
   transcribeWindowEndHour: parseInt(optional('TRANSCRIBE_WINDOW_END_HOUR', '16'), 10),

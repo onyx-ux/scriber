@@ -422,6 +422,130 @@
     .line { grid-template-columns: 64px 1fr; }
     .line .said { grid-column: 1 / -1; }
   }
+
+  /* ======================================================================
+     The gate — the sign-in screen, in the landing page's world.
+     ======================================================================
+     Somebody arriving from / clicked "Log in" on a page made of pale paper
+     and ultramarine, and used to land here in the dark. That cut said "you
+     have left the website" at the exact moment we were asking them to trust
+     us with their Discord account.
+     So the gate keeps the landing page's palette and typefaces, and the tool
+     goes dark once they are through it. The dashboard's own tokens are
+     untouched — everything below is scoped to body.gate-open or .gate, and
+     nothing here leaks into a signed-in page.
+
+     The typefaces load on demand, from loadGateFonts(). Most visits to this
+     page never see this screen and should not pay for three extra families.  */
+  body.gate-open { background: #E6E8E3; }
+  body.gate-open .rail,
+  body.gate-open .top,
+  body.gate-open #banner { display: none; }
+  body.gate-open .app { display: block; min-height: 100vh; }
+  body.gate-open .main { display: block; }
+
+  .gate {
+    --paper:   #E6E8E3;
+    --paper-2: #DEE2DA;
+    --paper-3: #D4D9CF;
+    --ink:     #171C22;
+    --ink-soft:#5C665E;
+    --edge:    #C4CABE;
+    --pen:     #2434A8;
+
+    --g-display: 'Fraunces', 'Hoefler Text', Georgia, serif;
+    --g-body:    'Newsreader', Georgia, 'Times New Roman', serif;
+    --g-mono:    'Spline Sans Mono', ui-monospace, Consolas, monospace;
+
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--g-body);
+    min-height: 100vh;
+    padding: 10vh 24px 60px;
+  }
+  .gate-inner { max-width: 470px; margin: 0 auto; }
+
+  .gate-eyebrow {
+    font-family: var(--g-mono);
+    font-size: 11.5px; letter-spacing: .19em; text-transform: uppercase;
+    color: var(--pen); margin: 20px 0 0;
+  }
+  .gate h1 {
+    font-family: var(--g-display);
+    font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-weight: 400;
+    font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.06; letter-spacing: -.022em;
+    margin: 14px 0 0; color: var(--ink); text-wrap: balance;
+  }
+  .gate-say {
+    font-size: 17px; line-height: 1.6; color: var(--ink-soft);
+    margin: 14px 0 0; max-width: 44ch;
+  }
+  .gate-say b { color: var(--ink); font-weight: 600; }
+
+  .gate form { margin-top: 26px; }
+  .gate-in {
+    width: 100%;
+    background: var(--paper-2);
+    border: 1px solid var(--edge);
+    border-radius: 5px;
+    color: var(--ink);
+    font-family: var(--g-body);
+    font-size: 17px;
+    padding: 13px 14px;
+  }
+  .gate-in::placeholder { color: var(--ink-soft); opacity: .7; }
+  .gate-in:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; border-color: var(--pen); }
+  .gate-in.code {
+    font-family: var(--g-mono);
+    font-size: 27px; letter-spacing: .4em; text-indent: .4em;
+    text-align: center; padding: 15px 14px;
+  }
+
+  .gate-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .gate-btn {
+    font-family: var(--g-mono);
+    font-size: 13px; letter-spacing: .02em;
+    padding: 12px 22px; border-radius: 5px;
+    border: 1px solid var(--pen); background: var(--pen); color: var(--paper);
+    cursor: pointer;
+    transition: background .16s ease, border-color .16s ease;
+  }
+  .gate-btn:hover:not(:disabled) { background: #1B2A92; border-color: #1B2A92; }
+  .gate-btn:disabled { opacity: .55; cursor: default; }
+  .gate-btn.quiet { background: transparent; color: var(--pen); border-color: var(--edge); }
+  .gate-btn.quiet:hover { background: transparent; border-color: var(--pen); }
+  .gate-btn.plain {
+    background: transparent; border-color: transparent; color: var(--ink-soft);
+    padding-inline: 0; text-decoration: underline; text-underline-offset: 3px;
+  }
+  .gate-btn.plain:hover { background: transparent; color: var(--pen); }
+  .gate :focus-visible { outline: 2px solid var(--pen); outline-offset: 3px; border-radius: 3px; }
+
+  .gate-msg {
+    font-family: var(--g-mono); font-size: 12px; line-height: 1.6;
+    margin-top: 18px; padding-left: 14px;
+    border-left: 2px solid var(--pen); color: var(--ink-soft);
+  }
+  .gate-msg.bad { border-left-color: #A8322B; color: #8C2F29; }
+
+  .gate-foot {
+    margin-top: 38px; padding-top: 18px;
+    border-top: 1px solid var(--edge);
+    font-size: 14.5px; line-height: 1.62; color: var(--ink-soft);
+    max-width: 50ch;
+  }
+  .gate-back {
+    display: inline-block; margin-top: 22px;
+    font-family: var(--g-mono); font-size: 12px; letter-spacing: .04em;
+    color: var(--ink-soft); text-decoration: none;
+  }
+  .gate-back:hover { color: var(--pen); }
+
+  @media (max-width: 520px) {
+    .gate { padding-top: 6vh; }
+  }
 </style>
 </head>
 <body>
@@ -928,62 +1052,85 @@ function diagnosis() {
 // account's DMs is the whole of it — which is exactly as strong as "you
 // control that Discord account", and that is the only identity this bot has
 // ever had a use for.
+// The landing page's typefaces, fetched the first time the gate is drawn.
+// Kept out of <head> because this is the only screen that uses them and most
+// visits here never see it — a signed-in operator should not pay for three
+// families they will never render.
+let gateFontsAsked = false;
+function loadGateFonts() {
+  if (gateFontsAsked) return;
+  gateFontsAsked = true;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href =
+    'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1' +
+    '&family=Newsreader:opsz,wght@6..72,300..600' +
+    '&family=Spline+Sans+Mono:wght@400;500&display=swap';
+  document.head.appendChild(link);
+}
+
 function signInScreen() {
   const stage = login.stage;
+  loadGateFonts();
 
   return `
-    <div class="center" style="max-width:520px;margin:0 auto;padding-top:12vh">
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z" stroke="#C9A227" stroke-width="1.3" stroke-linejoin="round"/>
-        <path d="M5.1 19.6 2.6 22.2" stroke="#C9A227" stroke-width="1.4" stroke-linecap="round"/>
-      </svg>
-      <h1 class="display" style="font-size:34px;margin-top:20px">
-        ${stage === 'code' ? 'Check your Discord DMs.' : 'Sign in to Quill.'}
-      </h1>
-      <div class="say-2" style="max-width:46ch">
-        ${stage === 'code'
-          ? `Quill sent six digits to <b>${esc(login.name)}</b>. They last ten minutes and work once.`
-          : 'Type the Discord name you use at the table. Quill will DM you a code — there is no password to set or remember.'}
-      </div>
+    <div class="gate">
+      <div class="gate-inner">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z" stroke="#2434A8" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M5.1 19.6 2.6 22.2" stroke="#2434A8" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
 
-      ${stage === 'code' ? `
-        <form data-signin-verify style="margin-top:26px">
-          <input class="in mono" id="signin-code" name="code" inputmode="numeric" autocomplete="one-time-code"
-                 maxlength="6" placeholder="000000" aria-label="The six digit code"
-                 style="font-size:26px;letter-spacing:.4em;text-align:center;padding:14px">
-          <div class="row-btns" style="margin-top:16px">
-            <button class="btn go big" type="submit" ${login.busy ? 'disabled' : ''}>
-              ${login.busy ? 'Checking…' : 'Sign in'}</button>
-            <button class="btn big" type="button" data-signin-back>Use a different name</button>
-          </div>
-        </form>` : `
-        <form data-signin-request style="margin-top:26px">
-          <input class="in" id="signin-name" name="name" placeholder="your Discord name"
-                 autocomplete="username" value="${esc(login.name)}" aria-label="Your Discord name"
-                 style="font-size:16px;padding:12px 14px">
-          <div class="row-btns" style="margin-top:16px">
-            <button class="btn go big" type="submit" ${login.busy ? 'disabled' : ''}>
-              ${login.busy ? 'Sending…' : 'Send me a code'}</button>
-          </div>
-        </form>`}
+        <p class="gate-eyebrow">${stage === 'code' ? 'Step two of two' : 'Step one of two'}</p>
+        <h1>${stage === 'code' ? 'Check your Discord DMs.' : 'Sign in to Quill.'}</h1>
 
-      ${login.message ? `<div class="quiet" style="margin-top:18px;color:${
-        login.failed ? 'var(--red-lit)' : 'var(--brass-lit)'}">${esc(login.message)}</div>` : ''}
+        <p class="gate-say">
+          ${stage === 'code'
+            ? `Quill sent six digits to <b>${esc(login.name)}</b>. They last ten minutes and work once.`
+            : 'Type your Discord username — the @handle, not your display name or your character. Quill DMs you a code; there is no password to set or remember.'}
+        </p>
 
-      ${me?.loginRequired ? '' : `
-        <div style="margin-top:22px">
-          <button class="btn" type="button" data-signin-cancel>Not now — keep looking as the operator</button>
-        </div>`}
+        ${stage === 'code' ? `
+          <form data-signin-verify>
+            <input class="gate-in code" id="signin-code" name="code" inputmode="numeric"
+                   autocomplete="one-time-code" maxlength="6" placeholder="000000"
+                   aria-label="The six digit code">
+            <div class="gate-btns">
+              <button class="gate-btn" type="submit" ${login.busy ? 'disabled' : ''}>
+                ${login.busy ? 'Checking…' : 'Sign in'}</button>
+              <button class="gate-btn quiet" type="button" data-signin-back>Use a different name</button>
+            </div>
+          </form>` : `
+          <form data-signin-request>
+            <input class="gate-in" id="signin-name" name="name" placeholder="your Discord username"
+                   autocomplete="username" value="${esc(login.name)}" aria-label="Your Discord username">
+            <div class="gate-btns">
+              <button class="gate-btn" type="submit" ${login.busy ? 'disabled' : ''}>
+                ${login.busy ? 'Sending…' : 'Send me a code'}</button>
+            </div>
+          </form>`}
 
-      ${me && !me.signInAvailable ? `<div class="quiet" style="margin-top:18px;color:var(--red-lit)">
-        This bot has no sign-in secret set, so nobody can sign in. Set <code>STATUS_TOKEN</code> or
-        <code>AUTH_SECRET</code> in <code>pi-service/.env</code>.
-      </div>` : ''}
+        ${login.message
+          ? `<p class="gate-msg${login.failed ? ' bad' : ''}">${esc(login.message)}</p>`
+          : ''}
 
-      <div class="quiet" style="margin-top:34px;max-width:52ch">
-        Quill stores your Discord id and the name attached to it, and nothing else — no email, no real name,
-        and no password, because there is not one. What you can see is worked out from what that account owns,
-        runs and plays in.
+        ${me && !me.signInAvailable ? `<p class="gate-msg bad">
+          This bot has no sign-in secret set, so nobody can sign in. Set <code>STATUS_TOKEN</code> or
+          <code>AUTH_SECRET</code> in <code>pi-service/.env</code>.
+        </p>` : ''}
+
+        ${me?.loginRequired ? '' : `
+          <div class="gate-btns">
+            <button class="gate-btn plain" type="button" data-signin-cancel>Not now — keep looking as the operator</button>
+          </div>`}
+
+        <p class="gate-foot">
+          Quill stores your Discord id and the name attached to it, and nothing else — no email, no real
+          name, and no password, because there is not one. What you can see is worked out from what that
+          account owns, runs and plays in.
+        </p>
+
+        <a class="gate-back" href="/">← Back to the landing page</a>
       </div>
     </div>`;
 }
@@ -999,7 +1146,15 @@ function renderScreen() {
   // while DASHBOARD_REQUIRE_LOGIN was off — which made the one safe order
   // for turning it on (sign in first, so you cannot lock yourself out)
   // impossible to follow.
-  if (me && !me.signedIn && (me.loginRequired || view.signingIn)) {
+  // Toggled here rather than in paint() so the class and the screen can never
+  // disagree: whatever this function decides to draw is what the body is
+  // dressed for. body.gate-open folds away the rail and the top bar and turns
+  // the page to paper, because the gate is a full-page takeover in the landing
+  // page's world rather than a card floating in the dark tool.
+  const gateOpen = Boolean(me && !me.signedIn && (me.loginRequired || view.signingIn));
+  document.body.classList.toggle('gate-open', gateOpen);
+
+  if (gateOpen) {
     el.className = '';
     el.innerHTML = signInScreen();
     return;
@@ -2959,13 +3114,25 @@ document.addEventListener('submit', async (event) => {
   if (!asking && !verifying) return;
   event.preventDefault();
 
+  // Read what was typed BEFORE anything repaints.
+  //
+  // paint() rebuilds this whole screen from `login`, so the moment it runs,
+  // the field is a new element built from state — and what the person typed,
+  // which lived only in the DOM, is gone. Reading it afterwards got the empty
+  // replacement and posted name: "", which the server rightly refused with
+  // "Type the Discord name you use here." Sign-in could not succeed from the
+  // browser at all, at either step.
+  const typed = asking
+    ? ($('signin-name')?.value.trim() ?? '')
+    : ($('signin-code')?.value.trim() ?? '');
+  if (asking) login.name = typed;
+
   login.busy = true;
   login.message = '';
   paint();
 
   try {
     if (asking) {
-      login.name = $('signin-name')?.value.trim() ?? '';
       const { payload } = await post('/auth/request', { name: login.name });
       login.failed = payload.ok === false;
       login.message = payload.message ?? '';
@@ -2974,8 +3141,7 @@ document.addEventListener('submit', async (event) => {
       // web/auth-routes.js. Anything else here would leak who plays what.
       if (payload.ok !== false) login.stage = 'code';
     } else {
-      const code = $('signin-code')?.value.trim() ?? '';
-      const { payload } = await post('/auth/verify', { name: login.name, code });
+      const { payload } = await post('/auth/verify', { name: login.name, code: typed });
       login.failed = payload.ok === false;
       login.message = payload.message ?? '';
       if (payload.ok) {
@@ -2995,7 +3161,10 @@ document.addEventListener('submit', async (event) => {
     login.busy = false;
   }
   paint();
-  $(asking ? 'signin-code' : 'signin-code')?.focus();
+  // Whichever step we ended up on, not whichever one we came from: a refused
+  // name stays on the name field rather than reaching for a code box that is
+  // not on screen. Both arms of this used to name the same element.
+  $(login.stage === 'code' ? 'signin-code' : 'signin-name')?.focus();
 });
 
 // Searching for a person is the one form whose answer is not a toast: it
@@ -3116,6 +3285,23 @@ setInterval(() => {
   const live = (status?.recording ?? []).find((r) => r.meetingId === view.meetingId);
   if (el && live && lastSeen) el.textContent = hhmmss(live.recordingForMs + (Date.now() - lastSeen));
 }, 1000);
+
+// Arriving from the landing page's "Log in".
+//
+// The sign-in card is view state rather than a screen with a URL, so until now
+// nothing outside the page could ask for it: a link could only drop somebody on
+// the operator's dashboard and leave them to find the button in the rail. That
+// is a poor door for the person it matters most to — a player who has been sent
+// here to read a recap and has never seen this page before.
+//
+// A fragment rather than a query so nginx needs no rewrite, and read once and
+// then wiped so a refresh after signing in does not throw the card back up.
+// Still gated on `me` in renderScreen, so somebody who already holds a session
+// lands on the dashboard and this does nothing.
+if (location.hash === '#signin') {
+  view.signingIn = true;
+  history.replaceState(null, '', location.pathname + location.search);
+}
 
 tick();
 setInterval(tick, 5000);

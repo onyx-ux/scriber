@@ -1501,6 +1501,30 @@ function wrap(db) {
       return db.prepare(`SELECT * FROM auth_codes WHERE user_id = ?`).get(userId) ?? null;
     },
 
+    // Who a live code was sent to, found by the name that was typed.
+    //
+    // The counterpart of getAuthCode, which needs the user id -- and the id is
+    // exactly what verifying does not have when the person has never been
+    // recorded speaking. The row itself is the record that the bot DMed this
+    // account a moment ago, which is a stronger claim than anything the
+    // transcript tables can make about them.
+    //
+    // Expired rows are excluded rather than left to checkCode: a dead code
+    // must not shadow the live one somebody is holding. LIMIT 2 for the same
+    // reason findLocalPerson uses it -- two people sharing a display name is
+    // real, and guessing between them would send one of them into the other's
+    // account.
+    findAuthCodeByUsername(username, nowIso = new Date().toISOString()) {
+      const rows = db
+        .prepare(
+          `SELECT user_id AS userId, username FROM auth_codes
+            WHERE lower(username) = ? AND expires_at > ?
+            LIMIT 2`
+        )
+        .all(String(username ?? '').toLowerCase(), nowIso);
+      return rows.length === 1 ? rows[0] : null;
+    },
+
     countAuthAttempt(userId) {
       return db.prepare(`UPDATE auth_codes SET attempts = attempts + 1 WHERE user_id = ?`).run(userId).changes;
     },

@@ -1,4 +1,10 @@
-# The dashboard, and the only thing that should ever face a URL.
+# The landing page and the dashboard, and the only things that should ever
+# face a URL.
+#
+# Two audiences on one server: strangers, who get the landing page at / and
+# nothing else, and the table, who get the dashboard at /app/ once they are on
+# the LAN or know the password. See the gate below — it is the whole security
+# story of this file.
 #
 # nginx:alpine runs envsubst over /etc/nginx/templates/*.template at start-up,
 # so ${PI_API} and ${STATUS_TOKEN} come from the environment rather than being
@@ -8,22 +14,84 @@ server {
     listen 80;
     server_name _;
 
-    # `satisfy any` is the whole lockdown: a request passes if EITHER its
-    # address is on the allow list OR it carries valid credentials. So the LAN
-    # stays frictionless and anything arriving from outside it has to log in.
+    # Relative redirects. nginx builds an absolute Location out of the port it
+    # is listening on, which is 80 in here and never the port the browser
+    # actually used — so http://pi:8095/app sent people to http://pi/app/ and
+    # a dead connection. A relative Location is resolved by the browser
+    # against the URL it already has, which is right every time.
+    absolute_redirect off;
+
+    # ── What is public, and what is not ──────────────────────────────────
     #
-    # Without `satisfy any` these two are ANDed, and the house would be asked
-    # for a password as well.
-    satisfy any;
-    include /etc/nginx/allowed-ips.conf;
-    deny all;
+    # The gate used to sit here, at server level, so it covered everything.
+    # The landing page is meant to be read by strangers, and a marketing page
+    # behind a password prompt is not a marketing page — so the gate moved
+    # down into the two locations that still want it, and only the landing
+    # page was let out.
+    #
+    # `satisfy any` is the lockdown itself: a request passes if EITHER its
+    # address is on the allow list OR it carries valid credentials. The LAN
+    # stays frictionless and anything from outside has to log in. Without
+    # `satisfy any` the two are ANDed and the house is asked for a password
+    # as well.
+    #
+    # It is repeated rather than factored into an include on purpose. This is
+    # a security boundary, and a boundary you can read in one place beats one
+    # you have to go and look up.
 
-    auth_basic "Scriber";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / {
+    # The front door, and the only thing a stranger may read.
+    #
+    # Exact matches, both of them. A prefix `location /` here would hand out
+    # everything under the document root to anybody — including
+    # /index.html, which IS the dashboard sitting at its raw path. The
+    # landing page pulls nothing local (Google Fonts and one link, that is
+    # all), so two exact paths cover it completely.
+    location = / {
         root /usr/share/nginx/html;
-        index index.html;
+        try_files /quill-landing.html =404;
+    }
+    location = /quill-landing.html {
+        root /usr/share/nginx/html;
+    }
+
+    # Everything else under the root, /index.html included, stays gated.
+    location / {
+        satisfy any;
+        include /etc/nginx/allowed-ips.conf;
+        deny all;
+        auth_basic "Scriber";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        root /usr/share/nginx/html;
+    }
+
+    # The dashboard, one level in. It used to be the root; it moved when the
+    # landing page took that spot, because the two serve different people and
+    # only one of them should be the first thing a stranger meets.
+    #
+    # An exact match, and `try_files` rather than `alias` + `index`: the
+    # dashboard is a single self-contained file — the only things it fetches
+    # are Google Fonts, Discord avatars, and a data: URI favicon — so there is
+    # nothing under /app/ to serve but index.html, and this spelling has none
+    # of alias's footguns. If the page is ever split into separate JS or CSS
+    # files, this stops being enough and has to become a prefix location.
+    #
+    # The dashboard's own API constant is '/api', rooted at the host rather
+    # than relative, so serving the page from /app/ does not disturb it.
+    #
+    # The bare /app redirect is deliberately outside the gate: it reveals
+    # nothing, and prompting for a password only to then redirect is a
+    # confusing way to meet a login box. The destination asks.
+    location = /app  { return 301 /app/; }
+    location = /app/ {
+        satisfy any;
+        include /etc/nginx/allowed-ips.conf;
+        deny all;
+        auth_basic "Scriber";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        root /usr/share/nginx/html;
+        try_files /index.html =404;
     }
 
     # The status API, proxied so the token never reaches the browser.
@@ -32,7 +100,17 @@ server {
     # to reach port 8090 themselves and any token would have been sitting in
     # the page source. Here it is added server-side, and the Pi's API can stay
     # bound to the LAN even when the dashboard is public.
+    #
+    # Gated like the dashboard. Quill's own sign-in lives inside this, not
+    # instead of it: /api/auth/* is how a player gets a session, and it is
+    # still only reachable by someone who is already past this door.
     location /api/ {
+        satisfy any;
+        include /etc/nginx/allowed-ips.conf;
+        deny all;
+        auth_basic "Scriber";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
         proxy_pass ${PI_API}/;
         proxy_set_header X-Status-Token "${STATUS_TOKEN}";
         proxy_set_header Host $host;

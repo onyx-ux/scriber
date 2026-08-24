@@ -117,6 +117,40 @@ function sessionView(guildId, session, guildName, now) {
   };
 }
 
+// Which capability each section of the snapshot rides behind.
+//
+// One declaration, used twice: buildStatus below will not BUILD a section
+// nobody may see, and web/scope.js will not SEND one. Those used to be two
+// separate lists — a field was added here and its audience decided over in
+// scope.js — so a new section could be half-declared, and the cost of building
+// it was paid on every poll by everyone regardless of who was allowed to read
+// it.
+//
+// The dashboard polls every five seconds. `access` is the expensive one: it
+// resolves a level for every person the bot has ever seen, which is two full
+// campaign scans each, and below `dev` it was thrown away every single time.
+//
+// Anything NOT listed here is unconditional — the bot's identity, the
+// campaigns (filtered per viewer rather than withheld), what is recording now,
+// and whether the machine is working at all.
+export const SECTIONS = {
+  servers: 'servers',
+  totals: 'machinery',
+  working: 'machinery',
+  queue: 'machinery',
+  schedule: 'machinery',
+  providers: 'machinery',
+  models: 'machinery',
+  backup: 'machinery',
+  access: 'everything',
+};
+
+// `viewer` is optional, and its absence means "build everything".
+//
+// That is the honest default rather than a lax one: a caller with no viewer is
+// the bot asking itself what is going on — the queue worker, a test, the
+// operator's own console — and none of those is a request that arrived over
+// the network. Every path that DID arrive over the network passes one.
 export function buildStatus({
   db,
   cfg,
@@ -125,7 +159,11 @@ export function buildStatus({
   reachability = {},
   now = Date.now(),
   startedAtMs = now,
+  viewer = null,
 }) {
+  const mayHave = (capability) => !viewer || Boolean(viewer.can?.everything) || Boolean(viewer.can?.[capability]);
+  const machinery = mayHave('machinery');
+
   const guilds = client?.guilds?.cache
     ? [...client.guilds.cache.values()].map((g) => ({
         id: g.id,
@@ -138,33 +176,37 @@ export function buildStatus({
     sessionView(guildId, session, guilds.find((g) => g.id === guildId)?.name ?? guildId, now)
   );
 
-  const transcribing = listTranscriptions().map((entry) => ({
-    meetingId: entry.meetingId,
-    done: entry.done,
-    total: entry.total,
-    description: describeTranscription(entry, now),
-  }));
+  // The queue and the live transcription progress are machinery on both sides
+  // of the seam, so a viewer who may not read them does not pay to build them
+  // either. This is the poll's most-repeated work after the access roster.
+  const transcribing = machinery
+    ? listTranscriptions().map((entry) => ({
+        meetingId: entry.meetingId,
+        done: entry.done,
+        total: entry.total,
+        description: describeTranscription(entry, now),
+      }))
+    : [];
 
-  const pipeline = db.listPipeline();
-  const queue = pipeline.map((r) => ({
-    meetingId: r.id,
-    channel: r.channel_name,
-    startedAt: r.started_at,
-    sessionStatus: r.meeting_status,
-    utterances: r.utterance_count ?? 0,
-    // The dashboard acts on the JOB, not the meeting: a meeting can carry a
-    // transcribe job and a summarise job in its lifetime, and "approve session
-    // 12" is ambiguous between them. Absent before the dashboard could do
-    // anything, which is why it was never needed.
-    jobId: r.job_id ?? null,
-    jobType: r.job_type ?? null,
-    jobStatus: r.job_status ?? null,
-    attempts: r.attempts ?? 0,
-    nextAttemptAt: r.next_attempt_at ?? null,
-    lastError: r.last_error ? String(r.last_error).slice(0, 200) : null,
-  }));
-
-  const nextWindow = nextAutoWindowStart(new Date(now), cfg);
+  const queue = machinery
+    ? db.listPipeline().map((r) => ({
+        meetingId: r.id,
+        channel: r.channel_name,
+        startedAt: r.started_at,
+        sessionStatus: r.meeting_status,
+        utterances: r.utterance_count ?? 0,
+        // The dashboard acts on the JOB, not the meeting: a meeting can carry a
+        // transcribe job and a summarise job in its lifetime, and "approve session
+        // 12" is ambiguous between them. Absent before the dashboard could do
+        // anything, which is why it was never needed.
+        jobId: r.job_id ?? null,
+        jobType: r.job_type ?? null,
+        jobStatus: r.job_status ?? null,
+        attempts: r.attempts ?? 0,
+        nextAttemptAt: r.next_attempt_at ?? null,
+        lastError: r.last_error ? String(r.last_error).slice(0, 200) : null,
+      }))
+    : [];
 
   // One row per campaign, which is why this is here at all: the "Servers" card
   // answers "is the bot in this Discord", and with several tables in one
@@ -173,6 +215,9 @@ export function buildStatus({
   // No user ids and no channel ids — the dashboard can be exposed to a URL,
   // and who runs which game is not something to publish. Only whether it is
   // claimed at all, which is what an owner needs to spot a stranded campaign.
+  //
+  // Never gated: a campaign list is what the dashboard IS. It is cut to the
+  // viewer's own tables by scope.js rather than withheld.
   const campaigns = db.campaignOverview().map((c) => ({
     id: c.id,
     name: c.name,
@@ -194,7 +239,9 @@ export function buildStatus({
     awaiting: c.awaiting ?? 0,
   }));
 
-  return {
+  // --- what everybody gets ---
+
+  const status = {
     generatedAt: new Date(now).toISOString(),
     bot: {
       user: client?.user?.tag ?? null,
@@ -202,43 +249,8 @@ export function buildStatus({
       uptimeMs: now - startedAtMs,
       opus: detectOpusBackend(),
     },
-    servers: guilds.map((g) => ({
-      ...g,
-      recording: activeSessions.has(g.id),
-      campaigns: campaigns.filter((c) => c.guildId === g.id).length,
-    })),
     campaigns,
-    totals: {
-      campaigns: campaigns.length,
-      claimed: campaigns.filter((c) => c.claimed).length,
-      players: new Set(
-        db.raw.prepare('SELECT DISTINCT user_id FROM campaign_members').all().map((r) => r.user_id)
-      ).size,
-      sessions: campaigns.reduce((n, c) => n + c.sessions, 0),
-      lines: campaigns.reduce((n, c) => n + c.lines, 0),
-      hours: campaigns.reduce((n, c) => n + c.hours, 0),
-    },
     recording,
-    working: {
-      transcribing,
-      // A job flipped to 'running' is the one actually being worked on now.
-      summarising: queue.filter((q) => q.jobType === 'summarize' && q.jobStatus === 'running'),
-    },
-    queue: {
-      awaitingTranscribe: queue.filter((q) => q.jobType === 'transcribe' && q.jobStatus === 'awaiting_approval'),
-      queuedTranscribe: queue.filter((q) => q.jobType === 'transcribe' && q.jobStatus === 'pending'),
-      awaitingSummary: queue.filter((q) => q.jobType === 'summarize' && q.jobStatus === 'awaiting_approval'),
-      queuedSummary: queue.filter((q) => q.jobType === 'summarize' && q.jobStatus === 'pending'),
-    },
-    schedule: {
-      timeZone: cfg.scheduleTimeZone,
-      windowStartHour: cfg.transcribeWindowStartHour,
-      windowEndHour: cfg.transcribeWindowEndHour,
-      weekdaysOnly: cfg.transcribeWeekdaysOnly,
-      requireApproval: cfg.transcribeRequireApproval,
-      nextAutoWindowAt: nextWindow ? nextWindow.toISOString() : null,
-      inWindowNow: Boolean(nextWindow && nextWindow.getTime() <= now),
-    },
     health: {
       whisperServer: reachability.whisperServer ?? null,
       summariser: reachability.summariser ?? null,
@@ -256,28 +268,83 @@ export function buildStatus({
       // because a machine went down, the age of the claim is the point.
       checkedAt: reachability.checkedAt ?? null,
     },
-    // Which summarisers actually have a key, so the page can offer a choice at
-    // the moment of approval instead of guessing — and can leave the choice
-    // out entirely when there is only one. Names only; no keys.
-    providers: configuredProviders(cfg),
-
-    // What the models have cost, and which one does which job.
-    //
-    // Stripped for everyone below dev by web/scope.js along with the rest of
-    // the machinery — this is the API bill, and it is one person's business.
-    models: modelReport({ db, cfg }),
-
-    // Whether the newest snapshot has ever been opened, and what it said.
-    // Machinery, so dev only — and null until something has checked, which
-    // the page must render as "unknown" rather than as "fine".
-    // Who can get into this bot, at what level, and who is signed in now.
-    // Sits behind `everything`, because a roster of everyone the bot knows
-    // is exactly the thing a player should not be handed.
-    access: accessRoster({ db, cfg, client }),
-    backup: lastBackupCheck(db),
     // Whether this bot will accept actions at all. Without it a dashboard with
     // no STATUS_TOKEN configured looks merely broken: every button returns 403
     // and the cause, one unset variable on the Pi, is invisible from the page.
     actionsEnabled: Boolean(cfg.statusToken),
   };
+
+  // --- and what each section costs to be allowed ---
+
+  if (mayHave(SECTIONS.servers)) {
+    status.servers = guilds.map((g) => ({
+      ...g,
+      recording: activeSessions.has(g.id),
+      campaigns: campaigns.filter((c) => c.guildId === g.id).length,
+    }));
+  }
+
+  if (machinery) {
+    const nextWindow = nextAutoWindowStart(new Date(now), cfg);
+
+    status.totals = {
+      campaigns: campaigns.length,
+      claimed: campaigns.filter((c) => c.claimed).length,
+      players: new Set(
+        db.raw.prepare('SELECT DISTINCT user_id FROM campaign_members').all().map((r) => r.user_id)
+      ).size,
+      sessions: campaigns.reduce((n, c) => n + c.sessions, 0),
+      lines: campaigns.reduce((n, c) => n + c.lines, 0),
+      hours: campaigns.reduce((n, c) => n + c.hours, 0),
+    };
+
+    status.working = {
+      transcribing,
+      // A job flipped to 'running' is the one actually being worked on now.
+      summarising: queue.filter((q) => q.jobType === 'summarize' && q.jobStatus === 'running'),
+    };
+
+    status.queue = {
+      awaitingTranscribe: queue.filter((q) => q.jobType === 'transcribe' && q.jobStatus === 'awaiting_approval'),
+      queuedTranscribe: queue.filter((q) => q.jobType === 'transcribe' && q.jobStatus === 'pending'),
+      awaitingSummary: queue.filter((q) => q.jobType === 'summarize' && q.jobStatus === 'awaiting_approval'),
+      queuedSummary: queue.filter((q) => q.jobType === 'summarize' && q.jobStatus === 'pending'),
+    };
+
+    status.schedule = {
+      timeZone: cfg.scheduleTimeZone,
+      windowStartHour: cfg.transcribeWindowStartHour,
+      windowEndHour: cfg.transcribeWindowEndHour,
+      weekdaysOnly: cfg.transcribeWeekdaysOnly,
+      requireApproval: cfg.transcribeRequireApproval,
+      nextAutoWindowAt: nextWindow ? nextWindow.toISOString() : null,
+      inWindowNow: Boolean(nextWindow && nextWindow.getTime() <= now),
+    };
+
+    // Which summarisers actually have a key, so the page can offer a choice at
+    // the moment of approval instead of guessing — and can leave the choice
+    // out entirely when there is only one. Names only; no keys.
+    status.providers = configuredProviders(cfg);
+
+    // What the models have cost, and which one does which job. This is the API
+    // bill, and it is one person's business.
+    status.models = modelReport({ db, cfg });
+
+    // Whether the newest snapshot has ever been opened, and what it said.
+    // Null until something has checked, which the page must render as
+    // "unknown" rather than as "fine".
+    status.backup = lastBackupCheck(db);
+  }
+
+  // Who can get into this bot, at what level, and who is signed in now.
+  //
+  // Behind `everything`, because a roster of everyone the bot knows is exactly
+  // the thing a player should not be handed — and because building it is the
+  // most expensive thing in this file, so a player's poll should not pay for a
+  // list they will never be sent.
+  if (mayHave(SECTIONS.access)) {
+    status.access = accessRoster({ db, cfg, client });
+  }
+
+  return status;
 }
