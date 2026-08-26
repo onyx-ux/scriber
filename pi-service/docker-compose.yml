@@ -48,6 +48,13 @@ services:
     depends_on: [bot]
     ports:
       - '8095:80'
+      # The same server again, on the port the Cloudflare tunnel was told to
+      # look for. Cloudflare's Public Hostname points at `http://localhost:8123`
+      # and its URL field will not accept a docker service name, so rather than
+      # fight the validator the Pi is made to match what is already configured
+      # there — see the tunnel service below. On the LAN the two ports are
+      # interchangeable; both land on the same nginx behind the same gate.
+      - '8123:80'
     # Deliberately NO env_file here, unlike the bot.
     #
     # env_file: .env would hand this container DISCORD_TOKEN, GEMINI_API_KEY
@@ -69,5 +76,60 @@ services:
       # Who gets in without a password. Kept out of the template so the list
       # can be edited without a container rebuild.
       - ../dashboard/config/allowed-ips.conf:/etc/nginx/allowed-ips.conf:ro
-      # htpasswd -B -c config/.htpasswd <username>
+      # See dashboard/config/.htpasswd.example for how to generate this —
+      # including the chmod 644, without which nginx's workers cannot read it
+      # and every password prompt becomes a 500.
       - ../dashboard/config/.htpasswd:/etc/nginx/.htpasswd:ro
+
+  # The way in from outside the house, without opening a port on the router.
+  #
+  # An outbound-only connector: cloudflared dials Cloudflare and holds the
+  # connection open, and https://quill.thehouseofcake.org is served back down
+  # it. Nothing on the home network is exposed, there is no port forward to
+  # forget about, and the certificate is Cloudflare's problem rather than
+  # certbot's.
+  #
+  # HOST networking, which is the one surprising line here.
+  #
+  # The tunnel's Public Hostname is configured — in Cloudflare, not here — as
+  # `http://localhost:8123`, and Cloudflare's URL field refuses a docker service
+  # name like `dashboard:80`. On a bridge network `localhost` is the cloudflared
+  # container's own loopback, which has nothing on it, so every request came
+  # back 502. Sharing the host's network makes `localhost:8123` mean the Pi's
+  # port 8123, which is where the dashboard is published above.
+  #
+  # The cost is honest and worth stating: this connector can now reach every
+  # port on this Pi, not just the dashboard, so anybody who could edit the
+  # tunnel's ingress in Cloudflare could point it at one. That is an account
+  # compromise either way — they could equally add a rule to the other tunnel
+  # on this box — but it is a wider blast radius than a bridge network, and it
+  # is the price of not having to keep two places in step.
+  #
+  # It also puts cloudflared's own metrics server on the host, at :20241.
+  #
+  # There is a SECOND cloudflared on this Pi, started by hand long before this
+  # one and serving something else. They are different tunnels with different
+  # tokens; this one is here, in compose, so it comes back with everything else
+  # after a reboot instead of depending on somebody remembering a docker run.
+  #
+  # SECURITY: what this does NOT do is authenticate anybody. Every request down
+  # this tunnel reaches nginx from a docker address, which allowed-ips.conf
+  # would wave through as "docker's own bridge networks" — so the dashboard
+  # would be open to the whole internet with no password. What stops that is in
+  # dashboard/templates/default.conf.template: the visitor's real address is
+  # recovered from CF-Connecting-IP before the allow-list is consulted. Read
+  # that before changing either file.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on: [dashboard]
+    network_mode: host
+    command: tunnel --no-autoupdate run
+    environment:
+      # Via the environment rather than `--token` on the command line, so the
+      # credential is not sitting in `docker inspect` output, `ps` or the shell
+      # history of whoever started it. cloudflared reads this by name.
+      #
+      # `:?` rather than a default: a tunnel that silently starts with no token
+      # fails in a way that looks like a network problem.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in pi-service/.env}

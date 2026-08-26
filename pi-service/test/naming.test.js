@@ -218,18 +218,18 @@ test('numbering continues across the migration on an existing campaign', async (
 test('naming a campaign does not disturb its numbering', async (t) => {
   const db = await freshDb(t);
   make(db, 'G1');
-  db.setCampaignName(db.defaultCampaignId('G1'), 'Cipher');
+  db.setCampaignName(db.forTests.defaultCampaignId('G1'), 'Cipher');
 
   assert.equal(db.getMeeting(make(db, 'G1')).session_number, 2, 'setting a name must not reset the counter');
-  assert.equal(db.getCampaignName(db.defaultCampaignId('G1')), 'Cipher');
+  assert.equal(db.getCampaignName(db.forTests.defaultCampaignId('G1')), 'Cipher');
 });
 
 test('campaign names are stored per campaign', async (t) => {
   const db = await freshDb(t);
   make(db, 'G1');
   make(db, 'G2');
-  const a = db.defaultCampaignId('G1');
-  const b = db.defaultCampaignId('G2');
+  const a = db.forTests.defaultCampaignId('G1');
+  const b = db.forTests.defaultCampaignId('G2');
 
   db.setCampaignName(a, 'Cipher');
   assert.equal(db.getCampaignName(a), 'Cipher');
@@ -244,7 +244,7 @@ test('campaigns are listable for the DM picker', async (t) => {
   make(db, 'G1');
   make(db, 'G1');
   make(db, 'G2');
-  db.setCampaignName(db.defaultCampaignId('G1'), 'Cipher');
+  db.setCampaignName(db.forTests.defaultCampaignId('G1'), 'Cipher');
 
   const rows = db.listCampaigns();
   assert.equal(rows.length, 2);

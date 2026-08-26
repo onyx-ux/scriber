@@ -95,8 +95,8 @@ test('a job still in the queue is findable from its meeting', async (t) => {
   const meeting = seedMeeting(db);
   const job = db.enqueueTranscribeJob(meeting, { requireApproval: true });
 
-  assert.equal(db.getTranscribeJobForMeeting(meeting).id, job.id);
-  assert.equal(db.getTranscribeJobForMeeting(9999), undefined);
+  assert.equal(db.forTests.getTranscribeJobForMeeting(meeting).id, job.id);
+  assert.equal(db.forTests.getTranscribeJobForMeeting(9999), undefined);
 });
 
 test('a finished job stops being due', async (t) => {

@@ -74,8 +74,8 @@ async function freshDb(t) {
 
 test('corrections are stored per campaign and upsert on repeat', async (t) => {
   const db = await freshDb(t);
-  const a = db.defaultCampaignId('G1');
-  const b = db.defaultCampaignId('G2');
+  const a = db.forTests.defaultCampaignId('G1');
+  const b = db.forTests.defaultCampaignId('G2');
   db.addCorrection(a, 'Vecks', 'Vex');
   db.addCorrection(a, 'Vecks', 'Vexx');
   db.addCorrection(b, 'Vecks', 'Other');
@@ -110,7 +110,7 @@ test('rewriteUtterances fixes past transcripts and reports how many changed', as
     { userId: 'u1', displayName: 'Koru', startMs: 1, endMs: 2, text: 'nothing to change here' },
   ]);
 
-  const changed = db.rewriteUtterances(db.defaultCampaignId('G1'), (text) => applyCorrections(text, fix));
+  const changed = db.rewriteUtterances(db.forTests.defaultCampaignId('G1'), (text) => applyCorrections(text, fix));
   assert.equal(changed, 1, 'only lines that actually differ are counted');
 
   const texts = db.listUtterances(id).map((u) => u.text);
@@ -124,7 +124,7 @@ test('rewriteUtterances never touches another campaign', async (t) => {
   db.finalizeTranscription(mine, [{ userId: 'u', displayName: 'd', startMs: 0, endMs: 1, text: 'Vecks' }]);
   db.finalizeTranscription(theirs, [{ userId: 'u', displayName: 'd', startMs: 0, endMs: 1, text: 'Vecks' }]);
 
-  db.rewriteUtterances(db.defaultCampaignId('G1'), (text) => applyCorrections(text, fix));
+  db.rewriteUtterances(db.forTests.defaultCampaignId('G1'), (text) => applyCorrections(text, fix));
   assert.equal(db.listUtterances(mine)[0].text, 'Vex');
   assert.equal(db.listUtterances(theirs)[0].text, 'Vecks', 'another guild is untouched');
 });
@@ -145,7 +145,7 @@ test('rewriteUtterances never touches the other campaign in the same server', as
 
 test('removeCorrection deletes only the named term', async (t) => {
   const db = await freshDb(t);
-  const c = db.defaultCampaignId('G1');
+  const c = db.forTests.defaultCampaignId('G1');
   db.addCorrection(c, 'Vecks', 'Vex');
   db.addCorrection(c, 'Rusti', 'Rusty');
 

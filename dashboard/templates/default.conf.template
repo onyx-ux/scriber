@@ -8,11 +8,66 @@
 #
 # nginx:alpine runs envsubst over /etc/nginx/templates/*.template at start-up,
 # so ${PI_API} and ${STATUS_TOKEN} come from the environment rather than being
-# baked into an image or committed to git.
+# baked into an image or committed to git. Only those two names are on
+# envsubst's list, so nginx's own $variables below are left alone.
+
+# ── Arriving through the Cloudflare tunnel ───────────────────────────────
+#
+# The dashboard now has two front doors: the LAN, on port 8095, and
+# https://quill.thehouseofcake.org, which reaches this container from the
+# cloudflared sidecar on the compose network. Everything below exists because
+# those two look identical to nginx unless it is told how to tell them apart.
+#
+# Cloudflare stamps both of these at its own edge and overwrites whatever the
+# visitor sent, so neither can be forged from outside. They are only believed
+# from the docker network cloudflared sits on -- see set_real_ip_from below --
+# so nothing on the LAN can put words in Cloudflare's mouth either.
+
+# Whether the BROWSER is on https, which is not the same question as whether
+# this server is. Cloudflare terminates TLS at its edge and speaks plain http
+# down the tunnel, so $scheme here says "http" for a visitor whose address bar
+# says https. The bot uses this to decide whether the session cookie may carry
+# Secure, and getting it wrong either drops the cookie on a LAN page or leaves
+# it unprotected behind real TLS.
+map $http_cf_visitor $forwarded_proto {
+    default   $scheme;   # nobody in front of us: whatever we are actually serving
+    "~*https" https;     # Cloudflare terminated TLS for us
+    "~*http"  http;
+}
 
 server {
     listen 80;
     server_name _;
+
+    # Judge a tunnel request on where the PERSON is, not where the tunnel is.
+    #
+    # Without this, every request through the tunnel arrives from cloudflared's
+    # container address -- which allowed-ips.conf waves straight through as
+    # "docker's own bridge networks", handing the entire dashboard and its API
+    # to anybody on the internet who knows the hostname, with no password at
+    # all. That is not a hypothetical: it is what happens the moment the tunnel
+    # comes up, unless $remote_addr is rewritten first.
+    #
+    # realip runs before the access phase, so by the time allow/deny is
+    # consulted a tunnel request already carries the visitor's real address and
+    # the docker line no longer matches it. The LAN is untouched: its requests
+    # carry no CF-Connecting-IP, so nothing is rewritten.
+    #
+    # set_real_ip_from is deliberately narrow. Trusting a header from anywhere
+    # is how an allow-list becomes a suggestion.
+    #
+    # Both entries are the same machine wearing different hats. cloudflared
+    # runs on the host's network, so its requests reach this container through
+    # a published port and arrive as either the bridge gateway or the loopback
+    # depending on how docker routed them — and if the address it actually
+    # arrives on is NOT listed here, CF-Connecting-IP is ignored, the request
+    # keeps an internal address, and allowed-ips.conf waves the whole internet
+    # straight through. Verify with the access log rather than assuming: the
+    # line for a request through the tunnel must show the visitor's public
+    # address, never 127.0.0.1 or a 172.x one.
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 127.0.0.1;
+    real_ip_header CF-Connecting-IP;
 
     # Relative redirects. nginx builds an absolute Location out of the port it
     # is listening on, which is 80 in here and never the port the browser
@@ -39,18 +94,40 @@ server {
     # a security boundary, and a boundary you can read in one place beats one
     # you have to go and look up.
 
-    # The front door, and the only thing a stranger may read.
+    # The front door.
     #
     # Exact matches, both of them. A prefix `location /` here would hand out
     # everything under the document root to anybody — including
     # /index.html, which IS the dashboard sitting at its raw path. The
     # landing page pulls nothing local (Google Fonts and one link, that is
     # all), so two exact paths cover it completely.
+    #
+    # GATED FOR NOW, which it was not before the hostname existed. The landing
+    # page is written to be read by strangers and a marketing page behind a
+    # password is not a marketing page — but it only became reachable by
+    # strangers today, and "let the world in" is a decision to make awake and
+    # on purpose rather than a side effect of switching a tunnel on.
+    #
+    # To open it: delete the five gate lines from each of these two blocks and
+    # `docker compose restart dashboard`. Nothing else has to change, and the
+    # dashboard itself stays behind its own gate below either way.
     location = / {
+        satisfy any;
+        include /etc/nginx/allowed-ips.conf;
+        deny all;
+        auth_basic "Scriber";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
         root /usr/share/nginx/html;
         try_files /quill-landing.html =404;
     }
     location = /quill-landing.html {
+        satisfy any;
+        include /etc/nginx/allowed-ips.conf;
+        deny all;
+        auth_basic "Scriber";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
         root /usr/share/nginx/html;
     }
 
@@ -104,6 +181,16 @@ server {
     # Gated like the dashboard. Quill's own sign-in lives inside this, not
     # instead of it: /api/auth/* is how a player gets a session, and it is
     # still only reachable by someone who is already past this door.
+    #
+    # Two of those three routes are BROWSER NAVIGATIONS rather than fetches —
+    # /api/auth/discord redirects out to Discord, and Discord redirects back to
+    # /api/auth/callback. That second one is the address registered in the
+    # Discord developer portal, and it is what DISCORD_REDIRECT_URI has to say
+    # (the bot derives exactly this from DASHBOARD_URL when it is unset). It
+    # needs nothing special here: proxy_pass forwards the query string, the
+    # state cookie rides in the Cookie header, and the bot's 302 back to /app/
+    # is relative, so the browser resolves it against whatever host and port it
+    # actually used.
     location /api/ {
         satisfy any;
         include /etc/nginx/allowed-ips.conf;
@@ -118,11 +205,16 @@ server {
         # session cookie may carry Secure. Setting Secure on a LAN http page
         # would mean the browser silently discards it and nobody can sign in;
         # not setting it once this is behind TLS would be sloppier than
-        # necessary. nginx knows, so nginx says.
+        # necessary.
+        #
+        # $scheme is the wrong answer through the tunnel — Cloudflare holds the
+        # TLS and speaks plain http to us — so this comes from the map at the
+        # top of the file, which asks Cloudflare what the browser is on and
+        # falls back to $scheme when there is no Cloudflare in front.
         #
         # Cookies themselves need no configuration here: nginx forwards the
         # request Cookie header and passes Set-Cookie back by default.
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
 
         # A dashboard that hangs for a minute because the Pi is rebooting is
         # worse than one that says "unreachable" in three seconds.

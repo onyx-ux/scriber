@@ -17,8 +17,9 @@ import {
   scopeStatus,
   scopeCampaign,
 } from './authority.js';
-import { handleAuthRoute, createRequestLimiter } from './auth-routes.js';
-import { sweepExpired } from './auth.js';
+import { handleAuthRoute } from './auth-routes.js';
+import { sweepExpired, authSecret } from './auth.js';
+import { oauthReady, redirectUri as discordRedirectUri } from './discord-oauth.js';
 import { guildsCreatableBy } from '../campaign/create.js';
 import { restorableBy, mayDelete } from '../campaign/archive.js';
 import { pendingRestoreRequests } from '../campaign/restore-request.js';
@@ -74,18 +75,16 @@ function readJsonBody(req) {
 }
 
 // `discord` is injectable so the HTTP layer can be tested without a logged-in
-// bot. It defaults to the real bridge; nothing in production passes it.
+// bot, and `fetchImpl` so the sign-in flow can be driven against a model of
+// Discord's OAuth API rather than the internet. Both default to the real
+// thing; nothing in production passes either.
 export function startStatusServer({
   db, cfg, client, activeSessions, startedAtMs = Date.now(),
-  discord = null,
+  discord = null, fetchImpl = undefined,
 }) {
   if (!cfg.statusPort) return null;
 
   const reachability = { whisperServer: null, summariser: null, checkedAt: null };
-
-  // Owned here rather than by the auth module, so two servers in one process
-  // do not share one limiter — see createRequestLimiter.
-  const tooSoon = createRequestLimiter();
 
   // Guarded against overlap: the on-demand probe below is a button anyone can
   // hold down, and each call opens two sockets with their own timeouts.
@@ -107,18 +106,30 @@ export function startStatusServer({
   const probeTimer = setInterval(probe, PROBE_INTERVAL_MS);
   probeTimer.unref?.();
 
-  // Expired codes and sessions are deleted rather than merely ignored: a table
-  // of dead credentials is a table of things that could come back if a clock
-  // moved. Swept hourly and checked again on every use, the same belt-and-
-  // braces the consent invites get.
-  sweepExpired(db);
-  const sweepTimer = setInterval(() => {
+  // Expired sessions are deleted rather than merely ignored: a table of dead
+  // credentials is a table of things that could come back if a clock moved.
+  // Swept hourly and checked again on every use, the same belt-and-braces the
+  // consent invites get.
+  //
+  // The model usage log is swept on the same timer, which is what its own
+  // comment in store/db.js has always claimed happened — it said "swept with
+  // the auth tables" while nothing anywhere called it, so a long-running bot
+  // kept every row it had ever written. The dashboard reads a fortnight back;
+  // ninety days is already generous.
+  const sweep = () => {
     try {
       sweepExpired(db);
     } catch (err) {
       console.error('[auth] sweep failed:', err.message);
     }
-  }, 60 * 60 * 1000);
+    try {
+      db.pruneModelUsage();
+    } catch (err) {
+      console.error('[usage] prune failed:', err.message);
+    }
+  };
+  sweep();
+  const sweepTimer = setInterval(sweep, 60 * 60 * 1000);
   sweepTimer.unref?.();
 
   const send = (res, status, payload) =>
@@ -143,9 +154,9 @@ export function startStatusServer({
     // Fire-and-forget: the answer arrives in the next status poll, not in the
     // response to the click.
     probeNow: () => { probe(); },
-    // The things an action needs Discord itself for — finding a person by the
-    // name their table knows them by, asking them whether they may be
-    // recorded, and delivering a sign-in code. See web/discord-bridge.js.
+    // The two things an action needs Discord itself for — finding a person by
+    // the name their table knows them by, and asking them whether they may be
+    // recorded. See web/discord-bridge.js.
     discord: discord ?? createDiscordBridge({ client, db, cfg }),
     // Started, not awaited. Downloading, converting and transcribing an
     // hours-long recording takes hours; the HTTP response says "started" and
@@ -200,24 +211,30 @@ export function startStatusServer({
     // is a different thing from being allowed to reach the API at all — and
     // the proxy adds the token to every request, so a browser on the dashboard
     // has it either way. Skipping the check here would leave a bot on an
-    // exposed port able to be told "DM this person a code" by a stranger, at
-    // whatever rate the limiter allowed.
+    // exposed port able to be walked through a sign-in by a stranger.
     const doorman = checkDoor({ req, url, cfg, mutating });
     if (doorman) {
       send(res, doorman.status, { ok: false, message: doorman.message });
       return;
     }
 
-    if (mutating && url.pathname.startsWith('/auth/')) {
-      let body;
-      try {
-        body = await readJsonBody(req);
-      } catch (err) {
-        send(res, 400, { ok: false, message: err.message });
-        return;
+    // Signing in, which is the only part of this API a BROWSER navigates to
+    // rather than fetches. Two of its three routes are GETs for that reason,
+    // so this is matched on the path before the method rather than after it —
+    // and it has to come before `identify` below, because the whole point of
+    // these routes is that the person walking through them has no identity yet.
+    if (url.pathname.startsWith('/auth/')) {
+      let body = {};
+      if (mutating) {
+        try {
+          body = await readJsonBody(req);
+        } catch (err) {
+          send(res, 400, { ok: false, message: err.message });
+          return;
+        }
       }
       const answer = await handleAuthRoute({
-        pathname: url.pathname, body, req, db, cfg, ctx, tooSoon,
+        pathname: url.pathname, method: req.method, url, body, req, db, cfg, fetchImpl,
         // Only set Secure when the page really is on https, or the browser
         // silently discards the cookie and nobody can ever sign in on a LAN.
         secure: (req.headers['x-forwarded-proto'] ?? '') === 'https',
@@ -226,7 +243,17 @@ export function startStatusServer({
         send(res, 404, { ok: false, message: 'No such route.' });
         return;
       }
+      // An array is two cookies in one response, which the sign-in callback
+      // needs: the spent attempt is cleared and the session is opened at the
+      // same moment. node:http sends one Set-Cookie header per entry.
       if (answer.cookie) res.setHeader('Set-Cookie', answer.cookie);
+      if (answer.redirect) {
+        // 302 rather than 303: the browser got here by GET and is going on by
+        // GET, so there is no method to rewrite, and 302 is what every OAuth
+        // implementation on the internet already agrees on.
+        res.writeHead(302, { Location: answer.redirect }).end();
+        return;
+      }
       send(res, answer.status, answer.payload);
       return;
     }
@@ -286,8 +313,14 @@ export function startStatusServer({
         campaigns: viewer.campaignIds.length,
         loginRequired: Boolean(cfg.dashboardRequireLogin),
         // Whether signing in is even possible on this install, so the page can
-        // say "not configured" instead of failing at the code step.
-        signInAvailable: Boolean(cfg.authSecret || cfg.statusToken),
+        // say "not configured" rather than sending somebody to Discord to be
+        // told off by a screen that mentions none of this bot's settings.
+        //
+        // Two halves: Discord has to know this app (the OAuth credentials and
+        // a redirect it will accept) and the bot has to have a key to hash the
+        // session cookie with. Missing either means nobody can sign in, and the
+        // page names which one rather than making the operator guess.
+        ...signInReadiness(cfg),
       });
       return;
     }
@@ -443,16 +476,59 @@ export function startStatusServer({
         ? 'Dashboard actions enabled (STATUS_TOKEN is set).'
         : 'Dashboard actions DISABLED — set STATUS_TOKEN to allow approvals from the dashboard.'
     );
+    // Said at boot for the same reason as the line above: a "Sign in with
+    // Discord" button that dead-ends is invisible from here, and the cause is
+    // always one unset variable or a redirect that Discord has never been told
+    // about. Printed so it can be checked against the developer portal.
+    const ready = oauthReady(cfg);
+    console.log(
+      !authSecret(cfg)
+        ? 'Discord sign-in DISABLED — set STATUS_TOKEN or AUTH_SECRET to hash session cookies with.'
+        : ready.ok
+          ? `Discord sign-in enabled — redirect ${discordRedirectUri(cfg)}`
+          : `Discord sign-in DISABLED — ${ready.missing} is not set.`
+    );
   });
 
   // The server itself as well as the stopper, so a caller that asked for port
   // 0 can find out which port it actually got. index.js ignores both.
   return {
     server,
+    // Resolves once the last request in flight has been answered, rather than
+    // merely asking the server to stop and returning.
+    //
+    // The difference matters to whoever owns the database: closing it while a
+    // handler is still mid-query throws "the database connection is not open"
+    // out of an HTTP callback, where nothing is waiting to catch it. The
+    // dashboard opens one request per session on the campaign screen, so there
+    // are usually several in the air.
+    //
+    // Idle keep-alive connections are dropped explicitly — they would never end
+    // on their own, and close() waits for every connection, not just the busy
+    // ones. index.js ignores the return, as it always has.
     close: () => {
       clearInterval(probeTimer);
       clearInterval(sweepTimer);
-      server.close();
+      const done = new Promise((resolve) => server.close(() => resolve()));
+      server.closeIdleConnections?.();
+      return done;
     },
+  };
+}
+
+// Whether this install can sign anybody in, in the two halves it can fail on:
+// Discord has to know this app (the OAuth credentials and a redirect it will
+// accept) and the bot has to have a key to hash the session cookie with.
+//
+// Named rather than reduced to a boolean because each half is a line somebody
+// forgot to fill in, and "sign-in is not configured" sends them to read the
+// whole .env looking for which one. Said here as well as at boot, because a
+// dashboard is read far more often than a log.
+function signInReadiness(cfg) {
+  const ready = oauthReady(cfg);
+  const secret = authSecret(cfg);
+  return {
+    signInAvailable: Boolean(ready.ok && secret),
+    signInMissing: ready.missing ?? (secret ? null : 'STATUS_TOKEN or AUTH_SECRET'),
   };
 }

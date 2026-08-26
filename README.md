@@ -817,6 +817,14 @@ in `dashboard/config/.htpasswd`. Either is enough — without `satisfy any` the
 two would be ANDed and the house would be asked for a password as well.
 
     docker run --rm httpd:alpine htpasswd -nbB matt 'CHOOSE-A-LONG-ONE' > dashboard/config/.htpasswd
+    chmod 644 dashboard/config/.htpasswd
+
+**The `chmod` is not optional.** nginx's workers run as uid 101 inside the
+container and that redirect writes the file 600, owned by you — so nginx cannot
+read its own password file and answers `500` where it should have answered
+`401`. It only affects people the allow-list does not already cover, which is
+why it can sit unnoticed until the day you publish the dashboard. The file
+holds a bcrypt hash, not a password.
 
 **Run it — don't write the file by hand.** The file wants
 `user:$2y$05$<53 more characters>`; a line with the password in it instead of a

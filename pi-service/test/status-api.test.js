@@ -176,7 +176,7 @@ test('every campaign is reported, one row each, not one per server', async (t) =
   const db = await freshDb(t);
   const cipher = db.createCampaign('g1', 'Cipher', 'dm-a');
   const strahd = db.createCampaign('g1', 'Curse of Strahd', 'dm-b');
-  db.addCampaignMember(cipher, 'player-1', 'dm-a');
+  db.forTests.addCampaignMember(cipher, 'player-1', 'dm-a');
   db.setCharacterName(cipher, 'player-1', 'BenTen');
 
   const id = db.createMeeting({

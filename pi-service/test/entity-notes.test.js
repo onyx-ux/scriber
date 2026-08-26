@@ -521,7 +521,7 @@ test('a cached session that no longer exists stops contributing', async (t) => {
 
 test('the pipeline update runs every subject, in the order their links need', async (t) => {
   const { db, cfg, campaign, dir } = await world(t, { sessions: 1 });
-  db.addCampaignMember(campaign.id, 'p1', 'Saf');
+  db.forTests.addCampaignMember(campaign.id, 'p1', 'Saf');
   db.setCharacterName(campaign.id, 'p1', 'Aurion');
 
   // One answer that satisfies all three parsers, so the test is about the run

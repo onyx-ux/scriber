@@ -5,55 +5,232 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quill</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z' stroke='%23C9A227' stroke-width='1.3' stroke-linejoin='round'/%3E%3Cpath d='M5.1 19.6 2.6 22.2' stroke='%23C9A227' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E">
-<!-- Three faces, each with one job: Plex Sans for interface, Plex Mono for
-     anything read as a value (clocks, counts, refs), Spectral for prose the
-     summariser wrote. Every one has a system fallback, because a LAN dashboard
+<!-- The landing page's three faces, now the tool's as well. Fraunces sets the
+     headings, Newsreader carries both the summariser's prose and the interface
+     text, and Spline Sans Mono takes anything read as a value - clocks, counts,
+     refs, and every button. The gate used to load these separately to stay in
+     the landing page's world; the whole dashboard lives there now, so they load
+     once, up front. Every one has a system fallback, because a LAN dashboard
      pointed at a Raspberry Pi is opened from machines with no internet. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1;1,9..144,300..700,0..100,0..1&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- Theme before paint. Reading it here rather than in the app script keeps a
+     dark-theme reader from being flashed a page of white paper while the rest
+     of the file parses. "auto" is stored as no attribute at all, so the media
+     query in the stylesheet is what answers. -->
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('quill-theme');
+      if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
 <style>
-  /* Quill's palette, taken from the design: brass on near-black, sage for
-     what worked, red for what is live or broken, amber for what is waiting.
-     Warm greys throughout — the ground leans blue and the text leans warm,
-     which is what stops a dark interface reading as a terminal. */
-  :root {
-    --ink:      #0E1014;  /* the page */
-    --panel:    #12151A;  /* rail and top bar */
-    --column:   #111419;  /* the session column and the facts rail */
-    --card:     #15181E;  /* cards on the page */
-    --raise:    #1B1F26;  /* selected rows, secondary buttons */
-    --sunk:     #0D1017;  /* inputs and read-only values */
+  /* -- The palette ------------------------------------------------------
+     One system, two grounds. The landing page and the tool used to be two
+     products wearing different clothes - pale grey-green stock and correction
+     ink out front, brass on near-black once you were through the door. The
+     ink is the brand, so the ink is what carries over: ultramarine for
+     anything you can act on, and the highlighter for anything Quill kept.
 
-    --line:     #232730;  /* the structural borders */
-    --line-2:   #262A33;  /* input borders, outer frame */
-    --rule:     #1D2027;  /* row rules inside a table */
-    --edge:     #3A3529;  /* button borders — warm, not grey */
-    --dash:     #2C313B;  /* dashed placeholder outlines */
+     Both themes define the same names, so every rule further down this file
+     is written once and gets light and dark for free. The names describe the
+     job, not the colour - "--ink" is the page, whichever way round the page
+     happens to be.
 
-    --text:     #E9E5DC;
-    --text-2:   #C6C1B6;
-    --dim:      #8A8578;
+     Dark is the default because this is a tool you open at the table with the
+     lights down. Light is the landing page's own stock, for reading a recap in
+     daylight. "auto" follows the machine.  */
 
-    --brass:    #C9A227;
-    --brass-lit:#E5C86B;
-    --brass-br: #6B5A22;  /* pill border at brass */
-    --brass-bg: #241E12;  /* the one brass-tinted fill */
-    --sage:     #7BA05B;
-    --sage-lit: #A7C48F;
-    --sage-br:  #3C4A33;
+  :root, :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --ink:      #12151B;  /* the page */
+    --panel:    #171B22;  /* rail and top bar */
+    --column:   #151920;  /* the session column and the facts rail */
+    --card:     #191E26;  /* cards on the page */
+    --raise:    #232935;  /* selected rows, secondary buttons */
+    --sunk:     #0F1218;  /* inputs and read-only values */
+
+    --line:     #262C38;  /* the structural borders */
+    --line-2:   #2A3140;  /* input borders, outer frame */
+    --rule:     #212734;  /* row rules inside a table */
+    --edge:     #3A4356;  /* button borders */
+    --dash:     #303848;  /* dashed placeholder outlines */
+
+    --text:     #E8E6DF;
+    --text-2:   #C2C0B8;
+    --dim:      #8A8B86;
+
+    /* The one accent: the pen. Ultramarine is unreadable on a dark ground, so
+       dark gets the same hue lifted to a legible tint rather than a different
+       colour. */
+    --pen:      #8497F2;
+    --pen-lit:  #B3BEFA;
+    --pen-br:   #3B4680;
+    --pen-bg:   #191D33;
+    --on-pen:   #10131C;  /* text on a filled pen button */
+
+    /* The highlighter, the same in both themes - it is the one thing on the
+       page that is meant to look like it was added by hand. */
+    --mark:     #E1EC97;
+    --mark-ink: #2A2E14;
+    --mark-cap: #E1EC97;
+
+    --sage:     #7FA765;
+    --sage-lit: #A9C692;
+    --sage-br:  #3E4E35;
     --red:      #D0453C;
     --red-lit:  #E4A9A4;
     --red-br:   #6B322D;
     --red-bg:   #2A1817;
     --amber:    #D99A2B;
 
-    --sans:  'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --mono:  'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
-    --serif: 'Spectral', Georgia, 'Times New Roman', serif;
+    --shadow:   #0006;
+    --shadow-hard: #000A;
+    --scrim:    #08090CCC;
+    --hover:    #1C222C;  /* the wash under a hovered row */
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --ink:      #E6E8E3;
+    --panel:    #DEE2DA;
+    --column:   #E1E4DE;
+    --card:     #EFF1EC;
+    --raise:    #D2D8CC;
+    --sunk:     #DBDFD6;
+
+    --line:     #C9CFC3;
+    --line-2:   #BCC3B5;
+    --rule:     #D2D7CB;
+    --edge:     #AEB6A6;
+    --dash:     #B8BFB0;
+
+    --text:     #171C22;
+    --text-2:   #39434A;
+    --dim:      #5C665E;
+
+    --pen:      #2434A8;
+    --pen-lit:  #1B2A92;
+    --pen-br:   #A3ABDC;
+    --pen-bg:   #DFE3F4;
+    --on-pen:   #F2F3EF;
+
+    --mark:     #E1EC97;
+    --mark-ink: #3A4014;
+    --mark-cap: #5A6320;
+
+    --sage:     #4C6B37;
+    --sage-lit: #3B5729;
+    --sage-br:  #A9BE99;
+    --red:      #A8352D;
+    --red-lit:  #8E2B24;
+    --red-br:   #D8ADA9;
+    --red-bg:   #F4E2E0;
+    --amber:    #8A5E12;
+
+    --shadow:   #17221C1A;
+    --shadow-hard: #17221C2E;
+    --scrim:    #4A5148CC;
+    --hover:    #DCE0D6;
+    --alarm-bg: #F6E4E1;
+    --alarm-br: #D8ADA9;
+    --select:   #C9D0EE;
+  }
+
+  /* No stored choice: follow the machine. Only the light half is written here
+     - bare :root above is already the dark set - so a light-preferring machine
+     is the one that gets overridden. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+
+      --ink:      #E6E8E3;
+      --panel:    #DEE2DA;
+      --column:   #E1E4DE;
+      --card:     #EFF1EC;
+      --raise:    #D2D8CC;
+      --sunk:     #DBDFD6;
+
+      --line:     #C9CFC3;
+      --line-2:   #BCC3B5;
+      --rule:     #D2D7CB;
+      --edge:     #AEB6A6;
+      --dash:     #B8BFB0;
+
+      --text:     #171C22;
+      --text-2:   #39434A;
+      --dim:      #5C665E;
+
+      --pen:      #2434A8;
+      --pen-lit:  #1B2A92;
+      --pen-br:   #A3ABDC;
+      --pen-bg:   #DFE3F4;
+      --on-pen:   #F2F3EF;
+
+      --mark:     #E1EC97;
+      --mark-ink: #3A4014;
+      --mark-cap: #5A6320;
+
+      --sage:     #4C6B37;
+      --sage-lit: #3B5729;
+      --sage-br:  #A9BE99;
+      --red:      #A8352D;
+      --red-lit:  #8E2B24;
+      --red-br:   #D8ADA9;
+      --red-bg:   #F4E2E0;
+      --amber:    #8A5E12;
+
+      --shadow:   #17221C1A;
+      --shadow-hard: #17221C2E;
+      --scrim:    #4A5148CC;
+      --hover:    #DCE0D6;
+      --alarm-bg: #F6E4E1;
+      --alarm-br: #D8ADA9;
+      --select:   #C9D0EE;
+    }
+  }
+
+  /* The old names, kept pointing at the new ones. Brass was the accent for the
+     whole of this file's first life and it is spelled two hundred times below;
+     aliasing costs nothing and means the rename is not a rewrite. New rules
+     should say --pen. */
+  :root {
+    --brass:     var(--pen);
+    --brass-lit: var(--pen-lit);
+    --brass-br:  var(--pen-br);
+    --brass-bg:  var(--pen-bg);
+
+    --display: 'Fraunces', 'Hoefler Text', Georgia, serif;
+    --sans:  'Newsreader', Georgia, 'Times New Roman', serif;
+    --mono:  'Spline Sans Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    --serif: 'Newsreader', Georgia, 'Times New Roman', serif;
   }
 
   * { box-sizing: border-box; }
+
+  /* Scrollbars, in the page's own colours. Four columns can be scrolling at
+     once here — the campaign rail, the picker column, the recap and the facts
+     rail — and the platform default drew four grey trenches through a design
+     that has no other grey in it. Thin, round, and only as dark as a hairline
+     until the pointer is on them. The track stays transparent so a column that
+     can scroll does not announce it while sitting still. */
+  * { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line-2);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--edge); background-clip: content-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--ink); color: var(--text);
@@ -64,7 +241,7 @@
   button, input, select, textarea { font: inherit; color: inherit; }
   :focus { outline: none; }
   :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; border-radius: 5px; }
-  ::selection { background: #3a2f10; }
+  ::selection { background: var(--select); }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
 
   /* Shared idioms, named for what they are rather than how they look. */
@@ -96,12 +273,12 @@
          transition: background .13s, border-color .13s, color .13s; }
   .btn:hover:not(:disabled) { border-color: var(--dim); }
   .btn:disabled { opacity: .5; cursor: default; }
-  .btn.go { border-color: var(--brass); background: var(--brass); color: #12151A; font-weight: 600; }
+  .btn.go { border-color: var(--pen); background: var(--pen); color: var(--on-pen); font-weight: 600; }
   .btn.go:hover:not(:disabled) { background: var(--brass-lit); border-color: var(--brass-lit); }
   .btn.ghost { background: transparent; color: var(--dim); }
   .btn.ghost:hover:not(:disabled) { color: var(--text-2); }
   .btn.warn { border-color: var(--brass-br); background: var(--brass-bg); color: var(--brass-lit); }
-  .btn.danger { border-color: var(--red-br); background: var(--red-bg); color: #E8B0AA; }
+  .btn.danger { border-color: var(--red-br); background: var(--red-bg); color: var(--red-lit); }
   .btn.sm { font-size: 12px; padding: 5px 12px; border-radius: 6px; }
   .btn.wide { width: 100%; padding: 8px 16px; }
   .btn.big { font-size: 14px; padding: 10px 20px; border-radius: 8px; }
@@ -110,7 +287,7 @@
   .in { padding: 9px 12px; border-radius: 7px; border: 1px solid var(--line-2);
         background: var(--sunk); color: var(--text); font-size: 14px; width: 100%; }
   .in:focus-visible { border-color: var(--brass); outline: none; }
-  .in::placeholder { color: #6E6A5E; }
+  .in::placeholder { color: var(--dim); }
   .val { font-family: var(--mono); font-size: 13.5px; padding: 8px 14px; border-radius: 7px;
          border: 1px solid var(--line-2); background: var(--sunk); color: var(--text);
          white-space: nowrap; }
@@ -121,21 +298,16 @@
   .seg button { font-size: 12.5px; padding: 6px 14px; border-radius: 5px; border: 0;
                 background: transparent; color: var(--dim); cursor: pointer; }
   .seg button:hover:not(.on):not(:disabled) { color: var(--text-2); }
-  .seg button.on { background: var(--brass); color: #12151A; font-weight: 600; }
+  .seg button.on { background: var(--pen); color: var(--on-pen); font-weight: 600; }
   .seg button:disabled { cursor: default; }
 
   /* --- shell --------------------------------------------------------- */
 
+  /* No side rail. The campaigns are a page of their own now, so the only
+     permanent chrome is the top bar — which means the recap gets the whole
+     width of the window rather than whatever three picking columns left it. */
   .app { display: flex; min-height: 100vh; }
 
-  .rail { width: 268px; flex: 0 0 268px; background: var(--panel);
-          border-right: 1px solid var(--line); display: flex; flex-direction: column;
-          position: sticky; top: 0; height: 100vh; }
-  .brand { padding: 26px 24px 22px; border-bottom: 1px solid var(--line);
-           display: flex; align-items: center; gap: 12px; }
-  .brand .name { font-family: var(--serif); font-size: 21px; line-height: 1.15; letter-spacing: .3px; }
-  .brand .sub { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 4px; }
-  .rail > .cap { padding: 22px 24px 10px; }
   .camp.newcamp { border-style: dashed; opacity: .78; }
   .camp.newcamp:hover { opacity: 1; }
   .camp.newcamp .nm { color: var(--brass); }
@@ -146,17 +318,11 @@
   .card.danger { border-color: var(--red); }
   .btn.danger { border-color: var(--red); color: var(--red-lit); }
   .btn.danger:hover { background: var(--red); color: var(--ink); }
-  .rail-list { padding: 0 12px; display: flex; flex-direction: column; gap: 6px;
-               flex: 0 1 auto; min-height: 0; overflow-y: auto; }
-  .rail-nav { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px;
-              border-top: 1px solid var(--line); margin-top: 14px; }
-  .rail-foot { margin-top: auto; padding: 20px 24px; border-top: 1px solid var(--line);
-               font-family: var(--mono); font-size: 11px; color: var(--dim); line-height: 1.7; }
 
   .camp { display: block; width: 100%; text-align: left; padding: 14px; border: 0;
           border-left: 2px solid transparent; border-radius: 8px; background: transparent;
           cursor: pointer; transition: background .13s; }
-  .camp:hover { background: #171B21; }
+  .camp:hover { background: var(--hover); }
   .camp.on { background: var(--raise); border-left-color: var(--brass); }
   .camp .l1 { display: flex; align-items: center; gap: 10px; }
   .camp .nm { font-size: 15px; color: var(--text-2); }
@@ -164,26 +330,41 @@
   .camp .meta { font-family: var(--mono); font-size: 11px; color: var(--dim);
                 margin-top: 7px; line-height: 1.6; }
   .badge { margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
-           background: var(--brass); color: #12151A; padding: 1px 6px; border-radius: 999px; }
+           background: var(--pen); color: var(--on-pen); padding: 1px 6px; border-radius: 999px; }
 
-  .navlink { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-             padding: 9px 14px; border: 0; border-left: 2px solid transparent;
-             border-radius: 8px; background: transparent; color: var(--dim);
-             font-size: 14px; cursor: pointer; }
-  .navlink:hover { color: var(--text-2); }
-  .navlink.on { background: var(--raise); border-left-color: var(--brass); color: var(--text); }
-  .navlink .n { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  /* The screens that are not a campaign, and who you are. Marks rather than
+     words because they live in the top bar next to the theme switch, and five
+     more words there would crowd out the health line. */
+  .navmark { position: relative; width: 36px; height: 31px; flex: 0 0 auto;
+             display: flex; align-items: center; justify-content: center;
+             border: 0; border-radius: 9px; background: transparent;
+             color: var(--dim); cursor: pointer;
+             transition: color .13s, background .13s; }
+  .navmark:hover { color: var(--text); background: var(--hover); }
+  .navmark.on { color: var(--pen); background: var(--raise); }
+  .navmark .n {
+    position: absolute; top: 0; right: 1px;
+    font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+  }
+  .navmark.on .n { color: var(--pen); }
+  .navmark .who {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 1px solid var(--edge); display: flex; align-items: center;
+    justify-content: center; font-family: var(--mono); font-size: 11px;
+    font-weight: 600; text-transform: uppercase; color: var(--text-2);
+  }
+  .navmark:hover .who, .navmark.on .who { border-color: var(--pen); color: var(--pen); }
 
   .placeholder { border: 1px dashed var(--dash); border-radius: 8px;
                  padding: 20px 16px; text-align: center; margin: 0 12px; }
-
   .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
   .top { height: 76px; flex: 0 0 76px; border-bottom: 1px solid var(--line);
-         display: flex; align-items: center; gap: 28px; padding: 0 32px;
+         display: flex; align-items: center; gap: 14px; padding: 0 22px 0 26px;
          background: var(--panel); position: sticky; top: 0; z-index: 5; }
   .top h2 { font-family: var(--serif); font-size: 22px; font-weight: 400; }
-  .top .health { display: flex; gap: 20px; align-items: center;
+  .top .health { display: flex; gap: 20px; align-items: center; margin-left: 14px;
                  font-family: var(--mono); font-size: 12px; color: var(--dim); }
   .top .health .dot { margin-right: 7px; }
   .top .health .down { color: var(--red-lit); }
@@ -191,12 +372,23 @@
   .top .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
   .crumb { font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
   .crumb-sep { color: var(--edge); }
+  /* The crumb that goes somewhere. A button rather than a span, because it is
+     the way back out of a campaign and the only one on the page. */
+  .crumb-back { border: 0; background: transparent; cursor: pointer;
+                padding: 5px 9px; margin: 0 -9px 0 -2px; border-radius: 7px;
+                transition: color .13s, background .13s; }
+  .crumb-back:hover { color: var(--text); background: var(--hover); }
+  /* The quill, always first, always home. */
+  .top .mark { flex: 0 0 auto; display: flex; align-items: center;
+               padding: 5px; margin-left: -5px; border: 0; border-radius: 8px;
+               background: transparent; cursor: pointer; transition: background .13s; }
+  .top .mark:hover { background: var(--hover); }
 
   /* --- the degraded banner ------------------------------------------- */
 
-  .banner { background: #1E1519; border-bottom: 1px solid #4A2B2B;
+  .banner { background: var(--alarm-bg); border-bottom: 1px solid var(--alarm-br);
             padding: 22px 40px; display: flex; align-items: center; gap: 24px; }
-  .banner .say { font-family: var(--serif); font-size: 21px; }
+  .banner .say { font-family: var(--display); font-size: 21px; color: var(--text); }
   .banner .why { font-size: 13.5px; color: var(--text-2); margin-top: 6px; line-height: 1.55; }
   .banner-more { padding: 26px 40px; border-bottom: 1px solid var(--line);
                  display: flex; gap: 34px; align-items: flex-start; flex-wrap: wrap; }
@@ -322,6 +514,34 @@
   .grid .tr:last-child { border-bottom: 0; }
   .grid .r { text-align: right; }
   .roster .hd, .roster .tr { grid-template-columns: 1.4fr 1.4fr 90px 150px 190px; }
+  /* Nobody left to hear from: the consent column has nothing to say that the
+     heading has not, so the table closes up around it. */
+  .roster.settled .hd, .roster.settled .tr { grid-template-columns: 1.4fr 1.4fr 90px 150px; }
+
+  /* Two boxes and the arrow between them: the shape of the thing being
+     written, which is a substitution. Used where the grid would otherwise be
+     drawing headings over an empty table. */
+  /* The roster and the correction ledger are real tables: five columns with
+     two of them a fixed width. On a phone they cannot fit and must not widen
+     the page, so each scrolls inside itself. Nothing else on the page moves
+     sideways. */
+  @media (max-width: 820px) {
+    .grid { overflow-x: auto; }
+    .grid .hd, .grid .tr { min-width: 500px; }
+  }
+
+  .pair { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+  .pair label {
+    display: flex; flex-direction: column; gap: 7px;
+    flex: 1 1 200px; min-width: 0;
+    font-size: 12.5px; color: var(--dim);
+  }
+  .pair .in { font-size: 15px; }
+  .pair-arrow { color: var(--pen); font-size: 17px; padding-bottom: 11px; }
+  .pair .btn { flex: 0 0 auto; }
+  @media (max-width: 720px) {
+    .pair-arrow { display: none; }
+  }
   .corr .hd, .corr .tr { grid-template-columns: 1fr 1fr 130px 100px; }
   .access .hd, .access .tr { grid-template-columns: 1.5fr 92px 1.5fr 150px 104px; }
   .set-row { display: flex; justify-content: space-between; align-items: center; gap: 20px;
@@ -364,11 +584,11 @@
 
   /* --- the import dialog ---------------------------------------------- */
 
-  .backdrop { position: fixed; inset: 0; background: #08090CCC; z-index: 20;
+  .backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 20;
               display: grid; place-items: center; padding: 24px; }
   .dialog { width: min(720px, 100%); max-height: 90vh; overflow-y: auto;
             background: var(--card); border: 1px solid var(--edge); border-radius: 14px;
-            box-shadow: 0 40px 90px #000A; padding: 34px 38px; }
+            box-shadow: 0 40px 90px var(--shadow-hard); padding: 34px 38px; }
   .dialog h1 { font-family: var(--serif); font-size: 31px; font-weight: 500;
                margin: 12px 0 0; letter-spacing: -.3px; }
   .dialog .foot { display: flex; align-items: center; gap: 10px; margin-top: 28px;
@@ -387,19 +607,21 @@
   .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
            max-width: 680px; padding: 12px 18px; border-radius: 9px;
            background: var(--card); border: 1px solid var(--edge);
-           box-shadow: 0 10px 34px #000A; font-size: 13.5px; z-index: 40;
+           box-shadow: 0 10px 34px var(--shadow-hard); font-size: 13.5px; z-index: 40;
            opacity: 0; pointer-events: none; transition: opacity .2s; }
   .toast.show { opacity: 1; }
   .toast.good { border-color: var(--sage-br); }
   .toast.bad { border-color: var(--red-br); color: var(--red-lit); }
   code { font-family: var(--mono); font-size: 12.5px; background: var(--raise);
          border-radius: 4px; padding: 1px 6px; }
-  body.stale .main, body.stale .rail-list { opacity: .55; transition: opacity .3s; }
+  body.stale .main { opacity: .55; transition: opacity .3s; }
 
   /* Narrow screens: the columns stack rather than shrink to unreadable.
      A phone is a real way this gets opened — to approve a summary from the
      sofa — and the session list is the part that matters there. */
-  @media (max-width: 1500px) { .facts.optional { display: none; } }
+  /* Superseded below — the width this rail needs depends on whether the
+     campaign leaf is turned away. Left here so the rule it replaces is
+     obvious to anyone reading top to bottom. */
   @media (max-width: 1180px) {
     .facts { display: none; }
     .split { flex-direction: column; }
@@ -413,9 +635,6 @@
   }
   @media (max-width: 820px) {
     .app { flex-direction: column; }
-    .rail { width: 100%; flex: none; height: auto; position: static;
-            border-right: 0; border-bottom: 1px solid var(--line); }
-    .rail-list { max-height: 190px; }
     .top { height: auto; flex: none; padding: 14px 18px; gap: 14px; flex-wrap: wrap; }
     .banner, .banner-more { padding: 18px 20px; }
     .lines, .tr-bar { padding-inline: 18px; }
@@ -423,6 +642,383 @@
     .line .said { grid-column: 1 / -1; }
   }
 
+  /* ======================================================================
+     The campaigns page
+     ======================================================================
+     The front door. Every campaign this viewer sits at, on a page of its own,
+     and picking one carries you into it.
+
+     What this replaces: a 268px rail of campaign rows that slid off to the
+     left the moment you picked one. It went away on its own — the picker
+     disappeared at the exact moment you had proved you were using it — and
+     because the page auto-opened a campaign at boot, most visits never saw
+     the list at all. Squeezing the list into a narrow column was the wrong
+     answer twice over: a list you consult between games does not want to live
+     beside the recap you read during them. So it moved out and got a page.
+
+     Each campaign is an entry in a ledger rather than a card in a grid. The
+     tally at the head of an entry is the one real invention here: one stroke
+     per session, so a campaign's weight is legible before you have read a
+     word of it — twenty-two strokes is a chronicle, one stroke is a one-shot.
+     Solid strokes are nights already written up, pen-coloured strokes are the
+     ones waiting on you, hollow ones are still with the transcriber. It is
+     the count, the progress bar and the to-do list in the same mark, and it
+     is what a scribe keeping a ledger would actually draw.  */
+
+  .index { max-width: 1080px; margin: 0 auto; padding: 54px 40px 80px; }
+
+  .index-head { margin-bottom: 12px; }
+  .index-head h1 {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 38px; font-weight: 400; line-height: 1.14; letter-spacing: -.015em;
+    margin-top: 15px; max-width: 30ch;
+  }
+  /* The remark is an aside, so it is said in the quieter colour and on its own
+     line. The count is the fact; the rest is the page muttering. Breaking it
+     deliberately rather than letting the measure decide means the fact is
+     always the first thing read, whatever length of remark follows it. */
+  .index-head h1 .aside { display: block; color: var(--dim); }
+  .index-now {
+    margin-top: 16px; display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: .03em;
+    color: var(--text-2);
+  }
+
+  .chrons { margin-top: 30px; border-top: 1px solid var(--rule); }
+
+  /* One entry. A button rather than a link because there is no URL behind it;
+     the whole band is the target, so there is no small thing to hit. */
+  .chron {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: transparent; border: 0; border-bottom: 1px solid var(--rule);
+    padding: 26px 20px 28px; margin: 0;
+    transition: background .15s;
+  }
+  .chron:hover { background: var(--hover); }
+  .chron-top {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 9px 18px;
+    min-height: 15px;
+  }
+  .chron-name {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 30px; font-weight: 400; line-height: 1.15; letter-spacing: -.012em;
+    color: var(--text); margin-top: 13px;
+    transition: transform .18s cubic-bezier(.22,.72,.2,1);
+  }
+  /* The entry leans toward the door it opens. Cheaper than an arrow, and it
+     does not need a legend. */
+  .chron:hover .chron-name { transform: translateX(7px); }
+
+  .chron-lines {
+    display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 11px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em;
+    color: var(--dim);
+  }
+  .chron-lines b { font-weight: 500; color: var(--text-2); }
+  .chron-where { color: var(--dim); }
+
+  /* The tally. Strokes are drawn as flex children rather than a repeating
+     background so each one can carry its own state. */
+  .tally { display: flex; align-items: center; gap: 9px; height: 13px; }
+  /* Grouped in fives, as a tally is. Ungrouped, twenty-two strokes is a
+     barcode — a texture rather than a number. Grouped, it can be counted at a
+     glance and it looks like something somebody kept by hand. */
+  .tally .grp { display: flex; align-items: stretch; gap: 3px; height: 100%; }
+  .tally i {
+    display: block; width: 2px; border-radius: 1px;
+    background: var(--line-2);
+  }
+  /* The bulk of a tally is nights already written up, so they are the calm
+     part; two strokes of pen have to win against twenty of them, and at 2px
+     colour alone does not do it. The waiting strokes are wider as well. */
+  .tally i.done { background: var(--dim); }
+  .tally i.wait { width: 3px; background: var(--pen); }
+  .tally .rest {
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+    margin-left: 5px; align-self: center;
+  }
+
+  /* What is true about this table right now, said once, at the top of the
+     entry. Only ever one of them: a campaign being recorded is not also
+     waiting on you, and neither is worth saying twice. */
+  .chron-state {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: .13em; text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .chron-state.live { color: var(--red-lit); }
+  .chron-state.wait { color: var(--pen); }
+  .chron-when { margin-left: auto; font-family: var(--mono); font-size: 11px;
+                color: var(--dim); letter-spacing: .03em; }
+
+  /* The doors that are only there sometimes: starting one, and the ones you
+     deleted or asked to have back. Under the ledger, not in it. */
+  .index-more { margin-top: 40px; display: grid; gap: 14px;
+                grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); }
+  .index-more .camp { border: 1px solid var(--line); }
+
+  /* Every change of screen: the page comes up from under rather than cutting
+     in. One quiet move, the same in both directions — an earlier draft flew
+     the campaign's name from the ledger entry up into the header, which was a
+     great deal of choreography to spend on a click somebody makes forty times
+     a week. */
+  @keyframes arrive { from { opacity: 0; transform: translateY(10px); } }
+  .arriving { animation: arrive .34s cubic-bezier(.22,.72,.2,1); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chron-name { transition: none; }
+    .arriving { animation-duration: .01ms; }
+  }
+
+  @media (max-width: 820px) {
+    .index { padding: 30px 20px 60px; }
+    .index-head h1 { font-size: 28px; }
+    .chron { padding: 20px 4px 22px; }
+    .chron-name { font-size: 24px; }
+    /* Three things do not fit across a phone. The date drops to its own line
+       so the tally and the state can keep theirs. */
+    .chron-when { margin-left: 0; width: 100%; }
+    .chron-state { white-space: nowrap; }
+  }
+
+  /* ----------------------------------------------------------------------
+     The account panel, hung off the mark at the end of the top bar. The one
+     thing from the old rail's foot that is neither a screen nor a campaign,
+     so it is neither a page nor a row.  */
+  .sheet {
+    position: fixed; top: 68px; right: 16px; width: 280px;
+    background: var(--panel); border: 1px solid var(--line-2);
+    border-radius: 12px; box-shadow: 0 18px 48px var(--shadow-hard);
+    padding: 16px 12px 14px; z-index: 40;
+    max-height: calc(100vh - 84px); overflow-y: auto;
+    animation: sheet-in .16s cubic-bezier(.22,.72,.2,1);
+  }
+  @keyframes sheet-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .sheet > .cap { padding: 0 14px 10px; }
+  .sheet-foot {
+    margin-top: 12px; padding: 13px 14px 2px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--dim); line-height: 1.7;
+  }
+  .sheet-scrim { position: fixed; inset: 0; z-index: 30; }
+  @media (prefers-reduced-motion: reduce) { .sheet { animation-duration: .01ms; } }
+  /* ======================================================================
+     Room to read
+     ======================================================================
+     Everything below is spacing. The panels were tuned against a fixed
+     1920x1080 mockup and had been squeezed ever since; these are the numbers
+     for a real window with no side rail taking a bite out of it.  */
+
+  body { font: 400 15.5px/1.55 var(--sans); }
+
+  /* Fraunces sets every heading. SOFT 0 / WONK 1 is the landing page's
+     setting — the wonky leg on the g and the flatter terminals are what make
+     it read as lettering rather than as a system serif. */
+  .display, .top h2, .card h4, .dialog h1,
+  .scene h4, .banner .say, .empty .say, .keep p {
+    font-family: var(--display);
+    font-variation-settings: 'SOFT' 0, 'WONK' 1;
+  }
+  .display { font-size: 40px; font-weight: 400; letter-spacing: -.015em; line-height: 1.06; }
+  .display.sm { font-size: 29px; }
+  .top h2 { font-size: 23px; }
+
+  /* Buttons and labels go to the mono, as they do on the landing page. It is
+     the face the whole product uses for anything mechanical. */
+  .btn, .seg button, .tab { font-family: var(--mono); }
+  .btn { font-size: 12.5px; letter-spacing: .01em; padding: 8px 15px; }
+  .btn.sm { font-size: 11.5px; padding: 6px 12px; }
+  .btn.big { font-size: 13px; padding: 11px 21px; }
+  .tab { font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase; padding-bottom: 14px; }
+  .tab .n { margin-left: 7px; }
+
+  /* The reading column. Wider gutters, and a measure that stops short of the
+     facts rail instead of running under it. */
+  .pane-main { padding: 42px 56px 76px; }
+  .pane-wide { max-width: 1020px; }
+  .lede { font-size: 20px; line-height: 1.62; margin-top: 22px; max-width: 62ch; }
+  .say-2 { font-size: 16px; line-height: 1.68; max-width: 66ch; }
+
+  /* Scenes were a stack of paragraphs 18px apart with a hairline down the
+     side, which is why the recap read as one block. They are beats of an
+     evening, so they get the space of beats. */
+  .scene { margin-top: 30px; padding-left: 22px; border-left-color: var(--line-2); }
+  .scene:first-child { margin-top: 14px; }
+  .scene h4 { font-size: 18px; font-weight: 500; margin-bottom: 10px; letter-spacing: -.005em; }
+  .scene p { font-size: 15.5px; line-height: 1.72; }
+  .numbered { gap: 13px; max-width: 66ch; }
+  .numbered div { font-size: 15.5px; line-height: 1.68; gap: 14px; }
+  .cap { letter-spacing: .16em; }
+
+  /* The session column: cards with air between them, and a heading that is
+     not jammed against the first one. */
+  /* flex-basis alone was not enough: a flex item will not go below its
+     min-content width, and four nowrap pills are wider than the column. The
+     column keeps its width and the picker fits inside it instead. */
+  .sessions { flex: 0 0 396px; min-width: 0; }
+  .sessions .head { padding: 24px 22px 14px; align-items: baseline; gap: 12px; }
+  .sess-list { padding: 0 14px 16px; gap: 7px; }
+  .sess { padding: 15px 15px 16px; border-radius: 10px; }
+  .sess:hover { background: var(--hover); }
+  .sess .say { margin-top: 9px; line-height: 1.62; }
+  .camp:hover { background: var(--hover); }
+  .steps > div.now { background: var(--raise); }
+  .line:nth-child(even) { background: var(--column); }
+
+  .facts { flex: 0 0 320px; padding: 42px 30px 56px; gap: 30px; }
+
+  /* The highlighter, spent where the landing page spends it: on the line
+     somebody will want to read out loud. */
+  .keep { border-left-color: var(--mark); }
+  .keep .cap { color: var(--mark-cap); }
+  .keep p { color: var(--text); font-size: 15px; line-height: 1.62; }
+  .line mark { color: var(--text); background: var(--mark); border-bottom: 0;
+               padding: 0 3px; border-radius: 2px; }
+  :root[data-theme="dark"] .line mark { color: var(--mark-ink); }
+
+  /* The facts rail costs 320px, and below 1300px the recap's own prose is the
+     thing worth keeping — everything in the rail is also in the notes body.
+     One threshold rather than the two this used to need: the second existed
+     because the campaign rail could be open and cost another 268px, and there
+     is no campaign rail any more. */
+  @media (max-width: 1300px) { .facts.optional { display: none; } }
+
+  .theme { margin-left: 4px; }
+  .theme button { padding: 5px 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+
+  /* ======================================================================
+     Who and where
+     ======================================================================
+     The summariser already names every NPC and every place, once per session,
+     and then that naming is stranded in the session it came from. Read down
+     the campaign instead of across it and the same names line up into an
+     entry: who they are, the night they walked on, and what has been said
+     about them since.  */
+
+  .entries { display: flex; flex-direction: column; gap: 2px; margin-top: 26px; }
+  .entry {
+    display: grid; grid-template-columns: 186px minmax(0, 1fr);
+    gap: 28px; padding: 24px 0; border-bottom: 1px solid var(--rule);
+  }
+  .entry:last-child { border-bottom: 0; }
+  .entry-who { min-width: 0; }
+  .entry-name {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 19px; line-height: 1.25; letter-spacing: -.005em;
+  }
+  .entry-first {
+    display: block;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--dim); margin-top: 8px; line-height: 1.7;
+  }
+  .entry-first b { display: block; font-weight: 500; color: var(--pen); margin: 2px 0 4px; }
+  .entry-said { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .entry-said:empty { display: none; }
+  .entry-said .point { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 14px; }
+  .entry-said .point.bare { display: block; }
+  .entry-said .s {
+    font-family: var(--mono); font-size: 11px; color: var(--dim);
+    padding-top: 4px; letter-spacing: .04em;
+  }
+  .entry-said .p { font-size: 15.5px; line-height: 1.66; color: var(--text-2); }
+  .entry-aside {
+    margin-top: 4px; border-left: 2px solid var(--mark); padding: 2px 0 2px 15px;
+    font-size: 14.5px; line-height: 1.6; color: var(--text);
+  }
+  .entry-aside + .entry-aside { margin-top: 10px; }
+
+  /* The column holds two pages in a clipped frame and slides between them,
+     the same gesture the campaign rail uses one level out: choose, and what
+     you chose from leaves to the left while what you chose arrives behind it.
+     The header it leaves is the way back.
+
+     Both pages are absolutely positioned so the one on its way out does not
+     stretch the frame to the height of the one coming in. */
+  .sessions { display: flex; flex-direction: column; }
+
+  .shelf-slider { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  .shelf-page {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    background: var(--column);
+    transition: transform .42s cubic-bezier(.22,.72,.2,1);
+  }
+  .shelf-slider.picking .chooser { transform: translateX(0); }
+  .shelf-slider.picking .list    { transform: translateX(100%); }
+  .shelf-slider.picked  .chooser { transform: translateX(-100%); }
+  .shelf-slider.picked  .list    { transform: translateX(0); }
+  .shelf-slider.picking .list,
+  .shelf-slider.picked  .chooser { pointer-events: none; }
+
+  /* A row of the chooser: Sessions, NPCs, Places, Items. Built like a ledger
+     entry one level in, so picking what to read repeats the shape of picking
+     the campaign. */
+  .shelf-row {
+    display: block; width: 100%; text-align: left;
+    padding: 15px 15px 16px; border: 0; border-left: 2px solid transparent;
+    border-radius: 10px; background: transparent; cursor: pointer;
+    transition: background .13s;
+  }
+  .shelf-row:hover { background: var(--hover); }
+  .shelf-row.on { background: var(--raise); border-left-color: var(--pen); }
+  .shelf-row .l1 { display: flex; align-items: baseline; gap: 10px; }
+  .shelf-row .nm { font-size: 15.5px; color: var(--text); }
+  .shelf-row .n {
+    margin-left: auto; font-family: var(--mono); font-size: 11.5px;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+  }
+  .shelf-row .meta {
+    font-family: var(--mono); font-size: 11px; color: var(--dim);
+    margin-top: 7px; letter-spacing: .03em;
+  }
+
+  /* The header of a chosen list, which is also the way out of it. */
+  .shelf-back {
+    display: inline-flex; align-items: baseline; gap: 9px;
+    font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: .14em; text-transform: uppercase;
+    padding: 4px 10px 4px 6px; margin-left: -6px; border-radius: 7px;
+    border: 0; background: transparent; color: var(--text);
+    cursor: pointer; transition: background .13s, color .13s;
+  }
+  .shelf-back:hover { background: var(--hover); }
+  .shelf-back .arw { color: var(--pen); font-size: 13px; letter-spacing: 0; }
+  .shelf-back .n { color: var(--dim); letter-spacing: .02em; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .shelf-page { transition-duration: .01ms; }
+  }
+
+    .comp-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .comp-count { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .comp-bar { margin-top: 30px; display: flex; align-items: center; gap: 10px; }
+
+  @media (max-width: 900px) {
+    .entry { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  }
+
+  @media (max-width: 1180px) {
+    .pane-main { padding: 30px 26px 48px; }
+    .sessions { flex: none; }
+  }
+  @media (max-width: 820px) {
+    /* The top bar carries two pause buttons and the theme switch. At 430px
+       that is wider than the phone, and .right pinning itself to the end with
+       margin-left:auto meant it overflowed rather than wrapped. */
+    .top .right { margin-left: 0; flex-wrap: wrap; }
+    .theme { margin-left: 0; }
+
+    /* Five tabs do not fit a phone. The strip scrolls inside itself rather
+       than widening the page — nothing else on the page scrolls sideways. */
+    .tabs { overflow-x: auto; gap: 18px; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { white-space: nowrap; flex: 0 0 auto; }
+
+    .sheet { top: 60px; right: 12px; left: 12px; width: auto;
+             max-height: calc(100vh - 76px); }
+  }
   /* ======================================================================
      The gate — the sign-in screen, in the landing page's world.
      ======================================================================
@@ -438,7 +1034,7 @@
      The typefaces load on demand, from loadGateFonts(). Most visits to this
      page never see this screen and should not pay for three extra families.  */
   body.gate-open { background: #E6E8E3; }
-  body.gate-open .rail,
+  body.gate-open .sheet,
   body.gate-open .top,
   body.gate-open #banner { display: none; }
   body.gate-open .app { display: block; min-height: 100vh; }
@@ -484,26 +1080,7 @@
   }
   .gate-say b { color: var(--ink); font-weight: 600; }
 
-  .gate form { margin-top: 26px; }
-  .gate-in {
-    width: 100%;
-    background: var(--paper-2);
-    border: 1px solid var(--edge);
-    border-radius: 5px;
-    color: var(--ink);
-    font-family: var(--g-body);
-    font-size: 17px;
-    padding: 13px 14px;
-  }
-  .gate-in::placeholder { color: var(--ink-soft); opacity: .7; }
-  .gate-in:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; border-color: var(--pen); }
-  .gate-in.code {
-    font-family: var(--g-mono);
-    font-size: 27px; letter-spacing: .4em; text-indent: .4em;
-    text-align: center; padding: 15px 14px;
-  }
-
-  .gate-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .gate-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
   .gate-btn {
     font-family: var(--g-mono);
     font-size: 13px; letter-spacing: .02em;
@@ -521,6 +1098,18 @@
     padding-inline: 0; text-decoration: underline; text-underline-offset: 3px;
   }
   .gate-btn.plain:hover { background: transparent; color: var(--pen); }
+
+  /* The one button on the page, and the whole of signing in.
+     Discord's own blurple rather than the ink this page uses everywhere else,
+     because it is the one control here that hands you to somebody else: the
+     colour is the promise about where the next screen comes from. */
+  .gate-btn.discord {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: #5865F2; border-color: #5865F2; color: #fff;
+    text-decoration: none; font-size: 13.5px; padding: 13px 24px;
+  }
+  .gate-btn.discord:hover { background: #4752C4; border-color: #4752C4; }
+  .gate-btn.discord svg { flex: none; }
   .gate :focus-visible { outline: 2px solid var(--pen); outline-offset: 3px; border-radius: 3px; }
 
   .gate-msg {
@@ -551,23 +1140,8 @@
 <body>
 
 <div class="app">
-  <nav class="rail">
-    <div class="brand">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z" stroke="#C9A227" stroke-width="1.3" stroke-linejoin="round"/>
-        <path d="M6.2 18.3c2.9-4.1 6.8-7.1 11.6-9" stroke="#C9A227" stroke-width="1" opacity=".5"/>
-        <path d="M5.1 19.6 2.6 22.2" stroke="#C9A227" stroke-width="1.4" stroke-linecap="round"/>
-      </svg>
-      <div>
-        <div class="name">Quill</div>
-        <div class="sub">the scribe at your table</div>
-      </div>
-    </div>
-    <div class="cap">Campaigns</div>
-    <div id="rail-list"></div>
-    <div class="rail-nav" id="rail-nav"></div>
-    <div class="rail-foot" id="rail-foot">connecting…</div>
-  </nav>
+  <!-- The account, hung off the mark at the end of the top bar. -->
+  <div id="sheet"></div>
 
   <main class="main">
     <header class="top" id="top"></header>
@@ -596,10 +1170,13 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':
 // the poll every few seconds, so state kept in the markup would be thrown away
 // mid-click.
 const view = {
-  screen: 'campaign',   // campaign | transcript | servers | access
+  screen: 'campaigns',  // campaigns | campaign | transcript | servers | models | access
   signingIn: false,     // asked for the sign-in card while it was optional
   campaignId: null,
-  tab: 'notes',         // notes | table | corrections | settings
+  tab: 'notes',         // notes | table | corrections | compendium | settings
+  shelf: 'sessions',    // what the middle column lists: sessions | npcs | places | items
+  shelfPicking: true,   // the column showing the four rather than one of them
+  entry: null,          // the chosen npc/place/item, as "<shelf>:<key>"
   meetingId: null,
   editing: null,        // the user id whose character name is being typed
   importing: false,
@@ -608,6 +1185,7 @@ const view = {
   askingRestore: null,   // { id, name } of a deleted campaign being asked about
   reviewing: null,       // the id of a restore request being read
   diagnosing: false,    // the degraded banner's detail is open
+  sheet: null,          // the account panel, hung off the top bar: account
   search: '',
   speaker: null,        // transcript filter, a user id
 };
@@ -621,6 +1199,10 @@ const closeDialogs = () => {
   view.deleting = false;
   view.askingRestore = null;
   view.reviewing = null;
+  // A sheet is a dialog too as far as "only one thing is open" goes: the
+  // campaigns sheet opens the new-campaign form, and leaving the sheet up
+  // behind it would put a second scrim over the first one's buttons.
+  view.sheet = null;
 };
 
 let me = null;          // last /me — who the bot thinks is looking
@@ -636,8 +1218,10 @@ let lastSeen = null;
 // and different statement that nobody matched.
 const people = { query: '', results: null, error: '', busy: false };
 
-// The sign-in card's own state: which of the two steps, and what it last said.
-const login = { stage: 'name', name: '', message: '', failed: false, busy: false };
+// The sign-in card's own state, which is now only whatever went wrong last
+// time. There are no steps left to be on: the card is a sentence and a button,
+// and everything between pressing it and coming back happens on Discord.
+const login = { message: '', failed: false };
 
 const PROVIDERS = { gemini: 'Gemini', anthropic: 'Claude' };
 const providerName = (p) => PROVIDERS[p] || p;
@@ -774,58 +1358,208 @@ function normalise(s) {
 }
 
 // ==========================================================================
-// The rail
+// The theme
+// ==========================================================================
+//
+// Three states, not two. "auto" is the absence of a stored choice, so a person
+// who never touches this follows their machine forever rather than being
+// frozen at whatever it happened to be the first time they opened the page.
+// The <script> in <head> reads the same key before first paint.
+
+const themeMode = () => {
+  try {
+    const t = localStorage.getItem('quill-theme');
+    return t === 'dark' || t === 'light' ? t : 'auto';
+  } catch (e) { return 'auto'; }
+};
+
+function setTheme(mode) {
+  try {
+    if (mode === 'auto') localStorage.removeItem('quill-theme');
+    else localStorage.setItem('quill-theme', mode);
+  } catch (e) {}
+  if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', mode);
+  paint();
+}
+
+const themeSwitch = () => {
+  const now = themeMode();
+  return `<div class="seg theme" role="group" aria-label="Theme">${
+    [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([id, name]) =>
+      `<button type="button" class="${now === id ? 'on' : ''}" data-theme-set="${id}"
+         aria-pressed="${now === id}">${name}</button>`).join('')
+  }</div>`;
+};
+
+// ==========================================================================
+// The campaigns page, and going in
 // ==========================================================================
 
-function renderRail() {
+// What is true about a table right now, and worth acting on. Only ever one
+// thing: a campaign being recorded is not also waiting on you, and a campaign
+// with nothing to say gets no line rather than a line saying nothing.
+//
+// Deliberately not `claimed`. It reads like a live state and is not one — it
+// means the campaign has a DM who runs it, which is a fact about the campaign
+// rather than something happening tonight. The signal an operator actually
+// wants from it is the opposite one, a campaign with nobody running it, and
+// that is a different line than this.
+const campaignState = (c) =>
+  c.recording ? { key: 'live', dot: 'live', say: 'recording now' }
+  : c.awaiting ? { key: 'wait', dot: 'brass', say: `${plural(c.awaiting, 'night')} waiting on you` }
+  : null;
+
+// "played 2 days ago". Days rather than hours, because the unit a campaign is
+// measured in is the night it was played, and "played 14h ago" is a sentence
+// about a server rather than about a game.
+function lastPlayed(iso) {
+  if (!iso) return 'no nights recorded';
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return 'played today';
+  if (days === 1) return 'played yesterday';
+  if (days < 14) return `played ${days} days ago`;
+  if (days < 60) return `played ${Math.round(days / 7)} weeks ago`;
+  return `played ${Math.round(days / 30)} months ago`;
+}
+
+// The tally: one stroke per night. Written up, waiting on you, and still with
+// the transcriber, in that order — so the strokes read left to right as the
+// life of a session, and the pen-coloured ones are always the ones to look at.
+//
+// Capped, because past about forty strokes the row stops being a shape you can
+// take in at a glance and the number is the better answer.
+const TALLY_CAP = 40;
+function tally(c) {
+  const total = c.sessions ?? 0;
+  if (!total) return '';
+  const shown = Math.min(total, TALLY_CAP);
+  const wait = Math.min(c.awaiting ?? 0, shown);
+  const done = Math.max(0, Math.min(c.completed ?? 0, shown - wait));
+
+  const marks = Array.from({ length: shown }, (_, i) =>
+    i < done ? 'done' : i < done + wait ? 'wait' : '');
+
+  const groups = [];
+  for (let i = 0; i < marks.length; i += 5) {
+    groups.push(`<span class="grp">${
+      marks.slice(i, i + 5).map((k) => `<i class="${k}"></i>`).join('')}</span>`);
+  }
+  return `<span class="tally" aria-hidden="true">${groups.join('')}${
+    total > shown ? `<span class="rest">+${total - shown}</span>` : ''}</span>`;
+}
+
+// Small numbers as words. A display face setting "6 campaigns" reads like a
+// receipt; past twelve the word is longer than the thing it counts.
+const WORDS = ['no', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven',
+               'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'];
+const count = (x) => (x < WORDS.length ? WORDS[x] : String(x));
+
+// How many tables somebody sits at, remarked upon. Indexed by that number, so
+// the page gets quietly more concerned about you as the list grows.
+//
+// Dry rather than loud, and none of them repeats the number the sentence has
+// already said. This is the first line on the first screen, read every time
+// anybody opens the dashboard — a joke at that frequency has to be quiet
+// enough to live with, so these are asides in the scribe's voice rather than
+// punchlines, and they are set in the dim colour to read as muttering.
+const REMARKS = [
+  '',                                            // 0 — the first-run screen answers instead
+  'A good place to start.',
+  'Twice the names to keep straight.',
+  'The calendar is doing the hard part.',
+  'Somebody at your table is very patient.',
+  'Quill has stopped asking when you sleep.',
+  'This is less a hobby than a rota.',
+  'One for every night of the week.',
+  'Somewhere, a session zero is weeping.',
+  'The ink budget has become a real concern.',
+  'Quill would like a word.',
+  'Nobody needs this many worlds.',
+  'One for every month, apparently.',
+];
+const remark = (howMany) => REMARKS[howMany] ?? 'Quill has stopped counting and started worrying.';
+
+function campaignsScreen() {
   const camps = status?.campaigns ?? [];
+  const rec = camps.find((c) => c.recording);
+  const waiting = camps.reduce((sum, c) => sum + (c.awaiting || 0), 0);
+  const many = `${count(camps.length)} campaign${camps.length === 1 ? '' : 's'}`;
 
-  $('rail-list').className = camps.length ? 'rail-list' : '';
-  $('rail-list').innerHTML = camps.length
-    ? camps.map((c) => {
-        const bits = [];
-        if (c.sessions) bits.push(`${plural(c.sessions, 'session')} · ${c.hours.toFixed(1)}h`);
-        else bits.push('no sessions yet');
-        if (c.recording) bits.push('recording now');
-        else if (c.awaiting) bits.push(`${c.awaiting} waiting on you`);
-        else if (c.lines) bits.push(`${n(c.lines)} lines · ${plural(c.members, 'player')}`);
-        else bits.push(plural(c.members, 'player'));
+  // What is happening right now, kept out of the headline and given its own
+  // line. It is the one thing on this page somebody might need to act on, and
+  // a sentence that has to end in a joke is a poor place to keep it.
+  const now = rec
+    ? `<span class="dot live"></span>Recording at ${esc(rec.name || rec.channel)} right now.`
+    : waiting
+      ? `<span class="dot brass"></span>${plural(waiting, 'night')} waiting on you.`
+      : '';
 
-        return `<button class="camp${view.campaignId === c.id && view.screen !== 'servers' && view.screen !== 'access' ? ' on' : ''}"
-                  data-campaign="${c.id}" aria-current="${view.campaignId === c.id}">
-          <div class="l1">
-            <span class="dot ${c.recording ? 'live' : c.claimed ? 'warn' : ''}"></span>
-            <span class="nm">${esc(c.name || c.channel || 'unnamed')}</span>
-            ${c.awaiting ? `<span class="badge">${c.awaiting}</span>` : ''}
-          </div>
-          <div class="meta">${bits.join('<br>')}</div>
-        </button>`;
-      }).join('')
-    : `<div class="placeholder">
-         <div style="font-size:13.5px;color:var(--dim);line-height:1.6">No campaigns yet</div>
-         ${canCreate()
-           ? `<button type="button" class="btn sm go" style="margin-top:12px" data-new-campaign>New campaign</button>`
-           : `<div class="mono" style="font-size:11.5px;color:var(--brass);margin-top:8px">/campaign create</div>`}
-       </div>`;
+  return `
+    <div class="index">
+      <div class="index-head">
+        <div class="cap">Campaigns</div>
+        <h1>${many}. <span class="aside">${remark(camps.length)}</span></h1>
+        ${now ? `<div class="index-now">${now}</div>` : ''}
+      </div>
 
-  // A second, quieter entry point. The checklist button disappears the moment
-  // the first campaign exists, and starting a second one should not mean going
-  // back to Discord to do it.
-  if (camps.length && canCreate()) {
-    $('rail-list').innerHTML +=
-      '<button type="button" class="camp newcamp" data-new-campaign>' +
-      '<div class="l1"><span class="nm">+ New campaign</span></div></button>';
+      <div class="chrons">
+        ${camps.map(chronicle).join('')}
+      </div>
+
+      ${indexMore()}
+    </div>`;
+}
+
+function chronicle(c) {
+  const st = campaignState(c);
+  const name = c.name || c.channel || 'unnamed';
+  const where = [c.guildName, c.channel ? `#${c.channel}` : ''].filter(Boolean).join(' · ');
+
+  const facts = [
+    c.sessions ? `<span><b>${n(c.sessions)}</b> night${c.sessions === 1 ? '' : 's'}</span>` : '',
+    c.hours ? `<span><b>${c.hours.toFixed(1)}</b> hours</span>` : '',
+    c.lines ? `<span><b>${n(c.lines)}</b> lines</span>` : '',
+    `<span><b>${n(c.members)}</b> player${c.members === 1 ? '' : 's'}</span>`,
+  ].filter(Boolean).join('');
+
+  return `
+    <button type="button" class="chron" data-campaign="${c.id}">
+      <div class="chron-top">
+        ${tally(c)}
+        ${st ? `<span class="chron-state ${st.key}">
+                  ${st.dot ? `<span class="dot ${st.dot}"></span>` : ''}${esc(st.say)}
+                </span>` : ''}
+        <span class="chron-when">${esc(lastPlayed(c.lastSessionAt))}</span>
+      </div>
+      <div class="chron-name">${esc(name)}</div>
+      <div class="chron-lines">
+        ${where ? `<span class="chron-where">${esc(where)}</span>` : ''}
+        ${facts}
+      </div>
+    </button>`;
+}
+
+// Starting one, and the ones that are not here any more. Under the ledger
+// rather than in it: none of these is a campaign you can open.
+function indexMore() {
+  const bits = [];
+
+  if (canCreate()) {
+    bits.push(`<button type="button" class="camp newcamp" data-new-campaign>
+      <div class="l1"><span class="nm">+ New campaign</span></div>
+      <div class="meta">in a Discord you own</div>
+    </button>`);
   }
 
-  // Anything deleted and still inside its window. Shown here rather than on a
-  // page of its own because this is where you would go looking for a campaign
-  // that has gone missing.
+  // Anything deleted and still inside its window. Shown here because this is
+  // where you would come looking for a campaign that has gone missing.
   //
   // The operator restores; everybody else asks. Deleting is the creator's
   // decision and restoring is not, so the page offers the same ticket Discord
   // does rather than a shortcut around it.
   for (const gone of status?.restorable ?? []) {
-    $('rail-list').innerHTML += `
+    bits.push(`
       <div class="camp gone">
         <div class="l1"><span class="nm">${esc(gone.name)}</span></div>
         <div class="meta">deleted · ${gone.daysLeft} day${gone.daysLeft === 1 ? '' : 's'} left</div>
@@ -834,12 +1568,12 @@ function renderRail() {
                      data-act="campaign/restore" data-campaign="${gone.id}">Restore</button>`
           : `<button type="button" class="btn sm" style="margin-top:9px"
                      data-ask-restore="${gone.id}" data-name="${esc(gone.name)}">Ask to restore</button>`}
-      </div>`;
+      </div>`);
   }
 
   // What is waiting on a decision. Only the operator is ever sent this.
   for (const req of status?.restoreQueue ?? []) {
-    $('rail-list').innerHTML += `
+    bits.push(`
       <div class="camp asked">
         <div class="l1"><span class="nm">${esc(req.name)}</span></div>
         <div class="meta">
@@ -849,44 +1583,101 @@ function renderRail() {
         <div class="row-btns" style="margin-top:9px">
           <button type="button" class="btn sm" data-review="${req.id}">Read it</button>
         </div>
-      </div>`;
+      </div>`);
   }
 
+  return bits.length ? `<div class="index-more">${bits.join('')}</div>` : '';
+}
+
+// ==========================================================================
+// The account, hung off the last mark in the top bar
+// ==========================================================================
+
+function renderSheet() {
+  const el = $('sheet');
+  if (view.sheet !== 'account' || document.body.classList.contains('gate-open')) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `<div class="sheet-scrim" data-close-sheet></div>
+    <div class="sheet" role="dialog" aria-label="Account">${accountSheet()}</div>`;
+}
+
+// Who the bot thinks you are, and the way out. Shown even when sign-in is not
+// required, because "you are seeing this as the operator" is worth knowing
+// before you press something that spends money.
+function accountSheet() {
+  const b = status?.bot;
+  return `
+    <div class="cap">Account</div>
+    <div style="padding:0 14px">
+      ${me?.signedIn ? `
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
+          <span style="color:var(--text)">${esc(me.username)}</span>
+          <span class="pill" style="margin-left:auto;padding:1px 7px">${esc(me.level)}</span>
+        </div>
+        <div class="quiet" style="margin-bottom:13px">sees ${esc(me.sees ?? '')}</div>
+        <button class="btn sm" data-logout style="width:100%">Sign out</button>`
+      : me?.signInAvailable ? `
+        <div style="margin-bottom:10px;color:var(--text-2)">the operator</div>
+        <button class="btn sm" data-signin style="width:100%">Sign in as yourself</button>
+        <div class="quiet" style="font-size:11.5px;margin-top:8px">
+          try your account before requiring it
+        </div>`
+      : `<div class="quiet">signed in as the operator</div>`}
+    </div>
+    <div class="sheet-foot">
+      ${b ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}` : 'connecting…'}
+    </div>`;
+}
+
+// Line-drawn at the quill's weight, so the end of the top bar is the same hand
+// as the mark at its start.
+const glyph = {
+  servers: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <rect x="3.5" y="4.5" width="17" height="6" rx="1.6" stroke="currentColor" stroke-width="1.3"/>
+    <rect x="3.5" y="13.5" width="17" height="6" rx="1.6" stroke="currentColor" stroke-width="1.3"/>
+    <path d="M7 7.5h.01M7 16.5h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`,
+  models: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M12 3.5 13.9 9l5.6.6-4.2 3.8 1.2 5.5-4.5-2.9-4.5 2.9 1.2-5.5L4.5 9.6 10.1 9z"
+          stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
+  access: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <circle cx="8.5" cy="9" r="4.2" stroke="currentColor" stroke-width="1.3"/>
+    <path d="M11.6 11.9 20 20.3M17.2 17.9l1.9-1.9M14.6 15.3l1.5-1.5"
+          stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`,
+};
+
+function navMarks() {
   const servers = status?.servers?.length ?? 0;
-  // The Servers view is a list of Discords and their permissions — only
-  // meaningful, and only anybody's business, if you own one.
-  $('rail-nav').innerHTML = `
+  return `
     ${cap('servers') ? `
-      <button class="navlink${view.screen === 'servers' ? ' on' : ''}" data-screen="servers">
-        Servers ${servers ? `<span class="n">${servers}</span>` : ''}
+      <button type="button" class="navmark${view.screen === 'servers' ? ' on' : ''}"
+              data-screen="servers" aria-label="Servers">
+        ${glyph.servers}${servers ? `<span class="n">${servers}</span>` : ''}
       </button>` : ''}
     ${cap('models') ? `
-      <button class="navlink${view.screen === 'models' ? ' on' : ''}" data-screen="models">Models</button>` : ''}
-    <button class="navlink${view.screen === 'access' ? ' on' : ''}" data-screen="access">Access</button>`;
-
-  // Who the bot thinks you are, and the way out. Shown even when sign-in is
-  // not required, because "you are seeing this as the operator" is worth
-  // knowing before you press something that spends money.
-  const b = status?.bot;
-  $('rail-foot').innerHTML = `
-    ${me?.signedIn ? `
-      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
-        <span style="color:var(--text-2)">${esc(me.username)}</span>
-        <span class="pill" style="margin-left:auto;padding:1px 7px">${esc(me.level)}</span>
-      </div>
-      <div style="margin-bottom:10px">sees ${esc(me.sees ?? '')}</div>
-      <button class="btn sm" data-logout style="width:100%">Sign out</button>
-      <div style="margin-top:12px"></div>`
-    : me?.signInAvailable ? `
-      <div style="margin-bottom:10px;color:var(--text-2)">the operator</div>
-      <button class="btn sm" data-signin style="width:100%">Sign in as yourself</button>
-      <div class="quiet" style="font-size:11.5px;margin-top:8px">
-        try your account before requiring it
-      </div>
-      <div style="margin-top:12px"></div>` : ''}
-    ${b ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}<br><span id="stamp" style="opacity:.75"></span>`
-        : 'connecting…'}`;
+      <button type="button" class="navmark${view.screen === 'models' ? ' on' : ''}"
+              data-screen="models" aria-label="Models">${glyph.models}</button>` : ''}
+    <button type="button" class="navmark${view.screen === 'access' ? ' on' : ''}"
+            data-screen="access" aria-label="Access">${glyph.access}</button>
+    <button type="button" class="navmark${view.sheet === 'account' ? ' on' : ''}"
+            data-sheet="account" aria-expanded="${view.sheet === 'account'}"
+            aria-label="${me?.signedIn ? `Signed in as ${esc(me.username)}` : 'Account'}">
+      <span class="who">${esc((me?.username || '?').slice(0, 1))}</span>
+    </button>`;
 }
+
+// The quill is the way home from everywhere. On the campaigns page it is just
+// the mark; anywhere else it is the first step of the crumb, so "back to the
+// campaigns" is a word as well as an icon.
+const homeMark = `
+  <button type="button" class="mark" data-screen="campaigns" aria-label="Campaigns">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z" stroke="#C9A227" stroke-width="1.3" stroke-linejoin="round"/>
+      <path d="M6.2 18.3c2.9-4.1 6.8-7.1 11.6-9" stroke="#C9A227" stroke-width="1" opacity=".5"/>
+      <path d="M5.1 19.6 2.6 22.2" stroke="#C9A227" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+  </button>`;
 
 // ==========================================================================
 // The top bar
@@ -897,6 +1688,7 @@ function renderTop() {
 
   if (view.screen === 'transcript') {
     $('top').innerHTML = `
+      ${homeMark}
       <span class="crumb">${esc(script?.campaign || '')}</span>
       <span class="crumb-sep">/</span>
       <span class="crumb">Session ${script?.sessionNumber ?? ''}</span>
@@ -910,13 +1702,20 @@ function renderTop() {
             ? `<button type="button" class="btn go" data-act="summary/again" data-meeting="${script.meetingId}"
                  data-confirm="Write the notes for ${esc(script.ref)} again?">Summarise this</button>`
             : ''}` : ''}
+        ${themeSwitch()}
         <button class="btn ghost" data-screen="campaign">Close</button>
       </div>`;
     return;
   }
 
+  // On the campaigns page the mark stands alone and the title is the product.
+  // Everywhere else the mark is the first step of a crumb, so the way back to
+  // the campaigns is a word as well as an icon.
+  const home = view.screen === 'campaigns';
   const title =
-    view.screen === 'servers' ? 'Servers'
+    home ? 'Quill'
+    : view.screen === 'servers' ? 'Servers'
+    : view.screen === 'models' ? 'Models'
     : view.screen === 'access' ? 'Access'
     : campaign()?.name || campaign()?.channel || (status?.campaigns?.length ? 'Quill' : 'Setup');
 
@@ -951,9 +1750,12 @@ function renderTop() {
     : '';
 
   $('top').innerHTML = `
+    ${homeMark}
+    ${home ? '' : `<button type="button" class="crumb crumb-back" data-screen="campaigns">Campaigns</button>
+                        <span class="crumb-sep">/</span>`}
     <h2>${esc(title)}</h2>
     <div class="health">${health}</div>
-    <div class="right">${buttons}</div>`;
+    <div class="right">${buttons}${themeSwitch()}${navMarks()}</div>`;
 }
 
 // ==========================================================================
@@ -1047,11 +1849,16 @@ function diagnosis() {
 
 // Signing in.
 //
-// Two steps and no password. You type the Discord name the bot knows you by,
-// it DMs you six digits, you type those back. Proving you can read that
-// account's DMs is the whole of it — which is exactly as strong as "you
-// control that Discord account", and that is the only identity this bot has
-// ever had a use for.
+// One step and no password. You press the button, Discord asks you, and you
+// come back. Discord's answer is exactly as strong as "you control that
+// account", and that is the only identity this bot has ever had a use for.
+//
+// This screen used to be two steps: you typed the Discord name the bot knew
+// you by, it DMed you six digits, you typed those back. Everything about that
+// was a reimplementation of something Discord already does — including the
+// three ways it could fail that had nothing to do with you (the bot not
+// sharing a server with you, the name typed a shade wrong, DMs turned off for
+// the server), none of which exist here.
 // The landing page's typefaces, fetched the first time the gate is drawn.
 // Kept out of <head> because this is the only screen that uses them and most
 // visits here never see it — a signed-in operator should not pay for three
@@ -1069,8 +1876,19 @@ function loadGateFonts() {
   document.head.appendChild(link);
 }
 
+// What a sign-in can fail on, said in words rather than in the five the server
+// puts on the end of the URL. The reason travels as a fragment because the
+// callback is a redirect and has no body to put it in — see auth-routes.js.
+const SIGNIN_TROUBLE = {
+  denied: 'You told Discord no, so nothing happened. Nothing of yours was shared and you are not signed in.',
+  state: 'That sign-in had gone stale — they only last ten minutes. Press the button again and it will work.',
+  discord: 'Discord did not finish the sign-in. That is usually momentary; try again.',
+  config: 'This bot is not set up for Discord sign-in yet, so there is nothing to sign in to.',
+  notinvited: 'Discord knows you, but this bot does not have you on its list yet. Whoever runs it can add you.',
+  secret: 'This bot has no key to sign sessions with, so it cannot keep you signed in.',
+};
+
 function signInScreen() {
-  const stage = login.stage;
   loadGateFonts();
 
   return `
@@ -1081,43 +1899,32 @@ function signInScreen() {
           <path d="M5.1 19.6 2.6 22.2" stroke="#2434A8" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
 
-        <p class="gate-eyebrow">${stage === 'code' ? 'Step two of two' : 'Step one of two'}</p>
-        <h1>${stage === 'code' ? 'Check your Discord DMs.' : 'Sign in to Quill.'}</h1>
+        <p class="gate-eyebrow">One step</p>
+        <h1>Sign in to Quill.</h1>
 
         <p class="gate-say">
-          ${stage === 'code'
-            ? `Quill sent six digits to <b>${esc(login.name)}</b>. They last ten minutes and work once.`
-            : 'Type your Discord username — the @handle, not your display name or your character. Quill DMs you a code; there is no password to set or remember.'}
+          Quill asks Discord who you are — nothing else. There is no password to set, no username to
+          spell right and no code to wait for; you say yes on Discord&rsquo;s own screen and come
+          straight back here.
         </p>
 
-        ${stage === 'code' ? `
-          <form data-signin-verify>
-            <input class="gate-in code" id="signin-code" name="code" inputmode="numeric"
-                   autocomplete="one-time-code" maxlength="6" placeholder="000000"
-                   aria-label="The six digit code">
-            <div class="gate-btns">
-              <button class="gate-btn" type="submit" ${login.busy ? 'disabled' : ''}>
-                ${login.busy ? 'Checking…' : 'Sign in'}</button>
-              <button class="gate-btn quiet" type="button" data-signin-back>Use a different name</button>
-            </div>
-          </form>` : `
-          <form data-signin-request>
-            <input class="gate-in" id="signin-name" name="name" placeholder="your Discord username"
-                   autocomplete="username" value="${esc(login.name)}" aria-label="Your Discord username">
-            <div class="gate-btns">
-              <button class="gate-btn" type="submit" ${login.busy ? 'disabled' : ''}>
-                ${login.busy ? 'Sending…' : 'Send me a code'}</button>
-            </div>
-          </form>`}
+        ${me && !me.signInAvailable ? `
+          <p class="gate-msg bad">
+            This bot is not set up for Discord sign-in, so nobody can sign in yet.
+            Set <code>${esc(me.signInMissing ?? 'DISCORD_CLIENT_SECRET')}</code> in <code>pi-service/.env</code>.
+          </p>` : `
+          <div class="gate-btns">
+            <a class="gate-btn discord" href="${API}/auth/discord">
+              <svg width="21" height="16" viewBox="0 0 71 55" fill="currentColor" aria-hidden="true">
+                <path d="M60.1045 4.8978C55.5792 2.8214 50.7265 1.2916 45.6527 0.41542C45.5603 0.39851 45.468 0.440769 45.4204 0.525289C44.7963 1.6353 44.105 3.0834 43.6209 4.2216C38.1637 3.4046 32.7345 3.4046 27.3892 4.2216C26.905 3.0581 26.1886 1.6353 25.5617 0.525289C25.5141 0.443589 25.4218 0.40133 25.3294 0.41542C20.2584 1.2888 15.4057 2.8186 10.8776 4.8978C10.8384 4.9147 10.8048 4.9429 10.7825 4.9795C1.57795 18.7309 -0.943561 32.1443 0.293408 45.3914C0.299005 45.4562 0.335386 45.5182 0.385761 45.5576C6.45866 50.0174 12.3413 52.7249 18.1147 54.5195C18.2071 54.5477 18.305 54.5139 18.3638 54.4378C19.7295 52.5728 20.9469 50.6063 21.9907 48.5383C22.0523 48.4172 21.9935 48.2735 21.8676 48.2256C19.9366 47.4931 18.0979 46.6001 16.3292 45.5858C16.1893 45.5041 16.1781 45.304 16.3068 45.2082C16.679 44.9293 17.0513 44.6391 17.4067 44.3461C17.4711 44.2926 17.5606 44.2813 17.6362 44.3151C29.2558 49.6202 41.8354 49.6202 53.3179 44.3151C53.3935 44.2785 53.4831 44.2898 53.5502 44.3433C53.9057 44.6363 54.2779 44.9293 54.6529 45.2082C54.7816 45.304 54.7732 45.5041 54.6333 45.5858C52.8646 46.6198 51.0259 47.4931 49.0921 48.2228C48.9662 48.2707 48.9102 48.4172 48.9718 48.5383C50.038 50.6035 51.2554 52.57 52.5959 54.435C52.6519 54.5139 52.7526 54.5477 52.845 54.5195C58.6464 52.7249 64.529 50.0174 70.6019 45.5576C70.6551 45.5182 70.6887 45.459 70.6943 45.3942C72.1747 30.0791 68.2147 16.7757 60.1968 4.9823C60.1772 4.9429 60.1437 4.9147 60.1045 4.8978ZM23.7259 37.3253C20.2276 37.3253 17.3451 34.1136 17.3451 30.1693C17.3451 26.2249 20.1717 23.0132 23.7259 23.0132C27.3081 23.0132 30.1626 26.2531 30.1066 30.1693C30.1066 34.1136 27.2801 37.3253 23.7259 37.3253ZM47.3178 37.3253C43.8196 37.3253 40.9371 34.1136 40.9371 30.1693C40.9371 26.2249 43.7636 23.0132 47.3178 23.0132C50.9 23.0132 53.7545 26.2531 53.6986 30.1693C53.6986 34.1136 50.9 37.3253 47.3178 37.3253Z"/>
+              </svg>
+              Continue with Discord
+            </a>
+          </div>`}
 
         ${login.message
           ? `<p class="gate-msg${login.failed ? ' bad' : ''}">${esc(login.message)}</p>`
           : ''}
-
-        ${me && !me.signInAvailable ? `<p class="gate-msg bad">
-          This bot has no sign-in secret set, so nobody can sign in. Set <code>STATUS_TOKEN</code> or
-          <code>AUTH_SECRET</code> in <code>pi-service/.env</code>.
-        </p>` : ''}
 
         ${me?.loginRequired ? '' : `
           <div class="gate-btns">
@@ -1125,18 +1932,21 @@ function signInScreen() {
           </div>`}
 
         <p class="gate-foot">
-          Quill stores your Discord id and the name attached to it, and nothing else — no email, no real
-          name, and no password, because there is not one. What you can see is worked out from what that
-          account owns, runs and plays in.
+          Quill asks Discord for one thing, the smallest it offers: who you are. Not your email, not
+          your servers, and nothing it could ever post or change on your behalf. It keeps your Discord
+          id and the name attached to it, and nothing else — what you can see is worked out from what
+          that account owns, runs and plays in.
         </p>
 
-        <a class="gate-back" href="/">← Back to the landing page</a>
+        <a class="gate-back" href="/">&larr; Back to the landing page</a>
       </div>
     </div>`;
 }
 
 function renderScreen() {
   const el = $('screen');
+
+  const arriving = Date.now() < entersUntil ? 'arriving' : '';
 
   // Nobody home. Shown instead of the app rather than over it: a dashboard
   // that renders its chrome and then refuses every request is a worse way to
@@ -1148,8 +1958,8 @@ function renderScreen() {
   // impossible to follow.
   // Toggled here rather than in paint() so the class and the screen can never
   // disagree: whatever this function decides to draw is what the body is
-  // dressed for. body.gate-open folds away the rail and the top bar and turns
-  // the page to paper, because the gate is a full-page takeover in the landing
+  // dressed for. body.gate-open folds away the top bar and turns the page to
+  // paper, because the gate is a full-page takeover in the landing
   // page's world rather than a card floating in the dark tool.
   const gateOpen = Boolean(me && !me.signedIn && (me.loginRequired || view.signingIn));
   document.body.classList.toggle('gate-open', gateOpen);
@@ -1160,23 +1970,36 @@ function renderScreen() {
     return;
   }
 
+  // The front door. Answered before the campaign screens because it is where
+  // the page starts and where every other screen goes back to.
+  if (view.screen === 'campaigns' && status?.campaigns?.length) {
+    el.className = arriving;
+    el.innerHTML = campaignsScreen();
+    return;
+  }
+
   if (view.screen === 'transcript') { el.className = 'split'; el.innerHTML = transcriptScreen(); return; }
-  if (view.screen === 'servers')    { el.className = ''; el.innerHTML = serversScreen(); return; }
-  if (view.screen === 'models')     { el.className = ''; el.innerHTML = modelsScreen(); return; }
-  if (view.screen === 'access')     { el.className = ''; el.innerHTML = accessScreen(); return; }
+  if (view.screen === 'servers')    { el.className = arriving; el.innerHTML = serversScreen(); return; }
+  if (view.screen === 'models')     { el.className = arriving; el.innerHTML = modelsScreen(); return; }
+  if (view.screen === 'access')     { el.className = arriving; el.innerHTML = accessScreen(); return; }
 
   if (status && !status.campaigns?.length) { el.className = ''; el.innerHTML = firstRun(); return; }
 
-  el.className = 'split';
+  el.className = `split ${arriving}`.trim();
   el.innerHTML = `
     <div class="sessions">
-      <div class="head">
-        <div class="cap">Sessions</div>
-        ${detail?.sessions?.length ? '<span class="hint">newest first</span>' : ''}
-      </div>
-      ${sessionColumn()}
-      <div class="foot">
-        ${cap('machinery') ? `<button class="btn wide" data-import>${detail?.sessions?.length ? 'Import a recording' : 'Import a recording instead'}</button>` : ''}
+      <div class="shelf-slider ${view.shelfPicking ? 'picking' : 'picked'}">
+        <div class="shelf-page chooser" ${view.shelfPicking ? '' : 'aria-hidden="true"'}>
+          ${shelfChooser()}
+        </div>
+        <div class="shelf-page list" ${view.shelfPicking ? 'aria-hidden="true"' : ''}>
+          ${shelfHeader()}
+          ${columnList()}
+          ${view.shelf === 'sessions' && cap('machinery') ? `
+            <div class="foot">
+              <button class="btn wide" data-import>${detail?.sessions?.length ? 'Import a recording' : 'Import a recording instead'}</button>
+            </div>` : ''}
+        </div>
       </div>
     </div>
     <div class="pane">
@@ -1184,7 +2007,7 @@ function renderScreen() {
         ${tabsBar()}
         ${paneBody()}
       </div>
-      ${view.tab === 'notes' ? factsRail() : ''}
+      ${view.tab === 'notes' && view.shelf === 'sessions' ? factsRail() : ''}
     </div>`;
 }
 
@@ -1246,6 +2069,195 @@ function firstRun() {
 
 const PILL_WORD = { posted: 'posted', approval: 'approval', failed: 'failed',
                     recording: 'recording', queued: 'queued', working: 'working' };
+
+// What the third tab is called depends on what the column is listing, because
+// that tab IS the reading pane — a session's write-up, or whoever you just
+// picked out of the campaign.
+const READING_NAME = {
+  sessions: 'Notes',
+  npcs: 'NPC',
+  places: 'Place',
+  items: 'Item',
+};
+
+const SHELVES = [
+  ['sessions', 'Sessions'],
+  ['npcs', 'NPCs'],
+  ['places', 'Places'],
+  ['items', 'Items'],
+];
+
+const shelfCount = (id) => {
+  if (id === 'sessions') return detail?.sessions?.length ?? 0;
+  if (!compendium || compendium.campaignId !== view.campaignId || compendium.loading) return null;
+  const list = id === 'npcs' ? compendium.npcs : id === 'places' ? compendium.places : compendium.items;
+  return (list ?? []).length;
+};
+
+// Four ways into the same campaign, in the column that used to only ever hold
+// sessions. Picking one collapses the other three sideways to nothing and
+// leaves the choice sitting where the row was; clicking it again brings them
+// back. The same gesture as the campaign rail, one level in.
+// The column, one level in from the campaign rail and behaving the same way.
+// It holds two pages side by side in a clipped frame: the list of the four
+// things this campaign has, and whichever of them you picked. Choosing slides
+// the chooser off to the left and the list in behind it; the header it leaves
+// is the way back.
+
+function shelfChooser() {
+  const meta = {
+    sessions: 'every night written up',
+    npcs: 'everyone the party met',
+    places: 'everywhere they went',
+    items: 'what they came away with',
+  };
+  return `
+    <div class="head"><div class="cap">This campaign</div></div>
+    <div class="sess-list">
+      ${SHELVES.map(([id, name]) => {
+        const count = shelfCount(id);
+        return `<button type="button" class="shelf-row${view.shelf === id ? ' on' : ''}" data-shelf="${id}">
+          <div class="l1">
+            <span class="nm">${esc(name)}</span>
+            ${count == null ? '' : `<span class="n">${count}</span>`}
+          </div>
+          <div class="meta">${meta[id]}</div>
+        </button>`;
+      }).join('')}
+    </div>`;
+}
+
+function shelfHeader() {
+  const name = SHELVES.find(([id]) => id === view.shelf)?.[1] ?? '';
+  const count = shelfCount(view.shelf);
+  const order = view.shelf === 'sessions' ? 'newest first' : 'first seen first';
+  return `
+    <div class="head">
+      <button type="button" class="shelf-back" data-shelf-back
+              aria-label="Back to what this campaign holds">
+        <span class="arw" aria-hidden="true">←</span>${esc(name)}${
+          count == null ? '' : `<span class="n">${count}</span>`}
+      </button>
+      ${count ? `<span class="hint" style="margin-left:auto">${order}</span>` : ''}
+    </div>`;
+}
+
+function columnList() {
+  if (view.shelf === 'sessions') return sessionColumn();
+
+  if (!compendium || compendium.campaignId !== view.campaignId) {
+    buildCompendium();
+    return '<div class="empty"><div class="quiet">Reading back through the campaign…</div></div>';
+  }
+  if (compendium.loading) {
+    return '<div class="empty"><div class="quiet">Reading back through the campaign…</div></div>';
+  }
+  if (compendium.error) {
+    return `<div class="empty">
+      <div class="say">That did not read back.</div>
+      <div class="quiet">${esc(compendium.error)}</div>
+      <button type="button" class="btn sm" data-rebuild-compendium>Try again</button>
+    </div>`;
+  }
+
+  if (view.shelf === 'items') {
+    const items = compendium.items ?? [];
+    if (!items.length) return `<div class="empty"><div class="say">Nothing found yet.</div>
+      <div class="quiet">Loot and rewards named in a write-up collect here.</div></div>`;
+    return `<div class="sess-list">${items.map((row, i) => `
+      <button class="sess${view.entry === `items:${i}` ? ' on' : ''}" data-entry="items:${i}">
+        <div class="say" style="margin-top:0">${esc(trim(row.text, 130))}</div>
+        <div class="facets"><span>${esc(row.session.ref || `Session ${row.session.sessionNumber}`)}</span></div>
+      </button>`).join('')}</div>`;
+  }
+
+  const list = compendium[view.shelf] ?? [];
+  if (!list.length) {
+    const say = view.shelf === 'npcs'
+      ? ['Nobody yet.', 'Everyone a write-up names collects here.']
+      : ['Nowhere yet.', 'Everywhere a write-up names collects here.'];
+    return `<div class="empty"><div class="say">${say[0]}</div><div class="quiet">${say[1]}</div></div>`;
+  }
+
+  return `<div class="sess-list">${list.map((e) => `
+    <button class="sess${view.entry === `${view.shelf}:${e.key}` ? ' on' : ''}"
+            data-entry="${view.shelf}:${esc(e.key)}">
+      <div class="l1"><span class="ref">${esc(e.name)}</span>
+        <span class="when">${esc(e.first.ref || `Session ${e.first.sessionNumber}`)}</span></div>
+      ${e.said[0] ? `<div class="say">${esc(trim(e.said[0].text, 120))}</div>` : ''}
+      ${e.asides.length || e.seen.length > 1 ? `<div class="facets">
+        ${e.seen.length > 1 ? `<span>${plural(e.seen.length, 'session')}</span>` : ''}
+        ${e.asides.length ? `<span>${plural(e.asides.length, 'aside')}</span>` : ''}
+      </div>` : ''}
+    </button>`).join('')}</div>`;
+}
+
+// The reading pane, when what you picked was not a session.
+function entryPane() {
+  if (!compendium || compendium.campaignId !== view.campaignId || compendium.loading) {
+    return '<div class="quiet" style="padding-top:30px">Reading back through the campaign…</div>';
+  }
+
+  const [kind, key] = String(view.entry ?? '').split(/:(.*)/);
+  if (kind !== view.shelf || key == null || key === '') {
+    const what = { npcs: 'somebody', places: 'somewhere', items: 'something' }[view.shelf] || 'something';
+    return `
+      <div class="kicker" style="margin-top:26px">${esc(READING_NAME[view.shelf] || '')}</div>
+      <h1 class="display sm" style="margin-top:12px">Pick ${what} on the left.</h1>
+      <div class="say-2">
+        Nothing here was written for this page — every line is what the summariser said at the time,
+        gathered out of ${plural(compendium.story?.length ?? 0, 'write-up')}.
+      </div>`;
+  }
+
+  if (kind === 'items') {
+    const row = (compendium.items ?? [])[Number(key)];
+    if (!row) return '<div class="quiet" style="padding-top:30px">That item is no longer in the notes.</div>';
+    return `
+      <div class="kicker" style="margin-top:26px">Item</div>
+      <h1 class="display sm" style="margin-top:12px;max-width:22ch">${esc(row.text)}</h1>
+      <div class="say-2">
+        Written down in ${esc(row.session.ref || `Session ${row.session.sessionNumber}`)},
+        ${esc(longDate(row.session.startedAt))}.
+      </div>
+      <div class="comp-bar">
+        <button type="button" class="btn sm" data-session="${row.session.meetingId}">Open that session</button>
+      </div>`;
+  }
+
+  const e = (compendium[kind] ?? []).find((x) => x.key === key);
+  if (!e) return '<div class="quiet" style="padding-top:30px">That entry is no longer in the notes.</div>';
+
+  return `
+    <div class="kicker" style="margin-top:26px">${kind === 'places' ? 'Place' : 'NPC'}</div>
+    <h1 class="display sm" style="margin-top:12px">${esc(e.name)}</h1>
+    <div class="say-2">
+      ${kind === 'places' ? 'First gone to in' : 'First met in'}
+      ${esc(e.first.ref || `Session ${e.first.sessionNumber}`)}, ${esc(longDate(e.first.startedAt))}.
+      ${e.seen.length > 1 ? `Named again in ${e.seen.slice(1).map((x) => esc(x.ref || `Session ${x.sessionNumber}`)).join(', ')}.` : ''}
+    </div>
+
+    ${e.said.length ? `
+      <div class="cap" style="margin:38px 0 14px">What the write-ups say</div>
+      <div class="entry-said" style="max-width:70ch">
+        ${e.said.map((pt) => `
+          <div class="point${e.said.length > 1 ? '' : ' bare'}">
+            ${e.said.length > 1 ? `<span class="s">${esc(String(pt.session.sessionNumber ?? ''))}</span>` : ''}
+            <span class="p">${esc(pt.text)}</span>
+          </div>`).join('')}
+      </div>` : ''}
+
+    ${e.asides.length ? `
+      <div class="cap" style="margin:38px 0 14px">Worth remembering</div>
+      <div style="max-width:70ch">
+        ${e.asides.map((a) => `<div class="entry-aside">${esc(a.text)}</div>`).join('')}
+      </div>` : ''}
+
+    <div class="comp-bar">
+      ${e.seen.map((x) => `<button type="button" class="btn sm" data-session="${x.meetingId}">
+        Open ${esc(x.ref || `Session ${x.sessionNumber}`)}</button>`).join('')}
+    </div>`;
+}
 
 function sessionColumn() {
   const list = sessions();
@@ -1321,7 +2333,7 @@ function tabsBar() {
   const tabs = [
     ['table', 'The table', detail.roster.length],
     ['corrections', 'Corrections', detail.corrections.length],
-    ['notes', 'Notes', 0],
+    ['notes', READING_NAME[view.shelf] || 'Notes', 0],
     ['settings', 'Settings', 0],
   ];
   return `<div class="tabs">${tabs.map(([id, name, count]) => `
@@ -1335,6 +2347,7 @@ function paneBody() {
   if (view.tab === 'table') return rosterTab();
   if (view.tab === 'corrections') return correctionsTab();
   if (view.tab === 'settings') return settingsTab();
+  if (view.shelf !== 'sessions') return entryPane();
   return sessionReader();
 }
 
@@ -1428,9 +2441,9 @@ function notesPane(s) {
     ${notes.scenes.length ? `
       <div class="cap" style="margin:32px 0 4px">What happened</div>
       <div style="max-width:70ch">
-        ${notes.scenes.map((scene) => `
+        ${notes.scenes.map((scene, i) => `
           <div class="scene">
-            <h4>${esc(scene.title)}</h4>
+            ${i === 0 && scene.title === heading ? '' : `<h4>${esc(scene.title)}</h4>`}
             <p>${scene.points.map(esc).join(' ')}</p>
           </div>`).join('')}
       </div>` : ''}
@@ -1665,6 +2678,145 @@ function factsRail() {
 }
 
 // ==========================================================================
+// Who and where — the campaign read down instead of across
+// ==========================================================================
+//
+// Nothing new is summarised for this. Every session's notes already carry the
+// NPCs it introduced and the places it visited, written at the time by the
+// summariser; this reads all of them in one go and lines the repeats up under
+// one name. So an entry is not a fresh opinion about a character — it is the
+// same sentences that were posted to Discord, in the order they were said.
+//
+// Cached per campaign, because it is one request per session and the answer
+// only changes when a session is summarised again.
+
+let compendium = null;   // see blankCompendium for the shape
+
+// One shape for all three states it can be in — loading, failed, built — so a
+// reader never has to work out which one it got.
+//
+// The three used to be written out by hand at their three call sites, and two
+// of them left out `items` and `story`. Every reader but one defends itself
+// with `?? []`; shelfCount does not, so a single failed /notes request threw on
+// the very next paint and took the whole page down with it.
+const blankCompendium = (id, patch = {}) => ({
+  campaignId: id, loading: false, error: '',
+  story: [], npcs: [], places: [], items: [],
+  ...patch,
+});
+
+// "Warden Ilse — runs the Greyhollow toll" and "Warden Ilse, who keeps two
+// books" are the same person on two different nights. Match on a folded name
+// so they land in one entry without needing the summariser to be consistent.
+const foldName = (s) => s.toLowerCase().replace(/^(the|a|an)\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+function collect(list, entries, session) {
+  for (const raw of list ?? []) {
+    const { name, rest } = splitEntry(raw);
+    const trimmed = (name || '').trim();
+    if (!trimmed) continue;
+    const key = foldName(trimmed);
+    if (!key) continue;
+
+    let entry = entries.get(key);
+    if (!entry) {
+      entry = { key, name: trimmed, first: session, seen: [], said: [], asides: [] };
+      entries.set(key, entry);
+    }
+    // Sessions arrive newest first, so the last one seen is the earliest.
+    entry.first = session;
+    if (!entry.seen.some((x) => x.meetingId === session.meetingId)) entry.seen.push(session);
+    // The summariser writes "Name — what they are". Its remainder starts
+    // mid-sentence, so it gets a capital before it is shown as one.
+    if (rest) entry.said.push({ session, text: rest[0].toUpperCase() + rest.slice(1) });
+  }
+}
+
+async function buildCompendium() {
+  const id = view.campaignId;
+  compendium = blankCompendium(id, { loading: true });
+  paint();
+
+  const withNotes = sessions().filter((s) => s.hasNotes);
+  const npcs = new Map();
+  const places = new Map();
+  const items = [];
+  const asides = [];
+
+  // One request per session. Strictly in series a long campaign would take a
+  // noticeable few seconds; all at once would put forty requests on a
+  // Raspberry Pi in one breath. Six at a time is neither.
+  const LANES = 6;
+
+  let read = [];
+  try {
+    const fetched = [];
+    for (let i = 0; i < withNotes.length; i += LANES) {
+      const batch = withNotes.slice(i, i + LANES);
+      const got = await Promise.all(batch.map((s) => get(`/notes?meeting=${s.meetingId}`)));
+      if (view.campaignId !== id) return;           // they moved on mid-read
+      batch.forEach((s, j) => fetched.push({ s, n: got[j] }));
+    }
+
+    // Collected in the order the sessions are listed — newest first — because
+    // collect() leans on that to work out which night was the first.
+    for (const { s, n } of fetched) {
+      if (!n?.written || n.unreadable) continue;
+      collect(n.npcsIntroduced, npcs, s);
+      collect(n.locationsVisited, places, s);
+      for (const line of n.lootAndRewards ?? []) {
+        const text = String(line ?? '').trim();
+        if (text) items.push({ session: s, text });
+      }
+      for (const line of n.funnyMoments ?? []) asides.push({ session: s, text: line });
+    }
+    read = fetched;
+  } catch (err) {
+    compendium = blankCompendium(id, { error: err.message });
+    return paint();
+  }
+
+  // An aside belongs to whoever it is about. The ones that name nobody stay
+  // with the campaign rather than being filed under a guess.
+  const attach = (map) => {
+    for (const entry of map.values()) {
+      const needle = entry.name.toLowerCase();
+      for (const aside of asides) {
+        if (aside.text.toLowerCase().includes(needle)) entry.asides.push(aside);
+      }
+    }
+  };
+  attach(npcs);
+  attach(places);
+
+  // Oldest first. The session column is newest-first because you want the
+  // last night you played; a cast list is the opposite — you meet people in
+  // the order the campaign met them, and session one is where most of them
+  // are. Sorted newest-first, the founding cast sat at the bottom of the page.
+  const order = (a, b) => (a.first.sessionNumber ?? 0) - (b.first.sessionNumber ?? 0);
+  // The story in order, one entry per night, with what that night added.
+  const story = read
+    .filter(({ n }) => n?.written && !n.unreadable)
+    .map(({ s, n }) => ({ session: s, notes: n }))
+    .sort((a, b) => (a.session.sessionNumber ?? 0) - (b.session.sessionNumber ?? 0));
+
+  compendium = blankCompendium(id, {
+    story,
+    npcs: [...npcs.values()].sort(order),
+    places: [...places.values()].sort(order),
+    items: items.sort((a, b) => (a.session.sessionNumber ?? 0) - (b.session.sessionNumber ?? 0)),
+  });
+  paint();
+}
+
+// The word each kind of entry uses for the night it turned up.
+const FIRST_WORD = {
+  people: 'first met',
+  places: 'first gone to',
+  items:  'found in',
+};
+
+// ==========================================================================
 // The table
 // ==========================================================================
 
@@ -1688,10 +2840,11 @@ function rosterTab() {
           : 'Everyone here has said yes in a DM. Anyone who changes their mind can be removed with <code>/campaign remove</code>, and nothing of theirs is captured from that moment on.'}
       </div>
 
-      <div class="grid roster" style="margin-top:30px">
+      <div class="grid roster${waiting.length ? '' : ' settled'}" style="margin-top:30px">
         <div class="hd">
           <div>Player</div><div>Character</div>
-          <div class="r">Lines</div><div class="r">Share</div><div class="r">Consent</div>
+          <div class="r">Lines</div><div class="r">Share</div>
+          ${waiting.length ? '<div class="r">Consent</div>' : ''}
         </div>
         ${roster.map((p) => {
           const pct = Math.round((p.lines / total) * 100);
@@ -1704,11 +2857,12 @@ function rosterTab() {
               <i class="${p.lines ? '' : 'quiet'}"><b style="width:${p.lines ? pct : 0}%"></b></i>
               <span class="mono" style="font-size:12px;color:var(--dim);width:34px;text-align:right">${p.lines ? `${pct}%` : ''}</span>
             </span></div>
+            ${waiting.length ? `
             <div class="r" style="display:flex;justify-content:flex-end;align-items:center;gap:10px">
               <span class="as-val ${p.consent.withdrawn ? 'declined' : CONSENT_CLASS[p.consent.state] || 'never'}">${esc(p.consent.label)}</span>
               ${askable(p) ? `<button type="button" class="btn sm" data-act="roster/invite" data-campaign="${detail.id}"
                 data-user="${esc(p.userId)}">${p.consent.state === 'pending' ? 'Ask again' : 'Invite'}</button>` : ''}
-            </div>
+            </div>` : ''}
           </div>`;
         }).join('')}
       </div>
@@ -1837,6 +2991,7 @@ function correctionsTab() {
           transcript, then replays it over the ones this campaign already has.
         </div>
 
+        ${list.length ? `
         <div class="grid corr" style="margin-top:30px">
           <div class="hd">
             <div>Heard as</div><div>Should read</div>
@@ -1857,8 +3012,18 @@ function correctionsTab() {
               <div></div>
               <div class="r"><button class="btn go" type="submit">Add</button></div>
             </form>` : ''}
-        </div>
-        ${list.length ? '' : '<div class="quiet" style="padding-top:18px">No corrections saved yet.</div>'}
+        </div>` : canManage() ? `
+        <div class="cap" style="margin:34px 0 16px">Write the first one</div>
+        <form class="pair" data-act="corrections/add" data-campaign="${detail.id}">
+          <label>Heard as
+            <input class="in" name="wrong" placeholder="what Whisper hears" required>
+          </label>
+          <span class="pair-arrow" aria-hidden="true">→</span>
+          <label>Should read
+            <input class="in" name="right" placeholder="what it should say" required>
+          </label>
+          <button class="btn go" type="submit">Add the fix</button>
+        </form>` : '<div class="quiet" style="padding-top:24px">No corrections saved yet.</div>'}
         ${canManage() ? '' : disabledNote()}
       </div>
 
@@ -2347,7 +3512,7 @@ function accessScreen() {
         <h1 class="display" style="margin-top:14px">This one is the bot owner's.</h1>
         <div class="say-2">
           A list of everyone who can reach this bot, and what each of them can see, is not a list
-          to hand around. You can see your own level in the corner of the rail.
+          to hand around. You can see your own level under your initial, at the end of the top bar.
         </div>
       </div>`;
   }
@@ -2359,11 +3524,9 @@ function accessScreen() {
     const name = p.name || `user ${p.userId.slice(0, 4)}…${p.userId.slice(-4)}`;
     const seen = p.signedIn
       ? `<span class="agreed">signed in</span>`
-      : p.codePending
-        ? `<span class="waiting">code sent</span>`
-        : p.lastSeen
-          ? `<span class="muted">${esc(since(Date.parse(p.lastSeen + 'Z')))}</span>`
-          : '<span class="muted">never signed in</span>';
+      : p.lastSeen
+        ? `<span class="muted">${esc(since(Date.parse(p.lastSeen + 'Z')))}</span>`
+        : '<span class="muted">never signed in</span>';
 
     // What they reach, in the terms that matter for that level: a server owner
     // thinks in servers, everybody below them thinks in tables.
@@ -2514,7 +3677,7 @@ function deleteDialog() {
         <div class="say-2" style="font-size:14.5px;margin-top:12px">
           It leaves every list straight away. <b>Nothing is erased</b> — every session, every line and
           every correction stays exactly where it is, and you have ${RESTORE_DAYS} days to bring it back
-          from the rail or with <code>/campaign restore</code>.
+          from the campaigns page or with <code>/campaign restore</code>.
         </div>
 
         <form data-act="campaign/delete" data-campaign="${detail?.id ?? ''}">
@@ -2700,11 +3863,51 @@ function renderModal() {
 // Painting
 // ==========================================================================
 
+// Which page the column is currently showing, as far as the DOM is concerned.
+// null when there is no column on screen.
+let paintedPicking = null;
+
+function settleColumn() {
+  const slider = document.querySelector('.shelf-slider');
+  if (!slider) { paintedPicking = null; return; }
+
+  const want = Boolean(view.shelfPicking);
+  if (paintedPicking === null || paintedPicking === want) {
+    paintedPicking = want;   // first sight of it, or nothing moved
+    return;
+  }
+
+  const face = (picking) => {
+    slider.classList.toggle('picking', picking);
+    slider.classList.toggle('picked', !picking);
+  };
+
+  // Synchronously, inside this same paint: a rAF here would be stranded by
+  // the next render, which replaces these elements out from under it.
+  face(paintedPicking);                                  // where it was
+  slider.querySelectorAll('.shelf-page')
+    .forEach((page) => getComputedStyle(page).transform); // make it believe that
+  face(want);                                            // where it goes
+  paintedPicking = want;
+}
+
+// How long the screen being painted still counts as arriving.
+//
+// A deadline rather than a one-shot flag, because opening a campaign paints
+// twice — once on the click and again when its detail lands — and a flag spent
+// on the first paint would have the second one strip the class off half way
+// through the animation. Holding the class across both keeps it running: the
+// element itself is never replaced, only its contents, so nothing restarts.
+let entersUntil = 0;
+const entering = () => { entersUntil = Date.now() + 340; };
+
 function paint() {
-  renderRail();
   renderTop();
   renderBanner();
+  // After renderScreen, which is what sets body.gate-open — the sheet reads it.
   renderScreen();
+  renderSheet();
+  settleColumn();
   renderModal();
 
   const rec = status?.recording?.length;
@@ -2723,7 +3926,21 @@ async function get(path) {
 }
 
 async function loadCampaign(id, { keepScreen = false } = {}) {
+  // Set before the fetch so the campaign opens on the click rather than
+  // whenever the network gets back.
   view.campaignId = id;
+  view.sheet = null;
+  if (!keepScreen) {
+    view.screen = 'campaign';
+    entering();
+  }
+  // Opening a campaign lands on what it holds, not on one of the four. The
+  // column offers Sessions, NPCs, Places and Items; picking one is the next
+  // move, the same shape as picking the campaign was.
+  view.shelf = 'sessions';
+  view.shelfPicking = true;
+  view.entry = null;
+  compendium = null;
   view.meetingId = null;
   view.editing = null;
   notes = null;
@@ -2732,7 +3949,9 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
   // A search is scoped to one server; carrying its results to the next
   // campaign would offer to invite people who are not in that Discord.
   people.query = ''; people.results = null; people.error = '';
-  if (!keepScreen) view.screen = 'campaign';
+
+  paint();
+
   try {
     detail = await get(`/campaign?id=${id}`);
   } catch (err) {
@@ -2748,6 +3967,12 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
     || list[0];
   if (pick) await openSession(pick.meetingId, { quiet: true });
   else paint();
+
+  // Those four rows carry counts, and the counts need the whole campaign read
+  // back. It is the first thing on screen now, so the read starts here rather
+  // than waiting to be asked for — un-awaited, so the page is not held up by
+  // it and the numbers arrive when they arrive.
+  buildCompendium();
 }
 
 async function openSession(meetingId, { quiet = false } = {}) {
@@ -2809,6 +4034,10 @@ async function openTranscript(meetingId) {
   paint();
 }
 
+// Whether the first poll has been answered. Only that one decides where the
+// page opens; every one after it leaves you where you are.
+let landed = false;
+
 const countAwaiting = () =>
   (detail?.sessions ?? []).filter((s) => s.job?.status === 'awaiting_approval').length;
 
@@ -2834,12 +4063,16 @@ async function tick() {
     lastSeen = Date.now();
     document.body.classList.remove('stale');
 
-    if (view.campaignId == null && status.campaigns?.length) {
-      const pick = status.campaigns.find((c) => c.awaiting)
-        || status.campaigns.find((c) => c.recording)
-        || status.campaigns[0];
-      await loadCampaign(pick.id);
-      return;
+    // The page used to pick a campaign for you on the first poll and land you
+    // inside it, which is why the campaign list went unseen on most visits.
+    // It opens on the campaigns page now — except when there is exactly one
+    // campaign, where an index of one is a door with nothing behind it.
+    if (!landed) {
+      landed = true;
+      if (status.campaigns?.length === 1) {
+        await loadCampaign(status.campaigns[0].id);
+        return;
+      }
     }
 
     // The open campaign's detail does not come from the poll, so refresh it
@@ -2855,7 +4088,7 @@ async function tick() {
     // transcript search. Rebuilding the pane under them would throw the text
     // away and move the caret, which is worse than a five-second-old panel —
     // so the poll updates only the parts with nothing to type in.
-    if (typing()) { renderRail(); renderTop(); renderBanner(); return; }
+    if (typing()) { renderTop(); renderBanner(); return; }
     paint();
   } catch (err) {
     // The bot being unreachable is itself information. The page dims as well as
@@ -2988,7 +4221,7 @@ document.addEventListener('click', async (event) => {
   if (t.closest('[data-signin]')) {
     closeDialogs();
     view.signingIn = true;
-    login.stage = 'name'; login.message = ''; login.failed = false;
+    login.message = ''; login.failed = false;
     return paint();
   }
 
@@ -3012,11 +4245,6 @@ document.addEventListener('click', async (event) => {
     return paint();
   }
 
-  if (t.closest('[data-signin-back]')) {
-    login.stage = 'name'; login.message = ''; login.failed = false;
-    return paint();
-  }
-
   if (t.closest('[data-logout]')) {
     try {
       await post('/auth/logout', {});
@@ -3033,9 +4261,58 @@ document.addEventListener('click', async (event) => {
                 `${n(script.total)} lines copied.`);
   }
 
+  const theme = t.closest('[data-theme-set]');
+  if (theme) return setTheme(theme.dataset.themeSet);
+
+  // The sheets. Clicking the mark that opened one closes it again, and the
+  // scrim behind catches everything else.
+  const sheet = t.closest('[data-sheet]');
+  if (sheet) {
+    const want = sheet.dataset.sheet;
+    closeDialogs();
+    view.sheet = view.sheet === want ? null : want;
+    return paint();
+  }
+  if (t.closest('[data-close-sheet]')) { view.sheet = null; return paint(); }
+
+  if (t.closest('[data-rebuild-compendium]')) { compendium = null; return buildCompendium(); }
+
+  // The header slides the chooser back in; a row in the chooser slides it out
+  // again, on whatever was picked.
+  if (t.closest('[data-shelf-back]')) {
+    view.shelfPicking = true;
+    const unread = !compendium || compendium.campaignId !== view.campaignId;
+    paint();
+    // The counts on those rows need the whole campaign read back, and that
+    // read paints twice on its own. Starting it now would replace the column
+    // mid-slide and the movement would be lost, so it waits for the slide to
+    // land and the numbers arrive a beat later.
+    if (unread) setTimeout(buildCompendium, 460);
+    return;
+  }
+
+  const pick = t.closest('[data-shelf]');
+  if (pick) {
+    view.shelfPicking = false;
+    if (pick.dataset.shelf !== view.shelf) {
+      view.shelf = pick.dataset.shelf;
+      view.entry = null;
+      view.tab = 'notes';
+    }
+    return paint();
+  }
+
+  const entry = t.closest('[data-entry]');
+  if (entry) { view.entry = entry.dataset.entry; view.tab = 'notes'; return paint(); }
+
   const nav = t.closest('[data-screen]');
   if (nav) {
+    // Only a screen that actually changes gets the entrance. The quill is the
+    // way home from everywhere including home, and replaying the animation on
+    // a click that moved nothing reads as a glitch.
+    if (view.screen !== nav.dataset.screen) entering();
     view.screen = nav.dataset.screen;
+    view.sheet = null;
     paint();
     // Coming back to a session that is waiting for approval, its first few
     // lines have to be fetched again — the transcript reader borrowed the same
@@ -3049,6 +4326,14 @@ document.addEventListener('click', async (event) => {
 
   const tab = t.closest('[data-tab]');
   if (tab) { view.tab = tab.dataset.tab; view.editing = null; return paint(); }
+
+  const jump = t.closest('button.btn[data-session]');
+  if (jump) {
+    view.shelf = 'sessions';
+    view.shelfPicking = false;
+    view.entry = null;
+    return openSession(Number(jump.dataset.session));
+  }
 
   const sess = t.closest('.sess[data-session]');
   if (sess) return openSession(Number(sess.dataset.session));
@@ -3097,8 +4382,10 @@ document.addEventListener('click', async (event) => {
 
 // Forms wherever there is something to type: Enter-to-submit and required-field
 // validation for free, and both matter for the things typed most often here.
-// Signing in. Two POSTs, and the only two requests on the page that work
-// without a credential — everything else is behind one.
+// Signing out, which is the only request on this page that works without a
+// credential — everything else is behind one. Signing IN is not here at all
+// any more: it is a link the browser follows to Discord and a redirect back,
+// so there is nothing for fetch to do.
 async function post(path, body) {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
@@ -3107,65 +4394,6 @@ async function post(path, body) {
   });
   return { ok: res.ok, payload: await res.json().catch(() => ({})) };
 }
-
-document.addEventListener('submit', async (event) => {
-  const asking = event.target.closest('form[data-signin-request]');
-  const verifying = event.target.closest('form[data-signin-verify]');
-  if (!asking && !verifying) return;
-  event.preventDefault();
-
-  // Read what was typed BEFORE anything repaints.
-  //
-  // paint() rebuilds this whole screen from `login`, so the moment it runs,
-  // the field is a new element built from state — and what the person typed,
-  // which lived only in the DOM, is gone. Reading it afterwards got the empty
-  // replacement and posted name: "", which the server rightly refused with
-  // "Type the Discord name you use here." Sign-in could not succeed from the
-  // browser at all, at either step.
-  const typed = asking
-    ? ($('signin-name')?.value.trim() ?? '')
-    : ($('signin-code')?.value.trim() ?? '');
-  if (asking) login.name = typed;
-
-  login.busy = true;
-  login.message = '';
-  paint();
-
-  try {
-    if (asking) {
-      const { payload } = await post('/auth/request', { name: login.name });
-      login.failed = payload.ok === false;
-      login.message = payload.message ?? '';
-      // The step advances whatever the answer was, because the answer is
-      // deliberately the same whether or not the account exists — see
-      // web/auth-routes.js. Anything else here would leak who plays what.
-      if (payload.ok !== false) login.stage = 'code';
-    } else {
-      const { payload } = await post('/auth/verify', { name: login.name, code: typed });
-      login.failed = payload.ok === false;
-      login.message = payload.message ?? '';
-      if (payload.ok) {
-        login.stage = 'name';
-        login.name = '';
-        login.message = '';
-        view.signingIn = false;
-        me = null;
-        await tick();
-        return;
-      }
-    }
-  } catch (err) {
-    login.failed = true;
-    login.message = `Couldn't reach the bot — ${err.message}`;
-  } finally {
-    login.busy = false;
-  }
-  paint();
-  // Whichever step we ended up on, not whichever one we came from: a refused
-  // name stays on the name field rather than reaching for a code box that is
-  // not on screen. Both arms of this used to name the same element.
-  $(login.stage === 'code' ? 'signin-code' : 'signin-name')?.focus();
-});
 
 // Searching for a person is the one form whose answer is not a toast: it
 // returns a list to choose from, so it renders into the page rather than
@@ -3233,8 +4461,8 @@ document.addEventListener('submit', async (event) => {
     else paint();
   }
 
-  // Land in the campaign that was just made. Making one and then having to
-  // find it in the rail yourself would be a strange way to finish.
+  // Land in the campaign that was just made. Making one and then being put
+  // back on the ledger to find it yourself would be a strange way to finish.
   if (form.dataset.act === 'campaign/create' && payload?.campaignId) {
     await loadCampaign(payload.campaignId);
   }
@@ -3271,35 +4499,49 @@ document.addEventListener('keydown', (event) => {
   if (view.importing || view.creating || view.deleting || view.askingRestore || view.reviewing) {
     closeDialogs(); return paint();
   }
+  if (view.sheet) { view.sheet = null; return paint(); }
   if (view.editing) { view.editing = null; return paint(); }
   if (view.screen === 'transcript') { view.screen = 'campaign'; return paint(); }
+  if (view.screen !== 'campaigns' && status?.campaigns?.length) {
+    view.screen = 'campaigns';
+    entering();
+    return paint();
+  }
 });
 
-// The timer and the "last seen" age tick on their own second, so both keep
-// counting between polls rather than jumping every five.
+// The recording timer ticks on its own second, so it keeps counting between
+// polls rather than jumping every five.
 setInterval(() => {
-  const stamp = $('stamp');
-  if (stamp) stamp.textContent = `seen ${since(lastSeen)}`;
-
   const el = $('timer');
   const live = (status?.recording ?? []).find((r) => r.meetingId === view.meetingId);
   if (el && live && lastSeen) el.textContent = hhmmss(live.recordingForMs + (Date.now() - lastSeen));
 }, 1000);
 
-// Arriving from the landing page's "Log in".
+// Arriving at the card, from either side of it.
 //
-// The sign-in card is view state rather than a screen with a URL, so until now
-// nothing outside the page could ask for it: a link could only drop somebody on
-// the operator's dashboard and leave them to find the button in the rail. That
-// is a poor door for the person it matters most to — a player who has been sent
-// here to read a recap and has never seen this page before.
+// #signin is the landing page's "Log in" link. The card is view state rather
+// than a screen with a URL, so without this nothing outside the page could ask
+// for it: a link could only drop somebody on the operator's dashboard and leave
+// them to find the button themselves. That is a poor door for the person it
+// matters most to — a player sent here to read a recap who has never seen this
+// page before.
 //
-// A fragment rather than a query so nginx needs no rewrite, and read once and
-// then wiped so a refresh after signing in does not throw the card back up.
-// Still gated on `me` in renderScreen, so somebody who already holds a session
-// lands on the dashboard and this does nothing.
-if (location.hash === '#signin') {
+// #signin-error=... is the way back from Discord when it did not work. The
+// callback is a redirect, so it has no response body to explain itself in; it
+// says which of five things happened and the page turns that into a sentence.
+//
+// Fragments rather than queries so nginx needs no rewrite, and read once and
+// then wiped so a refresh does not throw the card back up — or replay an error
+// that has since been fixed. Still gated on `me` in renderScreen, so somebody
+// who already holds a session lands on the dashboard and this does nothing.
+const arrivedAt = location.hash ?? '';
+if (arrivedAt === '#signin' || arrivedAt.startsWith('#signin-error=')) {
   view.signingIn = true;
+  const trouble = arrivedAt.slice('#signin-error='.length);
+  if (SIGNIN_TROUBLE[trouble]) {
+    login.failed = true;
+    login.message = SIGNIN_TROUBLE[trouble];
+  }
   history.replaceState(null, '', location.pathname + location.search);
 }
 

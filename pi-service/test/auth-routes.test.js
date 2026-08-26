@@ -6,153 +6,294 @@ import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
 import { handleAuthRoute } from '../src/web/auth-routes.js';
+import { readSession, STATE_COOKIE } from '../src/web/auth.js';
 
 // The three requests that make up signing in, tested where they are decided.
 //
 // auth-flow.test.js drives these through a running server, which is the right
-// place to prove the wiring. This file is about the rules themselves -- who a
-// typed name resolves to, and what each outcome is allowed to give away -- and
-// nothing imported this module directly before it.
+// place to prove the wiring. This file is about the rules themselves — which
+// callbacks are answered at all, what a refusal gives away, and the one error
+// from Discord that is not a refusal.
 
-async function world(t, { campaign = 'Cipher' } = {}) {
+async function world(t, over = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'quill-auth-'));
   const db = openDb(join(dir, 'db.sqlite'));
-  const cfg = { authSecret: 'a'.repeat(32), ownerUserId: 'dev-1' };
-  const campaignId = db.createCampaign('guild-1', campaign, 'dm-1');
+  const cfg = {
+    authSecret: 'a'.repeat(32),
+    discordClientId: 'app-1',
+    discordClientSecret: 'shh',
+    dashboardUrl: 'http://pihouse.local:8095',
+    ownerUserId: 'dev-1',
+    ...over,
+  };
 
   t.after(async () => {
     db.close();
     await rm(dir, { recursive: true, force: true });
   });
 
-  return { db, cfg, campaignId };
+  return { db, cfg };
 }
 
-// A model of the bot's side of Discord: it DMs, and it can find a member of a
-// guild the bot is in. Records the code so a test can type it back.
-function discord({ findable = {} } = {}) {
-  const sent = [];
-  return {
-    sent,
-    lastCode: () => sent[sent.length - 1]?.code ?? null,
-    ctx: {
-      discord: {
-        sendCode: async ({ userId, code, username }) => {
-          sent.push({ userId, code, username });
-          return { ok: true };
-        },
-        findKnownMember: async ({ query }) => findable[query.toLowerCase()] ?? null,
-      },
-    },
+// Discord, as far as these routes can tell.
+function discordApi({ codes = {}, users = {} } = {}) {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    const sent = init.body ? Object.fromEntries(new URLSearchParams(init.body)) : null;
+    calls.push({ url, sent });
+    if (url.endsWith('/oauth2/token')) {
+      const token = codes[sent?.code];
+      return token
+        ? { ok: true, json: async () => ({ access_token: token }) }
+        : { ok: false, json: async () => ({ error: 'invalid_grant' }) };
+    }
+    if (url.endsWith('/users/@me')) {
+      const bearer = String(init.headers?.Authorization ?? '').replace(/^Bearer /, '');
+      const user = users[bearer];
+      return user ? { ok: true, json: async () => user } : { ok: false, json: async () => ({}) };
+    }
+    return { ok: true, json: async () => ({}) };
   };
+  return { calls, fetchImpl };
 }
 
-const post = (pathname, body, { db, cfg, ctx, cookie = null }) =>
+const go = ({ db, cfg, fetchImpl, path = '/auth/discord', query = '', cookie = null, method = 'GET', body = {} }) =>
   handleAuthRoute({
-    pathname,
+    pathname: path,
+    method,
+    url: new URL(`http://pi${path}${query}`),
     body,
     req: { headers: cookie ? { cookie } : {} },
     db,
     cfg,
-    ctx,
     secure: false,
-    tooSoon: () => false,
+    fetchImpl,
   });
 
-// Somebody invited to a table who has not been recorded saying anything yet.
-//
-// /auth/request finds them: it falls back to Discord's member search for
-// exactly this person, and the comment on that fallback says so. /auth/verify
-// then looked them up in the utterances table alone -- so the bot DMed a valid
-// code and refused that same code a moment later with "That code is not
-// right." There was no way through it: the only cure was to be recorded
-// speaking, which is the thing they were signing in to arrange.
-test('a player who has been invited but has never spoken can still sign in', async (t) => {
-  const { db, cfg, campaignId } = await world(t);
-  const bot = discord({ findable: { priya: { userId: 'newbie-1', username: 'Priya' } } });
+// The state that went out on the URL, pulled back out of the cookie the same
+// answer set — which is exactly what a browser would send back.
+const cookieState = (answer) => /quill_signin=([^;]+)/.exec([answer.cookie].flat().join('; '))?.[1] ?? null;
+const urlState = (answer) => new URL(answer.redirect).searchParams.get('state');
+const errorIn = (answer) => /#signin-error=(.+)$/.exec(answer.redirect)?.[1] ?? null;
 
-  // On the roster, with a character name. No utterances: they have not played.
-  db.addCampaignMember(campaignId, 'newbie-1', 'dm-1');
-  db.setConsent(campaignId, 'newbie-1', true);
-  db.setCharacterName(campaignId, 'newbie-1', 'Sildar');
+// --- off to Discord ---
 
-  const asked = await post('/auth/request', { name: 'Priya' }, { db, cfg, ...bot });
-  assert.equal(asked.status, 200);
-  assert.equal(bot.sent.length, 1, 'the bot DMed a code');
+test('starting a sign-in hands out one state, twice', async (t) => {
+  const { db, cfg } = await world(t);
+  const answer = await go({ db, cfg });
 
-  const done = await post('/auth/verify', { name: 'Priya', code: bot.lastCode() }, { db, cfg, ...bot });
-
-  assert.equal(done.status, 200, done.payload.message);
-  assert.equal(done.payload.ok, true);
-  assert.equal(done.payload.username, 'Priya');
-  assert.match(done.cookie ?? '', /quill_session=/, 'and got a session');
+  assert.match(answer.redirect, /^https:\/\/discord\.com\/oauth2\/authorize\?/);
+  assert.ok(urlState(answer), 'Discord is given a state to hand back');
+  assert.equal(cookieState(answer), urlState(answer), 'and only this browser holds the other copy');
 });
 
-// Identity is the Discord username, and only that.
-//
-// The lookup used to try the transcripts table first, matching whatever
-// display name somebody happened to be recorded under, and fall back to
-// Discord only if that missed. So the name on screen during a session was an
-// identity, which it is not -- it is per-server, changeable at will, and
-// usually the character rather than the person. Two things went wrong with it:
-// a player typing their real username got nowhere, and a display name shared
-// with somebody else could send that person's code to the wrong account.
-test('a display name is not an identity, and does not get a code', async (t) => {
-  const { db, cfg, campaignId } = await world(t);
-
-  // Recorded all season as "Old Dad", whose actual Discord username is petonyx.
-  const meeting = db.createMeeting({
-    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'The Cellar',
-    startedAt: '2026-08-01T19:00:00Z', audioDir: '/tmp',
-  });
-  db.finalizeTranscription(meeting, [
-    { userId: 'real-1', displayName: 'Old Dad', startMs: 0, endMs: 1, text: 'I search the body.' },
-  ]);
-  db.setCharacterName(campaignId, 'real-1', 'Thalgrim');
-
-  const bot = discord({ findable: { petonyx: { userId: 'real-1', username: 'petonyx' } } });
-
-  // The display name they are recorded under: no.
-  const byDisplay = await post('/auth/request', { name: 'Old Dad' }, { db, cfg, ...bot });
-  assert.equal(byDisplay.status, 200, 'and says so without confirming the account exists');
-  assert.equal(bot.sent.length, 0, 'a display name must not get a code');
-
-  // The character name: also no.
-  const byCharacter = await post('/auth/request', { name: 'Thalgrim' }, { db, cfg, ...bot });
-  assert.equal(byCharacter.status, 200);
-  assert.equal(bot.sent.length, 0, 'a character name must not get a code');
-
-  // The username: yes.
-  const byUsername = await post('/auth/request', { name: 'petonyx' }, { db, cfg, ...bot });
-  assert.equal(byUsername.status, 200);
-  assert.equal(bot.sent.length, 1, 'the username is what gets a code');
-  assert.equal(bot.sent[0].userId, 'real-1');
-  assert.equal(bot.sent[0].username, 'petonyx', 'and the DM names the username, not the display name');
-
-  // And the code verifies against the username it was sent under.
-  const done = await post('/auth/verify', { name: 'petonyx', code: bot.lastCode() }, { db, cfg, ...bot });
-  assert.equal(done.status, 200, done.payload.message);
-  assert.equal(done.payload.username, 'petonyx');
+test('two visitors do not share a state', async (t) => {
+  const { db, cfg } = await world(t);
+  assert.notEqual(urlState(await go({ db, cfg })), urlState(await go({ db, cfg })));
 });
 
-// The same string can be one person's display name and another's username.
-// Whoever owns the USERNAME is the one who gets the code -- the other account
-// must not receive somebody else's sign-in.
-test('a username wins over somebody else using it as a display name', async (t) => {
-  const { db, cfg, campaignId } = await world(t);
+// A button that sends somebody to Discord to be told off by a screen mentioning
+// none of this bot's settings is worse than a button that does not appear.
+test('an install with no OAuth credentials sends nobody to Discord', async (t) => {
+  const { db, cfg } = await world(t, { discordClientSecret: null });
+  const answer = await go({ db, cfg });
 
-  const meeting = db.createMeeting({
-    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'The Cellar',
-    startedAt: '2026-08-01T19:00:00Z', audioDir: '/tmp',
+  assert.equal(errorIn(answer), 'config');
+  assert.doesNotMatch(answer.redirect, /discord\.com/);
+});
+
+// --- back from Discord ---
+
+test('a code and a matching state become a session', async (t) => {
+  const { db, cfg } = await world(t);
+  const api = discordApi({ codes: { 'code-1': 'tok-1' }, users: { 'tok-1': { id: '10000000000000001', username: 'saf' } } });
+
+  const started = await go({ db, cfg, fetchImpl: api.fetchImpl });
+  const state = cookieState(started);
+
+  const back = await go({
+    db, cfg, fetchImpl: api.fetchImpl,
+    path: '/auth/callback',
+    query: `?code=code-1&state=${state}`,
+    cookie: `${STATE_COOKIE}=${state}`,
   });
-  db.finalizeTranscription(meeting, [
-    { userId: 'impostor-1', displayName: 'petonyx', startMs: 0, endMs: 1, text: 'that is my name too.' },
-  ]);
 
-  const bot = discord({ findable: { petonyx: { userId: 'real-1', username: 'petonyx' } } });
+  assert.equal(back.redirect, 'http://pihouse.local:8095/app/', 'and back to the page they left');
 
-  const asked = await post('/auth/request', { name: 'petonyx' }, { db, cfg, ...bot });
-  assert.equal(asked.status, 200);
-  assert.equal(bot.sent.length, 1);
-  assert.equal(bot.sent[0].userId, 'real-1', 'the code goes to the account that owns the username');
+  const token = /quill_session=([^;]+)/.exec(back.cookie.join('; '))?.[1];
+  assert.ok(token, 'holding a session');
+  assert.deepEqual(
+    { userId: readSession(db, cfg, token).userId, username: readSession(db, cfg, token).username },
+    { userId: '10000000000000001', username: 'saf' }
+  );
+
+  // The attempt is spent either way. A state that still works once it has been
+  // answered is a state that works twice.
+  assert.match(back.cookie.join('; '), new RegExp(`${STATE_COOKIE}=; .*Max-Age=0`));
+});
+
+// OAuth's whole CSRF defence, and the reason it is checked first: without it
+// anybody can hand somebody a link that quietly signs them into an attacker's
+// account and leaves them typing into it.
+test('a callback this browser did not start is not answered', async (t) => {
+  const { db, cfg } = await world(t);
+  const api = discordApi({ codes: { 'code-1': 'tok-1' }, users: { 'tok-1': { id: '1', username: 'saf' } } });
+
+  const attempts = [
+    { note: 'no cookie at all', query: '?code=code-1&state=abc', cookie: null },
+    { note: 'a cookie for a different attempt', query: '?code=code-1&state=abc', cookie: `${STATE_COOKIE}=xyz` },
+    { note: 'no state on the url', query: '?code=code-1', cookie: `${STATE_COOKIE}=abc` },
+  ];
+
+  for (const { note, query, cookie } of attempts) {
+    const answer = await go({ db, cfg, fetchImpl: api.fetchImpl, path: '/auth/callback', query, cookie });
+    assert.equal(errorIn(answer), 'state', note);
+  }
+
+  assert.equal(api.calls.length, 0, 'and not one request left for Discord over any of it');
+});
+
+test('somebody who says no to Discord is told that is what happened', async (t) => {
+  const { db, cfg } = await world(t);
+  const answer = await go({
+    db, cfg,
+    path: '/auth/callback',
+    query: '?error=access_denied&state=abc',
+    cookie: `${STATE_COOKIE}=abc`,
+  });
+
+  assert.equal(errorIn(answer), 'denied');
+});
+
+// Not a failure — it is Discord answering prompt=none honestly, and the cure
+// is to ask properly.
+test('a first-time visitor is sent back to be asked properly', async (t) => {
+  const { db, cfg } = await world(t);
+  const started = await go({ db, cfg });
+  const state = cookieState(started);
+  assert.equal(new URL(started.redirect).searchParams.get('prompt'), 'none');
+
+  const again = await go({
+    db, cfg,
+    path: '/auth/callback',
+    query: `?error=consent_required&state=${state}`,
+    cookie: `${STATE_COOKIE}=${state}`,
+  });
+
+  assert.match(again.redirect, /discord\.com\/oauth2\/authorize/);
+  assert.equal(new URL(again.redirect).searchParams.get('prompt'), null, 'asked properly this time');
+  assert.notEqual(cookieState(again), state, 'on a fresh attempt, not the spent one');
+});
+
+// The retry has to be able to say it has already retried, or a Discord that
+// keeps answering consent_required bounces the browser round for ever.
+test('the retry is only ever offered once', async (t) => {
+  const { db, cfg } = await world(t);
+  const state = cookieState(await go({ db, cfg }));
+  const retried = cookieState(await go({
+    db, cfg, path: '/auth/callback', query: `?error=consent_required&state=${state}`, cookie: `${STATE_COOKIE}=${state}`,
+  }));
+
+  const third = await go({
+    db, cfg, path: '/auth/callback', query: `?error=consent_required&state=${retried}`, cookie: `${STATE_COOKIE}=${retried}`,
+  });
+
+  assert.equal(errorIn(third), 'discord', 'the loop stops');
+});
+
+test('a code Discord will not honour hands out no session', async (t) => {
+  const { db, cfg } = await world(t);
+  const api = discordApi({ codes: {} });
+  const state = cookieState(await go({ db, cfg }));
+
+  const answer = await go({
+    db, cfg, fetchImpl: api.fetchImpl,
+    path: '/auth/callback', query: `?code=stale&state=${state}`, cookie: `${STATE_COOKIE}=${state}`,
+  });
+
+  assert.equal(errorIn(answer), 'discord');
+  assert.doesNotMatch([answer.cookie].flat().join('; '), /quill_session=[^;]+/);
+});
+
+// A bot with no key to hash session cookies with cannot keep anybody signed in,
+// and should say so rather than redirecting to a dashboard that has forgotten
+// them by the time it loads.
+test('a bot with no signing secret refuses at the last step', async (t) => {
+  const { db, cfg } = await world(t, { authSecret: null, statusToken: null });
+  const api = discordApi({ codes: { c: 'tok-1' }, users: { 'tok-1': { id: '1', username: 'saf' } } });
+
+  const answer = await go({
+    db, cfg, fetchImpl: api.fetchImpl,
+    path: '/auth/callback', query: '?code=c&state=abc', cookie: `${STATE_COOKIE}=abc`,
+  });
+
+  assert.equal(errorIn(answer), 'secret');
+});
+
+// --- who is allowed in at all ---
+
+// The list refuses BEFORE a session exists, not after. A row written and then
+// reasoned about is a row that outlives the reasoning.
+test('somebody Discord vouches for, who is not on the guest list, gets no session', async (t) => {
+  const { db, cfg } = await world(t, { dashboardAllowedUsers: '11111111111111111' });
+  const api = discordApi({ codes: { c: 'tok-1' }, users: { 'tok-1': { id: '99999999999999999', username: 'stranger' } } });
+  const state = cookieState(await go({ db, cfg }));
+
+  const answer = await go({
+    db, cfg, fetchImpl: api.fetchImpl,
+    path: '/auth/callback', query: `?code=c&state=${state}`, cookie: `${STATE_COOKIE}=${state}`,
+  });
+
+  assert.equal(errorIn(answer), 'notinvited');
+  assert.doesNotMatch([answer.cookie].flat().join('; '), /quill_session=[^;]+/);
+  assert.equal(
+    db.raw.prepare('SELECT COUNT(*) AS n FROM auth_sessions').get().n,
+    0,
+    'and nothing was written to show for it'
+  );
+});
+
+test('somebody on the guest list is let through as normal', async (t) => {
+  const { db, cfg } = await world(t, { dashboardAllowedUsers: '11111111111111111' });
+  const api = discordApi({ codes: { c: 'tok-1' }, users: { 'tok-1': { id: '11111111111111111', username: 'matt' } } });
+  const state = cookieState(await go({ db, cfg }));
+
+  const answer = await go({
+    db, cfg, fetchImpl: api.fetchImpl,
+    path: '/auth/callback', query: `?code=c&state=${state}`, cookie: `${STATE_COOKIE}=${state}`,
+  });
+
+  const token = /quill_session=([^;]+)/.exec(answer.cookie.join('; '))?.[1];
+  assert.ok(token, 'no session was opened');
+  assert.equal(readSession(db, cfg, token).username, 'matt');
+});
+
+// --- signing out ---
+
+test('signing out clears the cookie and the row behind it', async (t) => {
+  const { db, cfg } = await world(t);
+  const api = discordApi({ codes: { c: 'tok-1' }, users: { 'tok-1': { id: '1', username: 'saf' } } });
+  const state = cookieState(await go({ db, cfg }));
+  const back = await go({
+    db, cfg, fetchImpl: api.fetchImpl,
+    path: '/auth/callback', query: `?code=c&state=${state}`, cookie: `${STATE_COOKIE}=${state}`,
+  });
+  const token = /quill_session=([^;]+)/.exec(back.cookie.join('; '))[1];
+
+  const out = await go({ db, cfg, path: '/auth/logout', method: 'POST', cookie: `quill_session=${token}` });
+
+  assert.equal(out.payload.ok, true);
+  assert.match(out.cookie, /Max-Age=0/);
+  assert.equal(readSession(db, cfg, token), null, 'the cookie is meaningless because the row is gone');
+});
+
+// --- what is not a route ---
+
+test('the routes answer the method they are meant for and no other', async (t) => {
+  const { db, cfg } = await world(t);
+
+  assert.equal(await go({ db, cfg, path: '/auth/discord', method: 'POST' }), null);
+  assert.equal(await go({ db, cfg, path: '/auth/logout', method: 'GET' }), null);
+  assert.equal(await go({ db, cfg, path: '/auth/verify', method: 'POST' }), null, 'the old code flow is gone');
+  assert.equal(await go({ db, cfg, path: '/auth/request', method: 'POST' }), null);
 });

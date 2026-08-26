@@ -61,8 +61,8 @@ test('the roster carries who they are, what they play, and whether they agreed',
 // words for it invites the reader to think one of them is permissive.
 test('every not-granted consent state reads as not recordable', async (t) => {
   const { db, campaignId } = await harness(t);
-  db.addCampaignMember(campaignId, '111', 'dm-1');
-  db.addCampaignMember(campaignId, '222', 'dm-1');
+  db.forTests.addCampaignMember(campaignId, '111', 'dm-1');
+  db.forTests.addCampaignMember(campaignId, '222', 'dm-1');
   db.raw.prepare('DELETE FROM campaign_consent').run();
 
   db.inviteToCampaign(campaignId, '222', 'dm-1', new Date(Date.now() + 3_600_000).toISOString());
@@ -129,7 +129,7 @@ test('a failed session still carries the job that explains it', async (t) => {
     audioDir: '/tmp',
   });
   db.enqueueTranscribeJob(meetingId, { requireApproval: false });
-  const job = db.getTranscribeJobForMeeting(meetingId);
+  const job = db.forTests.getTranscribeJobForMeeting(meetingId);
   // The real shape of this failure: it retried on the schedule, failed the
   // same way every time, and was eventually given up on.
   db.rescheduleJob(job.id, '2026-08-01T20:00:00Z', 'transcription produced nothing usable');
@@ -189,7 +189,7 @@ test('withdrawing after being recorded does not read as never recorded', async (
 test('declining before ever speaking still reads as never recorded', async (t) => {
   const { db, campaignId } = await harness(t);
   db.setConsent(campaignId, '222', false);
-  db.addCampaignMember(campaignId, '222', 'dm-1');
+  db.forTests.addCampaignMember(campaignId, '222', 'dm-1');
 
   const person = buildCampaignView({ db, campaignId }).roster.find((p) => p.userId === '222');
   assert.equal(person.consent.withdrawn, false);

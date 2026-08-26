@@ -21,7 +21,7 @@ async function tmpDb(t) {
 }
 
 // The campaign in server G, which for these tests is the only one there.
-const only = (db, guildId = 'G') => db.defaultCampaignId(guildId);
+const only = (db, guildId = 'G') => db.forTests.defaultCampaignId(guildId);
 
 function record(db, { guildId = 'G', userId, displayName, lines = 1 }) {
   const id = db.createMeeting({

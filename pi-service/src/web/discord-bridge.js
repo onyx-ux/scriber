@@ -5,6 +5,11 @@
 // a message to a person, and the person is the point. It cannot be faked with a
 // row.
 //
+// It used to be four functions wide. The other two — finding an account by the
+// name somebody typed on the sign-in page, and DMing them six digits — went
+// when signing in became Discord's own job rather than this bot's imitation of
+// it. See web/discord-oauth.js.
+//
 // So this is the whole surface, deliberately two functions wide. It is passed
 // into runAction as part of `ctx` rather than imported by it, for the same
 // reason the rest of that context is: the list of what an action can reach
@@ -116,78 +121,7 @@ export function createDiscordBridge({ client, db, cfg }) {
           `${characterName ? `, as **${characterName}**` : ''}. Nothing of theirs is captured until they say yes.`,
       };
     },
-
-    // Find the one account a sign-in name refers to. See findAcrossGuilds.
-    findKnownMember: ({ query }) => findAcrossGuilds(client, query),
-
-    // Deliver a sign-in code.
-    //
-    // The DM says what it is for and that nobody asked them for a password,
-    // because an unexpected six-digit code is exactly the shape of a phishing
-    // message and the honest version has to look different from one.
-    async sendCode({ userId, code, username }) {
-      const user = await client?.users?.fetch?.(userId).catch(() => null);
-      if (!user) return { ok: false };
-
-      const channel = await user.createDM().catch(() => null);
-      const sent = channel
-        ? await channel
-            .send(
-              `🪶 **${code}** is your code for the Quill dashboard.\n\n` +
-                'It lasts ten minutes and works once. Type it on the sign-in page along with your username ' +
-                `**${username}**.\n\n` +
-                '_If you did not just try to sign in, ignore this — nothing has happened to your account, and ' +
-                'Quill will never ask you for a password._'
-            )
-            .catch(() => null)
-        : null;
-
-      return { ok: Boolean(sent) };
-    },
   };
-}
-
-// --- signing in ---
-
-// One person, found across every server the bot is in, by Discord username.
-//
-// Used only by the sign-in flow, and scoped hard on purpose: a username that
-// matches nobody the bot shares a server with resolves to nothing, so this
-// cannot become a way to make the bot DM a stranger. An ambiguous match
-// resolves to nothing rather than guessing — sending somebody else's sign-in
-// code to the wrong account is the one outcome worth refusing over.
-async function findAcrossGuilds(client, query) {
-  const term = String(query ?? '').trim().toLowerCase();
-  if (term.length < 2) return null;
-
-  const hits = new Map();
-  for (const guild of client?.guilds?.cache?.values?.() ?? []) {
-    let found;
-    try {
-      found = await guild.members.search({ query: term, limit: 8 });
-    } catch {
-      continue;
-    }
-    for (const member of found.values()) {
-      if (member.user.bot) continue;
-      hits.set(member.id, { userId: member.id, username: member.user.username, nick: member.displayName });
-    }
-  }
-
-  const people = [...hits.values()];
-
-  // The Discord username, and nothing else.
-  //
-  // Discord's member search matches nicknames and display names as well, and
-  // this used to accept either — an exact nickname, or a lone hit of any kind.
-  // Both are the wrong key to send a sign-in code on. A nickname is per-server
-  // and a display name can be changed at will, so either can point at a
-  // different person next week, or at somebody else's account today if two
-  // people at the same table have picked the same one. The username is the
-  // handle Discord itself treats as the identity, so it is the only thing that
-  // resolves here.
-  const exact = people.filter((p) => p.username.toLowerCase() === term);
-  return exact.length === 1 ? exact[0] : null;
 }
 
 // What the dashboard needs to show a row: who they are, what the table calls

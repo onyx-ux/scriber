@@ -86,26 +86,23 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, next_attempt_at);
 
 -- Signing in to the dashboard.
 --
--- There is no password column here and there never will be one. You type the
--- Discord name the bot already knows you by, the bot DMs you a six-digit code,
--- and proving you can read that DM is the whole of the authentication — which
--- is exactly as strong as "you control that Discord account", and that is the
--- only identity this bot has ever cared about.
+-- There is no password column here and there never will be one. You sign in
+-- with Discord: Discord asks you, Discord checks you, and this bot is handed a
+-- user id — which is exactly as strong as "you control that Discord account",
+-- and that is the only identity this bot has ever cared about.
 --
--- Neither table stores anything a leak would make worse: a Discord id and the
+-- One table, where there used to be two. The other held six-digit codes the
+-- bot DMed out, and it went with the flow that needed them: nothing is typed
+-- any more, so there is nothing to hold for ten minutes and count wrong
+-- guesses against. The DROP is deliberate rather than a tidy-up — a table of
+-- live credentials for a flow that no longer exists is the worst kind of dead
+-- code, because it still works.
+--
+-- This table stores nothing a leak would make worse: a Discord id and the
 -- username attached to it, both of which are public in any server you are in.
--- No email, no real name, no password, not even a reversible copy of the code.
-CREATE TABLE IF NOT EXISTS auth_codes (
-  user_id TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
-  -- HMAC of the six digits, never the digits. A ten-minute window and five
-  -- attempts is what makes six digits enough; the HMAC is what stops a stolen
-  -- database file turning into a working code inside that window.
-  code_hash TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  expires_at TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+-- No email, no real name, no password, and no OAuth token — the one Discord
+-- issues is spent on a single question and revoked. See web/discord-oauth.js.
+DROP TABLE IF EXISTS auth_codes;
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   -- The HMAC of the cookie, so the row cannot be turned back into a session.
@@ -695,10 +692,6 @@ function wrap(db) {
 
     // --- campaign identity and membership ---
 
-    defaultCampaignId(guildId) {
-      return defaultCampaignId(guildId);
-    },
-
     listCampaignsInGuild(guildId) {
       return db.prepare(`${CAMPAIGN_VIEW} AND c.guild_id = ? ORDER BY c.id`).all(guildId);
     },
@@ -728,29 +721,10 @@ function wrap(db) {
       return db.prepare(`SELECT COUNT(*) AS n FROM campaigns WHERE manager_user_id = ?`).get(userId).n;
     },
 
-    addCampaignMember(campaignId, userId, addedBy = null) {
-      return db
-        .prepare(
-          `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, ?)
-           ON CONFLICT(campaign_id, user_id) DO NOTHING`
-        )
-        .run(campaignId, userId, addedBy).changes;
-    },
-
-    removeCampaignMember(campaignId, userId) {
-      return db
-        .prepare(`DELETE FROM campaign_members WHERE campaign_id = ? AND user_id = ?`)
-        .run(campaignId, userId).changes;
-    },
-
     isCampaignMember(campaignId, userId) {
       return Boolean(
         db.prepare(`SELECT 1 FROM campaign_members WHERE campaign_id = ? AND user_id = ?`).get(campaignId, userId)
       );
-    },
-
-    listCampaignMembers(campaignId) {
-      return db.prepare(`SELECT * FROM campaign_members WHERE campaign_id = ? ORDER BY added_at`).all(campaignId);
     },
 
     // What /join offers: the campaigns this person is actually at the table
@@ -773,14 +747,12 @@ function wrap(db) {
              UNION SELECT manager_user_id FROM campaigns WHERE manager_user_id IS NOT NULL
              UNION SELECT user_id FROM campaign_consent
              UNION SELECT user_id FROM auth_sessions
-             UNION SELECT user_id FROM auth_codes
              UNION SELECT user_id FROM utterances
            )
            SELECT p.user_id AS userId,
              COALESCE(
                (SELECT s.username FROM auth_sessions s WHERE s.user_id = p.user_id
                  ORDER BY s.created_at DESC LIMIT 1),
-               (SELECT a.username FROM auth_codes a WHERE a.user_id = p.user_id),
                (SELECT u.display_name FROM utterances u WHERE u.user_id = p.user_id
                  ORDER BY u.id DESC LIMIT 1)
              ) AS name,
@@ -788,8 +760,6 @@ function wrap(db) {
                WHERE s.user_id = p.user_id AND s.expires_at > datetime('now')) AS sessions,
              (SELECT MAX(COALESCE(s.last_seen_at, s.created_at)) FROM auth_sessions s
                WHERE s.user_id = p.user_id) AS lastSeen,
-             (SELECT COUNT(*) FROM auth_codes a
-               WHERE a.user_id = p.user_id AND a.expires_at > datetime('now')) AS codePending,
              (SELECT COUNT(*) FROM utterances u WHERE u.user_id = p.user_id) AS lines
            FROM people p
            WHERE p.user_id IS NOT NULL AND p.user_id <> ''`
@@ -1125,10 +1095,6 @@ function wrap(db) {
         .get(meetingId);
     },
 
-    setTranscriptPath(meetingId, path) {
-      db.prepare(`UPDATE meetings SET transcript_path = ? WHERE id = ?`).run(path, meetingId);
-    },
-
     setSummary(meetingId, notesObj) {
       db.prepare(`UPDATE meetings SET summary_json = ?, status = 'done' WHERE id = ?`).run(
         JSON.stringify(notesObj),
@@ -1211,15 +1177,6 @@ function wrap(db) {
              ORDER BY id ASC`
         )
         .all();
-    },
-
-    getTranscribeJobForMeeting(meetingId) {
-      return db
-        .prepare(
-          `SELECT * FROM jobs WHERE meeting_id = ? AND type = 'transcribe'
-             ORDER BY id DESC LIMIT 1`
-        )
-        .get(meetingId);
     },
 
     approveTranscribeNow(jobId) {
@@ -1480,58 +1437,9 @@ function wrap(db) {
 
     // --- signing in to the dashboard ---
     //
-    // Deliberately dumb storage. Every decision about what a code or a session
-    // MEANS lives in web/auth.js; this only writes rows and deletes them, so
-    // there is one place to read to know how sign-in works.
-
-    putAuthCode: db.transaction((userId, username, codeHash, expiresAt) => {
-      // One live code per person. Asking for a second replaces the first
-      // rather than leaving two valid — otherwise every request widens the
-      // window instead of restarting it.
-      db.prepare(
-        `INSERT INTO auth_codes (user_id, username, code_hash, attempts, expires_at, created_at)
-         VALUES (?, ?, ?, 0, ?, datetime('now'))
-         ON CONFLICT(user_id) DO UPDATE SET
-           username = excluded.username, code_hash = excluded.code_hash,
-           attempts = 0, expires_at = excluded.expires_at, created_at = datetime('now')`
-      ).run(userId, username, codeHash, expiresAt);
-    }),
-
-    getAuthCode(userId) {
-      return db.prepare(`SELECT * FROM auth_codes WHERE user_id = ?`).get(userId) ?? null;
-    },
-
-    // Who a live code was sent to, found by the name that was typed.
-    //
-    // The counterpart of getAuthCode, which needs the user id -- and the id is
-    // exactly what verifying does not have when the person has never been
-    // recorded speaking. The row itself is the record that the bot DMed this
-    // account a moment ago, which is a stronger claim than anything the
-    // transcript tables can make about them.
-    //
-    // Expired rows are excluded rather than left to checkCode: a dead code
-    // must not shadow the live one somebody is holding. LIMIT 2 for the same
-    // reason findLocalPerson uses it -- two people sharing a display name is
-    // real, and guessing between them would send one of them into the other's
-    // account.
-    findAuthCodeByUsername(username, nowIso = new Date().toISOString()) {
-      const rows = db
-        .prepare(
-          `SELECT user_id AS userId, username FROM auth_codes
-            WHERE lower(username) = ? AND expires_at > ?
-            LIMIT 2`
-        )
-        .all(String(username ?? '').toLowerCase(), nowIso);
-      return rows.length === 1 ? rows[0] : null;
-    },
-
-    countAuthAttempt(userId) {
-      return db.prepare(`UPDATE auth_codes SET attempts = attempts + 1 WHERE user_id = ?`).run(userId).changes;
-    },
-
-    dropAuthCode(userId) {
-      return db.prepare(`DELETE FROM auth_codes WHERE user_id = ?`).run(userId).changes;
-    },
+    // Deliberately dumb storage. Every decision about what a session MEANS
+    // lives in web/auth.js; this only writes rows and deletes them, so there is
+    // one place to read to know how sign-in works.
 
     openAuthSession(tokenHash, userId, username, expiresAt) {
       db.prepare(
@@ -1561,9 +1469,8 @@ function wrap(db) {
     // Expired rows are not merely ignored, they are deleted: a table of dead
     // sessions is a table of things that could come back if a clock moved.
     sweepAuth(nowIso = new Date().toISOString()) {
-      const codes = db.prepare(`DELETE FROM auth_codes WHERE expires_at <= ?`).run(nowIso).changes;
       const sessions = db.prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(nowIso).changes;
-      return { codes, sessions };
+      return { sessions };
     },
 
     // --- what the models have cost ---
@@ -1652,7 +1559,9 @@ function wrap(db) {
     }),
 
     // Old rows are noise: the dashboard shows a fortnight and nothing reads
-    // further back. Swept with the auth tables.
+    // further back. Swept with the auth tables, on the hourly timer in
+    // web/server.js — which this comment claimed for a long time before it was
+    // true of anything, so the table grew without limit.
     pruneModelUsage(days = 90) {
       return db.prepare(`DELETE FROM model_usage WHERE day < date('now', ?)`).run(`-${Math.max(1, days | 0)} days`)
         .changes;
@@ -2013,6 +1922,64 @@ function wrap(db) {
         longestSessionNumber: longest?.sessionNumber ?? null,
         longestMs: longest?.ms ?? 0,
       };
+    },
+
+    // --- arranging state in tests ---
+    //
+    // Doors nothing in src/ opens. They are here rather than on the interface
+    // above because a method the bot never calls still LOOKS like a method the
+    // bot calls, and the store is already wide enough to read carefully.
+    //
+    // The SQL stays in this file on purpose — see docs/adr/0001. What moves is
+    // the label, not the schema knowledge: `db.forTests.addCampaignMember(...)`
+    // says at the call site that a test is arranging state by hand rather than
+    // going the way a person would.
+    //
+    // Prefer the real route where a test has one. Putting somebody on a roster
+    // in production means inviting them and having them accept, or naming their
+    // character — see the invite() helper in commands-multicampaign.test.js.
+    // Reach for these when the state you need is genuinely awkward to reach,
+    // not to skip a flow the test is actually about.
+    forTests: {
+      // A guild's default campaign, creating one if it has none. Production
+      // reaches this through createMeeting; tests use it to name "the campaign
+      // in this server" without having created one explicitly.
+      defaultCampaignId(guildId) {
+        return defaultCampaignId(guildId);
+      },
+
+      // Membership by fiat, with no consent record — which is a state the bot
+      // can reach (naming a character enrols somebody) but never arranges
+      // this way.
+      addCampaignMember(campaignId, userId, addedBy = null) {
+        return db
+          .prepare(
+            `INSERT INTO campaign_members (campaign_id, user_id, added_by) VALUES (?, ?, ?)
+             ON CONFLICT(campaign_id, user_id) DO NOTHING`
+          )
+          .run(campaignId, userId, addedBy).changes;
+      },
+
+      // Membership only. The production act is removeFromCampaign, which also
+      // clears the consent row so that being asked again is a fresh question.
+      removeCampaignMember(campaignId, userId) {
+        return db
+          .prepare(`DELETE FROM campaign_members WHERE campaign_id = ? AND user_id = ?`)
+          .run(campaignId, userId).changes;
+      },
+
+      listCampaignMembers(campaignId) {
+        return db.prepare(`SELECT * FROM campaign_members WHERE campaign_id = ? ORDER BY added_at`).all(campaignId);
+      },
+
+      getTranscribeJobForMeeting(meetingId) {
+        return db
+          .prepare(
+            `SELECT * FROM jobs WHERE meeting_id = ? AND type = 'transcribe'
+               ORDER BY id DESC LIMIT 1`
+          )
+          .get(meetingId);
+      },
     },
   };
 }

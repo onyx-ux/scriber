@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
 import { accessRoster } from '../src/web/access.js';
-import { openSession, issueCode, readSession } from '../src/web/auth.js';
+import { openSession, readSession } from '../src/web/auth.js';
 import { scopeStatus } from '../src/web/scope.js';
 import { buildViewer } from '../src/web/viewer.js';
 import { runAction } from '../src/web/actions.js';
@@ -123,13 +123,6 @@ test('a live session shows as signed in, and a spent one does not', async (t) =>
   db.closeAllAuthSessions(PLAYER);
   assert.equal(find(accessRoster({ db, cfg, client }), PLAYER).signedIn, false);
   assert.equal(readSession(db, cfg, token), null);
-});
-
-test('an outstanding code is visible, because it is access about to happen', async (t) => {
-  const { db } = await world(t);
-  issueCode(db, cfg, { userId: PLAYER, username: 'saf' });
-
-  assert.equal(find(accessRoster({ db, cfg, client }), PLAYER).codePending, true);
 });
 
 // The headline fact. With login off the levels are not being enforced at all,

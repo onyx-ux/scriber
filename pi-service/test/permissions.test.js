@@ -25,7 +25,7 @@ async function tmpDb(t) {
 // A guild's default campaign — its oldest, and for a fresh test database its
 // only one. Everything is keyed on campaign ids now, so a test that means "the
 // campaign in server G" has to say so.
-const only = (db, guildId) => db.defaultCampaignId(guildId);
+const only = (db, guildId) => db.forTests.defaultCampaignId(guildId);
 
 // --- claiming ---
 
@@ -219,7 +219,7 @@ test('a guild resolves to its oldest campaign when nothing names one', async (t)
   const first = db.createCampaign('G', 'Cipher', DM);
   db.createCampaign('G', 'Second Game', PLAYER);
 
-  assert.equal(db.defaultCampaignId('G'), first);
+  assert.equal(db.forTests.defaultCampaignId('G'), first);
   assert.equal(db.getCampaignName(first), 'Cipher');
   assert.equal(db.getCampaignManager(first), DM);
 });
@@ -260,9 +260,9 @@ test('the reads are per campaign, not per server', async (t) => {
 
 test('a guild with no campaign gets one on demand', async (t) => {
   const db = await tmpDb(t);
-  const id = db.defaultCampaignId('BRAND-NEW');
+  const id = db.forTests.defaultCampaignId('BRAND-NEW');
   assert.ok(id);
-  assert.equal(db.defaultCampaignId('BRAND-NEW'), id, 'and not a second one');
+  assert.equal(db.forTests.defaultCampaignId('BRAND-NEW'), id, 'and not a second one');
 });
 
 test('each campaign numbers its own sessions', async (t) => {
@@ -360,7 +360,7 @@ test('membership is per campaign, not per server', async (t) => {
   const db = await tmpDb(t);
   const a = db.createCampaign('G', 'Cipher', DM);
   const b = db.createCampaign('G', 'Second Game', DM);
-  db.addCampaignMember(a, PLAYER, DM);
+  db.forTests.addCampaignMember(a, PLAYER, DM);
 
   assert.equal(db.isCampaignMember(a, PLAYER), true);
   assert.equal(db.isCampaignMember(b, PLAYER), false, 'same server, different table');
@@ -369,9 +369,9 @@ test('membership is per campaign, not per server', async (t) => {
 test('adding the same member twice is a no-op', async (t) => {
   const db = await tmpDb(t);
   const id = db.createCampaign('G', 'Cipher', DM);
-  assert.equal(db.addCampaignMember(id, PLAYER, DM), 1);
-  assert.equal(db.addCampaignMember(id, PLAYER, DM), 0);
-  assert.equal(db.listCampaignMembers(id).length, 2, 'manager + player');
+  assert.equal(db.forTests.addCampaignMember(id, PLAYER, DM), 1);
+  assert.equal(db.forTests.addCampaignMember(id, PLAYER, DM), 0);
+  assert.equal(db.forTests.listCampaignMembers(id).length, 2, 'manager + player');
 });
 
 // This is what /join offers. Deliberately different from listCampaignsForUser,
@@ -380,7 +380,7 @@ test('adding the same member twice is a no-op', async (t) => {
 test('listCampaignsForMember covers a player who has never spoken', async (t) => {
   const db = await tmpDb(t);
   const id = db.createCampaign('G', 'Cipher', DM);
-  db.addCampaignMember(id, PLAYER, DM);
+  db.forTests.addCampaignMember(id, PLAYER, DM);
 
   assert.deepEqual(db.listCampaignsForMember(PLAYER).map((c) => c.name), ['Cipher']);
   assert.deepEqual(db.listCampaignsForUser(PLAYER), [], 'and has still spoken in none');
@@ -389,9 +389,9 @@ test('listCampaignsForMember covers a player who has never spoken', async (t) =>
 test('a removed member is no longer offered the campaign', async (t) => {
   const db = await tmpDb(t);
   const id = db.createCampaign('G', 'Cipher', DM);
-  db.addCampaignMember(id, PLAYER, DM);
+  db.forTests.addCampaignMember(id, PLAYER, DM);
 
-  assert.equal(db.removeCampaignMember(id, PLAYER), 1);
+  assert.equal(db.forTests.removeCampaignMember(id, PLAYER), 1);
   assert.deepEqual(db.listCampaignsForMember(PLAYER), []);
 });
 
@@ -495,7 +495,7 @@ test('the manager can always start their own campaign', async (t) => {
 test('a player added to the roster can start a recording', async (t) => {
   const db = await tmpDb(t);
   const id = db.createCampaign('G', 'Cipher', DM);
-  db.addCampaignMember(id, PLAYER, DM);
+  db.forTests.addCampaignMember(id, PLAYER, DM);
   assert.equal(resolveMemberCampaign(joining('G', PLAYER), db).campaign.id, id);
 });
 
@@ -526,7 +526,7 @@ test('naming a campaign you are not on the roster for is refused', async (t) => 
   const db = await tmpDb(t);
   db.createCampaign('G', 'Cipher', DM);
   const theirs = db.createCampaign('G', 'Private Game', PLAYER);
-  db.addCampaignMember(db.defaultCampaignId('G'), 'newbie', DM);
+  db.forTests.addCampaignMember(db.forTests.defaultCampaignId('G'), 'newbie', DM);
 
   assert.match(resolveMemberCampaign(joining('G', 'newbie', String(theirs)), db).error, /roster for here/);
 });

@@ -599,8 +599,8 @@ test('the owner reaches a campaign they do not run', async (t) => {
 
 test('someone at both tables is asked which, by name', async (t) => {
   const { dispatch, db, cipher, strahd } = await twoTables(t);
-  db.addCampaignMember(cipher.id, 'plays-both', DM_A);
-  db.addCampaignMember(strahd.id, 'plays-both', DM_B);
+  db.forTests.addCampaignMember(cipher.id, 'plays-both', DM_A);
+  db.forTests.addCampaignMember(strahd.id, 'plays-both', DM_B);
   played(db, cipher.id, { speaker: 'plays-both', text: 'a' });
   played(db, strahd.id, { speaker: 'plays-both', text: 'b' });
 
@@ -612,8 +612,8 @@ test('someone at both tables is asked which, by name', async (t) => {
 
 test('and naming one resolves it', async (t) => {
   const { dispatch, db, cipher, strahd } = await twoTables(t);
-  db.addCampaignMember(cipher.id, 'plays-both', DM_A);
-  db.addCampaignMember(strahd.id, 'plays-both', DM_B);
+  db.forTests.addCampaignMember(cipher.id, 'plays-both', DM_A);
+  db.forTests.addCampaignMember(strahd.id, 'plays-both', DM_B);
   played(db, cipher.id, { speaker: 'plays-both', text: 'a', tldr: 'CIPHER RECAP' });
   played(db, strahd.id, { speaker: 'plays-both', text: 'b', tldr: 'STRAHD RECAP' });
 
@@ -733,8 +733,8 @@ test('every subcommand that resolves a campaign lets you name one', async () => 
 // from a command that can act on it.
 test('being asked which campaign is always answerable', async (t) => {
   const { dispatch, db, cipher, strahd } = await twoTables(t);
-  db.addCampaignMember(cipher.id, 'plays-both', DM_A);
-  db.addCampaignMember(strahd.id, 'plays-both', DM_B);
+  db.forTests.addCampaignMember(cipher.id, 'plays-both', DM_A);
+  db.forTests.addCampaignMember(strahd.id, 'plays-both', DM_B);
 
   // /setcharacter is the one a player reaches for first, and the one that was
   // broken: a member of two tables here got told to use an option that did
@@ -753,8 +753,8 @@ test('being asked which campaign is always answerable', async (t) => {
 
 test('/whoami answers per campaign', async (t) => {
   const { dispatch, db, cipher, strahd } = await twoTables(t);
-  db.addCampaignMember(cipher.id, 'plays-both', DM_A);
-  db.addCampaignMember(strahd.id, 'plays-both', DM_B);
+  db.forTests.addCampaignMember(cipher.id, 'plays-both', DM_A);
+  db.forTests.addCampaignMember(strahd.id, 'plays-both', DM_B);
   db.setCharacterName(cipher.id, 'plays-both', 'Fuji');
 
   assert.match(await run(dispatch, command('campaign', { sub: 'whoami', user: 'plays-both', options: { campaign: cipher.id } })), /Fuji/);
@@ -905,7 +905,7 @@ test('everyone already at the table when consent arrived is carried over', async
   const h = await harness(t);
   // A campaign as it existed before consent: members, no consent rows.
   const id = h.db.createCampaign(GUILD, 'Established', DM_A);
-  h.db.addCampaignMember(id, 'long-time-player', DM_A);
+  h.db.forTests.addCampaignMember(id, 'long-time-player', DM_A);
   h.db.raw.prepare('DELETE FROM campaign_consent WHERE campaign_id = ?').run(id);
   // A database from before consent existed has no carry-over marker either —
   // without clearing it this would test the guard rather than the carry-over.
@@ -972,7 +972,7 @@ test('a restart cannot grant consent nobody gave', async (t) => {
   const id = h.db.createCampaign(GUILD, 'Established', DM_A);
 
   // A member with no consent row — exactly what naming someone produces.
-  h.db.addCampaignMember(id, 'never-asked', DM_A);
+  h.db.forTests.addCampaignMember(id, 'never-asked', DM_A);
   h.db.raw.prepare('DELETE FROM campaign_consent WHERE campaign_id = ? AND user_id = ?').run(id, 'never-asked');
   assert.equal(h.db.mayRecord(id, 'never-asked'), false);
 
@@ -989,7 +989,7 @@ test('a restart cannot grant consent nobody gave', async (t) => {
 test('a decline survives a restart', async (t) => {
   const h = await harness(t);
   const id = h.db.createCampaign(GUILD, 'Established', DM_A);
-  h.db.addCampaignMember(id, 'refuser', DM_A);
+  h.db.forTests.addCampaignMember(id, 'refuser', DM_A);
   h.db.inviteToCampaign(id, 'refuser', DM_A, new Date(Date.now() + 3_600_000).toISOString());
   h.db.decideConsent(id, 'refuser', false);
   assert.equal(h.db.getConsent(id, 'refuser').state, 'declined');

@@ -61,7 +61,8 @@ async function serving(t, over = {}) {
   const base = `http://127.0.0.1:${server.address().port}`;
 
   t.after(async () => {
-    close();
+    // Awaited: the database must outlive the last request still being answered.
+    await close();
     db.close();
     await rm(dir, { recursive: true, force: true });
   });
@@ -237,4 +238,46 @@ test('notes are readable over HTTP, and an unknown session is a 404', async (t) 
   assert.deepEqual(view.funnyMoments, ['Vex ate the lock']);
 
   assert.equal((await fetch(`${base}/notes?meeting=9999&token=sesame`)).status, 404);
+});
+
+// --- the sweep ---
+
+// store/db.js has always said the model usage log was "swept with the auth
+// tables". Nothing called pruneModelUsage, so a bot left running kept every
+// row it had ever written — the one table here with no ceiling on it, since
+// every summary and every /ask appends one.
+//
+// Set up by hand rather than through serving(), because the sweep runs the
+// moment the server starts and the row has to be old before that happens.
+test('starting the server prunes model usage older than the window', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'quill-sweep-'));
+  const db = openDb(join(dir, 'db.sqlite'));
+
+  const age = (days) =>
+    db.raw
+      .prepare(
+        `INSERT INTO model_usage (day, provider, model, role, total_tokens)
+         VALUES (date('now', ?), 'gemini', 'gemini-3.6-flash', 'summary', 100)`
+      )
+      .run(`-${days} days`);
+
+  age(120);
+  age(91);
+  age(30);
+  age(0);
+  const count = () => db.raw.prepare(`SELECT COUNT(*) AS n FROM model_usage`).get().n;
+  assert.equal(count(), 4, 'all four are there to begin with');
+
+  const cfg = { ...baseCfg, statusPort: await freePort() };
+  const { server, close } = startStatusServer({ db, cfg, activeSessions: new Map() });
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  t.after(async () => {
+    // Awaited: the database must outlive the last request still being answered.
+    await close();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  assert.equal(count(), 2, 'the two beyond ninety days are gone, the recent two stay');
 });

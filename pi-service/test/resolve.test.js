@@ -72,7 +72,7 @@ test('naming a campaign you have not played in is refused', async (t) => {
   const db = await tmpDb(t);
   played(db, { guildId: 'G', userId: 'player' });
   played(db, { guildId: 'H', userId: 'stranger' });
-  const theirs = db.defaultCampaignId('G');
+  const theirs = db.forTests.defaultCampaignId('G');
 
   const scope = resolveReadableCampaign(at('SOME-OTHER-SERVER', 'stranger', String(theirs)), db);
   assert.equal(where(scope), undefined);
@@ -84,7 +84,7 @@ test('sitting in one campaign does not unlock another by name', async (t) => {
   const db = await tmpDb(t);
   played(db, { guildId: 'G', userId: 'player' });
   played(db, { guildId: 'H', userId: 'other' });
-  const theirs = db.defaultCampaignId('H');
+  const theirs = db.forTests.defaultCampaignId('H');
 
   const scope = resolveReadableCampaign(at('G', 'player', String(theirs)), db);
   assert.equal(where(scope), undefined);
@@ -137,7 +137,7 @@ test('a player in two campaigns is asked which, and told the names', async (t) =
   const db = await tmpDb(t);
   played(db, { guildId: 'G', userId: 'player', name: 'Cipher' });
   played(db, { guildId: 'H', userId: 'player', name: 'Other Game' });
-  db.setCampaignName(db.defaultCampaignId('G'), 'Cipher');
+  db.setCampaignName(db.forTests.defaultCampaignId('G'), 'Cipher');
 
   const scope = resolveReadableCampaign(at('SOME-OTHER-SERVER', 'player'), db);
   assert.equal(where(scope), undefined);
@@ -150,7 +150,7 @@ test('and can pick one of their own', async (t) => {
   const db = await tmpDb(t);
   played(db, { guildId: 'G', userId: 'player' });
   played(db, { guildId: 'H', userId: 'player' });
-  const mine = db.defaultCampaignId('H');
+  const mine = db.forTests.defaultCampaignId('H');
 
   assert.equal(where(resolveReadableCampaign(at('SOME-OTHER-SERVER', 'player', String(mine)), db)), 'H');
 });
@@ -161,7 +161,7 @@ test('a campaign can be named as well as picked', async (t) => {
   const db = await tmpDb(t);
   played(db, { guildId: 'G', userId: 'player' });
   played(db, { guildId: 'H', userId: 'player' });
-  db.setCampaignName(db.defaultCampaignId('H'), 'Curse of Strahd');
+  db.setCampaignName(db.forTests.defaultCampaignId('H'), 'Curse of Strahd');
 
   assert.equal(where(resolveReadableCampaign(at('ELSEWHERE', 'player', 'Curse of Strahd'), db)), 'H');
   assert.equal(where(resolveReadableCampaign(at('ELSEWHERE', 'player', 'curseofstrahd'), db)), 'H', 'the slug too');
@@ -261,7 +261,7 @@ test('listCampaignsForUser is participation, not membership of a server', async 
 test('listCampaignsForUser reports the campaign name when one is set', async (t) => {
   const db = await tmpDb(t);
   played(db, { guildId: 'G', userId: 'player', name: '🎲Session' });
-  db.setCampaignName(db.defaultCampaignId('G'), 'Cipher');
+  db.setCampaignName(db.forTests.defaultCampaignId('G'), 'Cipher');
 
   const [c] = db.listCampaignsForUser('player');
   assert.equal(c.name, 'Cipher');

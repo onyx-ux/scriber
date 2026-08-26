@@ -173,13 +173,13 @@ test('searchUtterances is case-insensitive and neutralises LIKE wildcards', asyn
   const id = seedMeeting(db);
   db.finalizeTranscription(id, ROWS);
 
-  const mine = db.defaultCampaignId('G1');
+  const mine = db.forTests.defaultCampaignId('G1');
   assert.equal(db.searchUtterances(mine, 'marrowgate', 5).length, 1);
   assert.equal(db.searchUtterances(mine, 'MARROWGATE', 5).length, 1);
   assert.equal(db.searchUtterances(mine, '%', 5).length, 0, 'a bare % must not match everything');
   assert.equal(db.searchUtterances(mine, '_', 5).length, 0);
   assert.equal(
-    db.searchUtterances(db.defaultCampaignId('OTHER_GUILD'), 'marrowgate', 5).length,
+    db.searchUtterances(db.forTests.defaultCampaignId('OTHER_GUILD'), 'marrowgate', 5).length,
     0,
     'campaigns must not leak across guilds'
   );
@@ -205,8 +205,8 @@ test('search does not leak between two campaigns in one server', async (t) => {
 
 test('character names are per-campaign and upsert cleanly', async (t) => {
   const db = await freshDb(t);
-  const a = db.defaultCampaignId('G1');
-  const b = db.defaultCampaignId('G2');
+  const a = db.forTests.defaultCampaignId('G1');
+  const b = db.forTests.defaultCampaignId('G2');
   db.setCharacterName(a, 'u1', 'Thalric');
   db.setCharacterName(a, 'u1', 'Thalric the Second');
 
@@ -249,7 +249,7 @@ test('campaignStats totals only completed sessions, ranks talkers, and finds the
   const id3 = db.createMeeting({ guildId: 'G1', channelId: 'C1', channelName: 'Cipher', startedAt: '2026-07-15T10:00:00Z', audioDir: '/tmp' });
   db.finalizeTranscription(id3, [{ userId: 'u1', displayName: 'Koru', startMs: 0, endMs: 1000, text: 'e' }]);
 
-  const stats = db.campaignStats(db.defaultCampaignId('G1'));
+  const stats = db.campaignStats(db.forTests.defaultCampaignId('G1'));
   assert.equal(stats.totalSessions, 2);
   assert.equal(stats.totalLines, 4, 'only lines from the 2 completed sessions');
   assert.equal(stats.totalMs, 60 * 60_000 + 3 * 60 * 60_000);
@@ -257,7 +257,7 @@ test('campaignStats totals only completed sessions, ranks talkers, and finds the
   assert.equal(stats.longestMs, 3 * 60 * 60_000);
   assert.deepEqual(stats.talkative[0], { display_name: 'Koru', lines: 3 });
 
-  assert.deepEqual(db.campaignStats(db.defaultCampaignId('OTHER_GUILD')), {
+  assert.deepEqual(db.campaignStats(db.forTests.defaultCampaignId('OTHER_GUILD')), {
     totalSessions: 0,
     totalMs: 0,
     totalLines: 0,
@@ -266,4 +266,40 @@ test('campaignStats totals only completed sessions, ranks talkers, and finds the
     longestSessionNumber: null,
     longestMs: 0,
   });
+});
+
+// --- the test-only surface stays test-only ---
+
+// db.forTests exists so that arranging state by hand is visible at the call
+// site rather than indistinguishable from something the bot does. That only
+// holds while the bot itself never reaches for it: the moment a src/ module
+// does, the label is a lie and the store has quietly grown a door again.
+//
+// See docs/adr/0001 for why the store is one wide module rather than five, and
+// why the fix for a cluster like this is a narrower seam, not a split.
+test('nothing in src/ opens a test-only door', async () => {
+  const { readdir, readFile } = await import('node:fs/promises');
+  const { fileURLToPath } = await import('node:url');
+
+  const root = fileURLToPath(new URL('../src', import.meta.url));
+
+  const walk = async (dir) => {
+    const out = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...(await walk(full)));
+      else if (entry.name.endsWith('.js')) out.push(full);
+    }
+    return out;
+  };
+
+  const offenders = [];
+  for (const file of await walk(root)) {
+    const source = await readFile(file, 'utf8');
+    // The definition itself lives in store/db.js; every other mention is a use.
+    if (file.endsWith(join('store', 'db.js'))) continue;
+    if (/\bforTests\b/.test(source)) offenders.push(file.slice(root.length + 1));
+  }
+
+  assert.deepEqual(offenders, [], 'these reach into the store\'s test-only surface');
 });

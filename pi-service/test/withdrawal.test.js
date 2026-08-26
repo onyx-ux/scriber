@@ -126,7 +126,7 @@ test('stopping is reversible, and resuming is forward-looking too', async (t) =>
 // and quietly removing them would also take away their /recap.
 test('stopping leaves them on the roster', async (t) => {
   const { db, campaignId } = await harness(t);
-  db.addCampaignMember(campaignId, SAF, 'dm-1');
+  db.forTests.addCampaignMember(campaignId, SAF, 'dm-1');
 
   stopRecording(db, { campaignId, userId: SAF });
   assert.equal(db.isCampaignMember(campaignId, SAF), true);

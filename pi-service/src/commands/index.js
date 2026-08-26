@@ -25,6 +25,10 @@ import {
 import { isOwner } from '../campaign/permissions.js';
 import { createCampaign } from '../campaign/create.js';
 import { handleCorrect, handleUncorrect, handleCorrections, handleReplay } from './corrections.js';
+// Naming a character is a rule, not a write: it decides what the name is, and
+// whether that name will appear in anything. Both callers go through here so
+// the dashboard and /setchar cannot drift — see pipeline/job-actions.js.
+import { setCharacter } from '../pipeline/job-actions.js';
 import { handleCampaignDelete, handleCampaignRestore } from './archive.js';
 import { handleRestoreModal } from './restore-request.js';
 import { notifyRestoreRequested } from '../delivery/restore-notify.js';
@@ -708,8 +712,10 @@ async function handleCampaignInvite(interaction, db, cfg, target) {
 
   db.inviteToCampaign(target.id, user.id, interaction.user.id, expiresAt.toISOString());
   // A character name given now is held until they accept — naming someone
-  // does not put them at the table any more, answering does.
-  if (name) db.setCharacterName(target.id, user.id, name);
+  // does not put them at the table any more, answering does. Its mayRecord is
+  // ignored on purpose: of course an invitee has not agreed yet, and the reply
+  // below already says the recording waits on them.
+  if (name) setCharacter(db, { campaignId: target.id, userId: user.id, name });
 
   return interaction.reply({
     content:
@@ -1281,14 +1287,44 @@ async function handleExport(interaction, db, cfg) {
 
 async function handleSetCharacter(interaction, db) {
   const target = campaign(interaction);
-  const name = interaction.options.getString('name').trim();
-  db.setCharacterName(target.id, interaction.user.id, name);
+  const result = setCharacter(db, {
+    campaignId: target.id,
+    userId: interaction.user.id,
+    name: interaction.options.getString('name'),
+  });
+
+  if (!result.ok) {
+    return interaction.reply({ content: result.message, flags: MessageFlags.Ephemeral });
+  }
+
   await interaction.reply({
     content:
-      pick(SETCHARACTER_CONFIRM, { name }) +
+      pick(SETCHARACTER_CONFIRM, { name: result.name }) +
+      // Every line of that flavour text promises the name will show up in the
+      // transcripts. For somebody who has not agreed to be recorded that is
+      // simply untrue — capture skips them entirely (voice/capture.js), so the
+      // name goes nowhere. Say so, in the same terms /join uses for the people
+      // it is not recording.
+      unrecordedCaveat(result.consent) +
       (db.countCampaignsInGuild(interaction.guildId) > 1 ? `\n_In **${campaignLabel(target)}**._` : ''),
     flags: MessageFlags.Ephemeral,
   });
+}
+
+// Addressed to the player themselves, unlike describeUnrecorded in
+// campaign/consent.js, which is written for whoever is running the session.
+function unrecordedCaveat(consent) {
+  if (consent === 'granted') return '';
+  if (consent === 'declined') {
+    return (
+      "\n🔇 _Recording is off for you in this campaign by your own choice, so this name won't appear anywhere yet. " +
+      '`/campaign consent` turns it back on whenever you want._'
+    );
+  }
+  return (
+    "\n🔇 _You haven't agreed to be recorded in this campaign yet, so nothing you say is captured and this name " +
+    "won't appear anywhere. Answer the invite in your DMs, or ask whoever runs the table for one._"
+  );
 }
 
 async function handleRecap(interaction, db) {

@@ -6,6 +6,15 @@ node_modules/
 pi-service/rclone/rclone.conf
 pc-sync/config/rclone.conf
 
+# Timestamped copies of the above, which the bare `.env` line does NOT catch:
+# it matches a file called exactly `.env`, and `.env.bak-20260816-170133` is a
+# different filename. Four of those were sitting untracked-but-not-ignored in
+# pi-service/ with live DISCORD_TOKEN, GEMINI_API_KEY and STATUS_TOKEN values in
+# them — one `git add -A` from a public repo. `.env.example` is deliberately
+# still tracked; neither pattern below matches it.
+.env.bak*
+*.bak-*
+
 # Runtime data written by the bot (SQLite db, audio, whisper models, Obsidian export)
 pi-service/data/
 pi-service/models/
@@ -30,6 +39,11 @@ dashboard/.env
 # installed so they can be reinstalled reproducibly.
 .agents/
 .claude/skills/
+
+# Rollback points taken before a deploy — see backups/README.md. Local only:
+# they exist so a bad ship can be undone from the machine that shipped it, and
+# a snapshot of a working tree does not belong in the history of that tree.
+backups/
 
 # Design exports and scratch. The UI zip is 4MB of binary that would sit in
 # history for ever once pushed, and it is a build output rather than a source.

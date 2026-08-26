@@ -106,7 +106,8 @@ async function world(t) {
   await new Promise((resolve) => server.once('listening', resolve));
 
   t.after(async () => {
-    close();
+    // Awaited: the database must outlive the last request still being answered.
+    await close();
     db.close();
     await rm(dir, { recursive: true, force: true });
   });
@@ -114,10 +115,44 @@ async function world(t) {
   return { db, cfg, campaignId, base: `http://127.0.0.1:${server.address().port}` };
 }
 
+// A DOMTokenList with just the four methods the page uses, and with them
+// actually agreeing with each other.
+const classList = () => {
+  const on = new Set();
+  return {
+    add: (...names) => names.forEach((c) => on.add(c)),
+    remove: (...names) => names.forEach((c) => on.delete(c)),
+    contains: (c) => on.has(c),
+    toggle: (c, force) => {
+      const want = force ?? !on.has(c);
+      if (want) on.add(c); else on.delete(c);
+      return want;
+    },
+  };
+};
+
+// Every script the page carries, in the order a browser would run them.
+//
+// This used to be one greedy match from the first <script> to the last
+// </script>, which worked only while the page had exactly one block. The
+// moment a second appeared — the theme setter in <head>, which has to run
+// before first paint — the "source" spanned both and swallowed the thousand
+// lines of markup between them, and every test in this file died on
+// `Unexpected token '<'` a long way from the cause.
+//
+// Non-greedy and per-block, so a third one changes nothing here. The head
+// script is harmless in the sandbox: it reads localStorage, which does not
+// exist here, inside its own try/catch.
+function pageScripts(html) {
+  const blocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  assert.ok(blocks.length > 0, 'no <script> found in the dashboard page');
+  return blocks;
+}
+
 // Load the page's script into a sandbox with just enough DOM to run.
 async function render({ base, cookie }) {
   const html = await readFile(PAGE, 'utf8');
-  const source = /(?<=<script>)[\s\S]*(?=<\/script>)/.exec(html)[0];
+  const scripts = pageScripts(html);
 
   const panels = {};
   const listeners = {};
@@ -145,23 +180,33 @@ async function render({ base, cookie }) {
     document: {
       getElementById: el,
       addEventListener: (type, fn) => { listeners[type] = fn; },
-      // `toggle` as well as add/remove: renderScreen dresses the body for the
-      // sign-in gate, and a stub missing one method fails as "not a function"
-      // from inside a render, which surfaces as an unrelated empty screen.
-      body: { classList: { add() {}, remove() {}, toggle() {} } },
+      // A real class list rather than a bag of no-ops: renderScreen dresses the
+      // body for the sign-in gate and renderSheet asks for that class back, so
+      // stubs that always answer "no" put the two out of step.
+      body: { classList: classList() },
       activeElement: null,
       createElement: () => ({ click() {}, style: {} }),
       // The gate appends a stylesheet link for the landing page's typefaces.
       head: { appendChild() {} },
+      // Looked up by settleColumn to run the shelf animation. Nothing here has
+      // a layout, so the honest answer is "not present" — and the page is
+      // written to return early on exactly that. What these tests read is the
+      // markup either side of the animation, not the animation.
+      querySelector: () => null,
+      // The theme control writes the mode onto <html>, and does it OUTSIDE the
+      // try/catch that guards localStorage.
+      documentElement: { setAttribute() {}, removeAttribute() {}, getAttribute: () => null },
       get title() { return this._t; },
       set title(v) { this._t = v; },
     },
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: 'dashboard.js' });
+  scripts.forEach((block, i) => vm.runInContext(block, sandbox, { filename: `dashboard-${i}.js` }));
 
-  const body = () => ['top', 'rail-list', 'rail-nav', 'rail-foot', 'banner', 'screen', 'modal']
+  // 'sheet' is the account panel hung off the top bar, drawn into its own
+  // element rather than into the screen.
+  const body = () => ['top', 'rail-list', 'rail-nav', 'rail-foot', 'banner', 'screen', 'modal', 'sheet']
     .map((id) => panels[id]?._html ?? '').join('\n');
 
   // Polled rather than slept: the page's first paint is several awaited
@@ -305,6 +350,12 @@ test('a signed-out visitor gets the sign-in card and no campaign names', async (
 test('a player is shown notes and never a transcript button', async (t) => {
   const { db, cfg, base } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+
+  // The recap arrives a fetch after the screen first paints, and render() only
+  // waits for the page to have drawn SOMETHING. On an idle machine it is there
+  // by the time this reads; on a busy one it is not, and the test failed for
+  // want of a wait rather than for want of the notes.
+  await page.settle((m) => /talked their way into the lower registry/i.test(m));
   const markup = page.body();
 
   assert.match(markup, /talked their way into the lower registry/i, 'the recap is theirs to read');

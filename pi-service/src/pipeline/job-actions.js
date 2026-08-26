@@ -319,13 +319,23 @@ export function setCharacter(db, { campaignId, userId, name } = {}) {
   if (!character) return { ok: false, message: '⚠️ Give the character a name.' };
 
   db.setCharacterName(campaignId, userId, character);
-  const mayRecord = db.mayRecord(campaignId, userId);
+
+  // Whether this name will ever actually appear in anything, and why not.
+  //
+  // Both facts are returned rather than one finished sentence, because the two
+  // callers are looking at opposite people: the dashboard is a manager reading
+  // about somebody else, and /setchar is a player reading about themselves.
+  // Someone who DECLINED needs a different answer from someone who was never
+  // asked — the first has already answered and only they can change it.
+  const consent = db.getConsent(campaignId, userId)?.state ?? 'unasked';
+  const mayRecord = consent === 'granted';
 
   return {
     ok: true,
     userId,
     name: character,
     mayRecord,
+    consent,
     message:
       `🎭 Set to **${character}**.` +
       (mayRecord ? '' : ' They still have not agreed to be recorded, so nothing of theirs is captured.'),

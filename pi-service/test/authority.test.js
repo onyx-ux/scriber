@@ -13,6 +13,7 @@ import {
   OPERATOR,
   ACTION_NEEDS,
   OWN_BUSINESS,
+  maySignIn,
 } from '../src/web/authority.js';
 import { ACTIONS } from '../src/web/actions.js';
 
@@ -296,4 +297,77 @@ test('with no owner configured the console acts as nobody, never as undefined', 
 test('somebody with no level and no session acts as nobody', async (t) => {
   const { cfg, viewer } = await world(t);
   assert.equal(actingUserId(viewer(null), cfg), null);
+});
+
+
+// --- 0. the guest list ---
+
+// Unset is the shipped default and must stay open, for two reasons that are
+// not "otherwise you get locked out" -- with DASHBOARD_REQUIRE_LOGIN off, which
+// is ITS default, a request with no session still falls through to OPERATOR, so
+// nobody loses access either way.
+//
+// The reasons are that a new opt-in knob should be a no-op until somebody sets
+// it -- anyone completing OAuth held a session before this existed, and an
+// upgrade that quietly changes who may sign in is a surprise -- and that there
+// is nothing behind this particular gate to protect. A session grants NOTHING:
+// the account still resolves to `none` and is shown nothing at all.
+//
+// Which is why this fails open where checkDoor fails closed. That one guards
+// the owner's API budget and their GPU, so "no credential configured" must not
+// mean "everyone is welcome". This one guards a door into an empty room.
+test('with no guest list configured, anybody Discord vouches for may sign in', () => {
+  for (const cfg of [{}, { dashboardAllowedUsers: null }, { dashboardAllowedUsers: '' }, { dashboardAllowedUsers: '  ,  ' }]) {
+    assert.equal(maySignIn(cfg, PLAYER), true, JSON.stringify(cfg));
+  }
+});
+
+// Which is not as open as it sounds: the account still resolves to `none` and
+// is shown nothing. The list is about refusing outright, not about permissions.
+test('a guest list admits the people on it and nobody else', () => {
+  const cfg = { dashboardAllowedUsers: `${DEV},${PLAYER}`, ownerUserId: 'somebody-else' };
+
+  assert.equal(maySignIn(cfg, DEV), true);
+  assert.equal(maySignIn(cfg, PLAYER), true);
+  assert.equal(maySignIn(cfg, '99999999999999999'), false);
+});
+
+test('the list tolerates the spacing a person actually types', () => {
+  const cfg = { dashboardAllowedUsers: ` ${DEV} , , ${PLAYER}  ,` };
+  assert.equal(maySignIn(cfg, DEV), true);
+  assert.equal(maySignIn(cfg, PLAYER), true);
+  assert.equal(maySignIn(cfg, '9'), false);
+});
+
+// A list that can lock the owner out of their own dashboard is a list that
+// eventually will, and the only way back is an SSH session and a text editor.
+test('the operator is always on their own guest list', () => {
+  const cfg = { dashboardAllowedUsers: PLAYER, ownerUserId: DEV };
+  assert.equal(maySignIn(cfg, DEV), true, 'even though DEV was left off the list');
+});
+
+// Ids arrive from Discord as strings and from a config file as strings, but a
+// caller holding a number must not slip past on a type mismatch either way.
+test('an id matches whatever shape it arrives in', () => {
+  assert.equal(maySignIn({ dashboardAllowedUsers: '12345' }, 12345), true);
+  assert.equal(maySignIn({ dashboardAllowedUsers: '12345' }, '12345'), true);
+  assert.equal(maySignIn({ dashboardAllowedUsers: '12345' }, '1234'), false);
+});
+
+// Nobody is not somebody. An empty id must never satisfy a list, and must not
+// satisfy an absent one either.
+test('a missing id is never admitted', () => {
+  for (const id of [null, undefined, '', 0]) {
+    assert.equal(maySignIn({ dashboardAllowedUsers: DEV }, id), false, String(id));
+    assert.equal(maySignIn({}, id), false, `${id} with no list`);
+  }
+});
+
+// An owner id that was never configured must not become a wildcard via
+// String(undefined) matching itself.
+test('an unconfigured owner does not become a way in', () => {
+  const cfg = { dashboardAllowedUsers: PLAYER };
+  assert.equal(maySignIn(cfg, 'undefined'), false);
+  assert.equal(maySignIn(cfg, 'null'), false);
+  assert.equal(maySignIn({ ...cfg, ownerUserId: '' }, ''), false);
 });

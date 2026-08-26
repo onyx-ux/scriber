@@ -7,14 +7,16 @@ import { createServer } from 'node:http';
 
 import { openDb } from '../src/store/db.js';
 import { startStatusServer } from '../src/web/server.js';
-import { COOKIE } from '../src/web/auth.js';
+import { COOKIE, STATE_COOKIE } from '../src/web/auth.js';
 
 // Signing in and being scoped, over a real socket.
 //
-// The pieces are tested apart in auth.test.js and viewer-scope.test.js. What
-// only shows up here is the join: whether the cookie the server sets is the
-// cookie it later believes, and whether a signed-in player is actually cut off
-// from another table's records by the routes rather than only by the page.
+// The pieces are tested apart in auth.test.js, discord-oauth.test.js and
+// viewer-scope.test.js. What only shows up here is the join: whether a browser
+// following two redirects really does come back holding a session, whether the
+// cookie the server sets is the cookie it later believes, and whether a
+// signed-in player is actually cut off from another table's records by the
+// routes rather than only by the page.
 
 const DEV = '10000000000000001';
 const CREATOR = '30000000000000003';
@@ -31,30 +33,45 @@ function freePort() {
   });
 }
 
-// A stand-in for Discord that hands the code straight back instead of DMing
-// it, so the test can read what a real person would read off their phone.
+// Discord's OAuth API, as far as the server can tell. A code is redeemed for a
+// token, a token is spent on one identity, and both are recorded so a test can
+// ask what actually left the machine.
 function fakeDiscord() {
-  const sent = [];
-  return {
-    sent,
-    bridge: {
-      findKnownMember: async ({ query }) => {
-        const q = query.toLowerCase();
-        if (q === 'saf') return { userId: PLAYER, username: 'saf' };
-        // Whoever runs Cipher. On the campaign as its manager, and never once
-        // recorded saying anything -- a DM who set the table up from the
-        // dashboard has no utterances to their name.
-        if (q === 'dm') return { userId: CREATOR, username: 'dm' };
-        return null;
-      },
-      sendCode: async ({ userId, code }) => {
-        sent.push({ userId, code });
-        return { ok: true };
-      },
-      findPeople: async () => ({ ok: true, people: [] }),
-      invite: async () => ({ ok: true, message: 'sent' }),
-    },
+  const calls = [];
+  const people = {
+    'code-saf': { id: PLAYER, username: 'saf' },
+    // Whoever runs Cipher. On the campaign as its manager, and never once
+    // recorded saying anything -- a DM who set the table up from the
+    // dashboard has no utterances to their name.
+    'code-dm': { id: CREATOR, username: 'dm' },
   };
+
+  const fetchImpl = async (url, init = {}) => {
+    const sent = init.body ? Object.fromEntries(new URLSearchParams(init.body)) : null;
+    calls.push({ url, sent });
+
+    if (url.endsWith('/oauth2/token')) {
+      const who = people[sent?.code];
+      return who
+        ? { ok: true, json: async () => ({ access_token: `tok:${sent.code}` }) }
+        : { ok: false, json: async () => ({ error: 'invalid_grant' }) };
+    }
+    if (url.endsWith('/users/@me')) {
+      const code = String(init.headers?.Authorization ?? '').replace(/^Bearer tok:/, '');
+      return people[code]
+        ? { ok: true, json: async () => people[code] }
+        : { ok: false, json: async () => ({}) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+
+  // The bot's own Discord, which sign-in no longer touches at all.
+  const bridge = {
+    findPeople: async () => ({ ok: true, people: [] }),
+    invite: async () => ({ ok: true, message: 'sent' }),
+  };
+
+  return { calls, fetchImpl, bridge };
 }
 
 async function serving(t, over = {}) {
@@ -89,6 +106,9 @@ async function serving(t, over = {}) {
     statusPort: await freePort(),
     statusToken: 'sesame',
     ownerUserId: DEV,
+    discordClientId: 'app-1',
+    discordClientSecret: 'shh',
+    dashboardUrl: 'http://dash.test',
     dashboardRequireLogin: true,
     scheduleTimeZone: 'Australia/Brisbane',
     transcribeWindowStartHour: 8,
@@ -103,7 +123,7 @@ async function serving(t, over = {}) {
 
   const discord = fakeDiscord();
   const { server, close } = startStatusServer({
-    db, cfg, activeSessions: new Map(), discord: discord.bridge,
+    db, cfg, activeSessions: new Map(), discord: discord.bridge, fetchImpl: discord.fetchImpl,
   });
 
   await new Promise((resolve) => server.once('listening', resolve));
@@ -120,37 +140,52 @@ async function serving(t, over = {}) {
 
 const json = async (res) => ({ status: res.status, body: await res.json().catch(() => ({})), res });
 
-const call = (base, path, { cookie, method = 'GET', body } = {}) =>
+const call = (base, path, { cookie, method = 'GET', body, redirect } = {}) =>
   fetch(`${base}${path}${path.includes('?') ? '&' : '?'}token=sesame`, {
     method,
+    redirect,
     headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-// Walk the whole thing: name in, code out of the fake DM, code back, cookie.
-async function signIn(base, discord, name = 'saf') {
-  const asked = await json(await call(base, '/auth/request', { method: 'POST', body: { name } }));
-  assert.equal(asked.body.ok, true, asked.body.message);
+const cookieIn = (res, name) =>
+  res.headers.getSetCookie().map((c) => new RegExp(`^${name}=([^;]+)`).exec(c)?.[1]).find(Boolean) ?? null;
 
-  const { code } = discord.sent.at(-1);
-  const verified = await json(await call(base, '/auth/verify', { method: 'POST', body: { name, code } }));
-  assert.equal(verified.body.ok, true, verified.body.message);
+// Walk the whole thing the way a browser does: follow the link, come back from
+// Discord carrying what Discord would have carried, end up with a session.
+//
+// `redirect: 'manual'` throughout, because the interesting part of every step
+// here is the 302 itself — where it points and what it sets — and fetch would
+// otherwise swallow all of it and try to reach discord.com.
+async function signIn(base, who = 'saf') {
+  const started = await call(base, '/auth/discord', { redirect: 'manual' });
+  assert.equal(started.status, 302);
 
-  const setCookie = verified.res.headers.get('set-cookie');
-  assert.match(setCookie, new RegExp(`${COOKIE}=`));
-  return setCookie.split(';')[0];
+  const state = cookieIn(started, STATE_COOKIE);
+  const onUrl = new URL(started.headers.get('location')).searchParams.get('state');
+  assert.equal(state, onUrl, 'the state goes out twice and matches');
+
+  const back = await call(base, `/auth/callback?code=code-${who}&state=${encodeURIComponent(state)}`, {
+    redirect: 'manual',
+    cookie: `${STATE_COOKIE}=${state}`,
+  });
+  assert.equal(back.status, 302, 'and back to the dashboard');
+
+  const token = cookieIn(back, COOKIE);
+  assert.ok(token, 'holding a session');
+  return `${COOKIE}=${token}`;
 }
 
 // --- the flow ---
 
-test('a name, a code, a session', async (t) => {
-  const { base, discord } = await serving(t);
+test('a Discord account, two redirects, a session', async (t) => {
+  const { base } = await serving(t);
 
   const before = await json(await call(base, '/me'));
   assert.equal(before.body.signedIn, false);
   assert.equal(before.body.level, 'none');
 
-  const cookie = await signIn(base, discord);
+  const cookie = await signIn(base);
 
   const after = await json(await call(base, '/me', { cookie }));
   assert.equal(after.body.signedIn, true);
@@ -158,37 +193,38 @@ test('a name, a code, a session', async (t) => {
   assert.equal(after.body.level, 'player');
 });
 
-test('the code is never in any response body', async (t) => {
+// The browser is handed a session cookie and nothing else. The OAuth token is
+// spent inside the process on one question and revoked; a copy of it reaching
+// the page would be a live Discord credential sitting in somebody's browser.
+test('no Discord token ever reaches the browser', async (t) => {
   const { base, discord } = await serving(t);
-  const res = await json(await call(base, '/auth/request', { method: 'POST', body: { name: 'saf' } }));
+  const cookie = await signIn(base);
 
-  const { code } = discord.sent.at(-1);
-  assert.equal(JSON.stringify(res.body).includes(code), false);
+  const issued = discord.calls.find((c) => c.url.endsWith('/oauth2/token'));
+  assert.ok(issued, 'a token was issued');
+  assert.equal(cookie.includes('tok:'), false);
+
+  const me = await json(await call(base, '/me', { cookie }));
+  assert.equal(JSON.stringify(me.body).includes('tok:'), false);
+  assert.ok(discord.calls.some((c) => c.url.endsWith('/oauth2/token/revoke')), 'and it was handed back');
 });
 
-// The answer must be the same whether or not the account exists, or this is a
-// way to find out who plays on somebody's bot.
-test('an unknown name gets the same answer as a known one', async (t) => {
-  const { base } = await serving(t);
-  const known = await json(await call(base, '/auth/request', { method: 'POST', body: { name: 'saf' } }));
-  const unknown = await json(await call(base, '/auth/request', { method: 'POST', body: { name: 'nobody-at-all' } }));
-
-  assert.equal(known.body.message, unknown.body.message);
-  assert.equal(known.body.ok, unknown.body.ok);
-});
-
-test('a wrong code does not sign anybody in', async (t) => {
+// The state check is what stops a link from anywhere else signing somebody into
+// an account they did not choose.
+test('a callback nobody here started hands out no cookie', async (t) => {
   const { base, discord } = await serving(t);
-  await call(base, '/auth/request', { method: 'POST', body: { name: 'saf' } });
 
-  const bad = await json(await call(base, '/auth/verify', { method: 'POST', body: { name: 'saf', code: '000000' } }));
-  assert.equal(bad.status, 401);
-  assert.equal(bad.res.headers.get('set-cookie'), null, 'and no cookie is handed out');
+  const res = await call(base, '/auth/callback?code=code-saf&state=made-up', { redirect: 'manual' });
+
+  assert.equal(res.status, 302);
+  assert.match(res.headers.get('location'), /#signin-error=state$/);
+  assert.equal(res.headers.getSetCookie().some((c) => c.startsWith(`${COOKIE}=`) && !c.includes('Max-Age=0')), false);
+  assert.equal(discord.calls.length, 0, 'and not one request left for Discord over it');
 });
 
 test('signing out makes the cookie stop working', async (t) => {
-  const { base, discord } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base } = await serving(t);
+  const cookie = await signIn(base);
 
   assert.equal((await json(await call(base, '/me', { cookie }))).body.signedIn, true);
   await call(base, '/auth/logout', { method: 'POST', cookie, body: {} });
@@ -198,8 +234,8 @@ test('signing out makes the cookie stop working', async (t) => {
 // --- what a signed-in player can reach ---
 
 test('a player sees their own campaign and not another', async (t) => {
-  const { base, discord, mine, theirs } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base, mine, theirs } = await serving(t);
+  const cookie = await signIn(base);
 
   assert.equal((await call(base, `/campaign?id=${mine}`, { cookie })).status, 200);
   assert.equal((await call(base, `/campaign?id=${theirs}`, { cookie })).status, 404,
@@ -207,8 +243,8 @@ test('a player sees their own campaign and not another', async (t) => {
 });
 
 test('a player cannot read another table\'s notes by guessing a session id', async (t) => {
-  const { base, discord, meeting, secret } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base, meeting, secret } = await serving(t);
+  const cookie = await signIn(base);
 
   assert.equal((await call(base, `/notes?meeting=${meeting}`, { cookie })).status, 200);
   assert.equal((await call(base, `/notes?meeting=${secret}`, { cookie })).status, 404);
@@ -217,8 +253,8 @@ test('a player cannot read another table\'s notes by guessing a session id', asy
 // Notes, not the verbatim record. Being at the table is not the same as being
 // handed every word five people said.
 test('a player gets the notes but not the transcript', async (t) => {
-  const { base, discord, meeting } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base, meeting } = await serving(t);
+  const cookie = await signIn(base);
 
   assert.equal((await call(base, `/notes?meeting=${meeting}`, { cookie })).status, 200);
   assert.equal((await call(base, `/transcript?meeting=${meeting}`, { cookie })).status, 403);
@@ -226,8 +262,8 @@ test('a player gets the notes but not the transcript', async (t) => {
 });
 
 test('a player is told nothing about models or the queue', async (t) => {
-  const { base, discord } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base } = await serving(t);
+  const cookie = await signIn(base);
 
   const status = await json(await call(base, '/status', { cookie }));
   const body = JSON.stringify(status.body);
@@ -238,8 +274,8 @@ test('a player is told nothing about models or the queue', async (t) => {
 });
 
 test('a player cannot fire a machinery action', async (t) => {
-  const { base, discord, db } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base, db } = await serving(t);
+  const cookie = await signIn(base);
 
   const paused = await json(await call(base, '/actions/pause', {
     method: 'POST', cookie, body: { queue: 'summarize', paused: true },
@@ -250,8 +286,8 @@ test('a player cannot fire a machinery action', async (t) => {
 });
 
 test('a player cannot manage a campaign they merely play in', async (t) => {
-  const { base, discord, db, mine } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base, db, mine } = await serving(t);
+  const cookie = await signIn(base);
 
   const res = await json(await call(base, '/actions/corrections/add', {
     method: 'POST', cookie, body: { campaignId: mine, wrong: 'Vecks', right: 'Vex' },
@@ -291,27 +327,23 @@ test('no token is still no entry', async (t) => {
 });
 
 // The proxy adds the token to every request, so a browser on the dashboard has
-// it either way. Without the check a bot on an exposed port could be told
-// "DM this person a code" by a stranger.
+// it either way. Without the check, a bot on an exposed port could be walked
+// through a sign-in by a stranger.
 test('signing in still goes through the door', async (t) => {
-  const { base, discord } = await serving(t);
+  const { base } = await serving(t);
 
-  const res = await fetch(`${base}/auth/request`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'saf' }),
-  });
+  const res = await fetch(`${base}/auth/discord`, { redirect: 'manual' });
 
   assert.equal(res.status, 401);
-  assert.equal(discord.sent.length, 0, 'and no DM was sent');
+  assert.equal(res.headers.getSetCookie().length, 0, 'and nothing was started');
 });
 
 // /campaign setchar has always let a player name their own character, and it
 // is obviously theirs to name. The dashboard being stricter than the slash
 // command for the same act was an accident, not a decision.
 test('a player may set their own character name but nobody else\'s', async (t) => {
-  const { base, discord, db, mine } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base, db, mine } = await serving(t);
+  const cookie = await signIn(base);
 
   const own = await json(await call(base, '/actions/roster/character', {
     method: 'POST', cookie, body: { campaignId: mine, userId: PLAYER, name: 'Safriel' },
@@ -327,8 +359,8 @@ test('a player may set their own character name but nobody else\'s', async (t) =
 });
 
 test('a player cannot name themselves at a table they do not play at', async (t) => {
-  const { base, discord, db, theirs } = await serving(t);
-  const cookie = await signIn(base, discord);
+  const { base, db, theirs } = await serving(t);
+  const cookie = await signIn(base);
 
   const res = await json(await call(base, '/actions/roster/character', {
     method: 'POST', cookie, body: { campaignId: theirs, userId: PLAYER, name: 'Gatecrasher' },
@@ -338,19 +370,17 @@ test('a player cannot name themselves at a table they do not play at', async (t)
   assert.equal(db.getCharacterName(theirs, PLAYER), null);
 });
 
-// The person who runs the table, locked out of the dashboard for their own
-// campaign.
+// The person who runs the table, who the bot has never heard say a word.
 //
-// /auth/request finds them through Discord's member search -- the fallback that
-// exists for somebody the bot has not recorded yet -- and DMs a working code.
-// /auth/verify then resolved the typed name against the utterances table alone,
-// so the code it had just sent came back "not right". A DM who set their
-// campaign up from the dashboard could not sign in to it until somebody
-// recorded them speaking.
+// The old flow had to FIND them before it could DM them, which meant a
+// membership lookup that only worked for somebody already recorded speaking --
+// so a DM who set their campaign up from the dashboard could not sign in to it.
+// There is nothing to find any more: Discord says who they are, and what they
+// run is worked out from the campaigns table afterwards.
 test('a DM who has never been recorded can sign in to the campaign they run', async (t) => {
-  const { base, discord, mine } = await serving(t);
+  const { base, mine } = await serving(t);
 
-  const cookie = await signIn(base, discord, 'dm');
+  const cookie = await signIn(base, 'dm');
 
   const me = await json(await call(base, '/me', { cookie }));
   assert.equal(me.body.signedIn, true);

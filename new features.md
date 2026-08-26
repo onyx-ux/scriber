@@ -58,6 +58,27 @@ A validation on the summary output that if the output has no real content of val
 
 ## Ideas not built yet
 
+- **User management on the dashboard** — `DASHBOARD_ALLOWED_USERS` is the guest
+  list today, and changing it costs an SSH session, a text editor and a
+  container restart. The Access screen already knows every person the bot has
+  seen, what level each resolves to and who is signed in right now; admitting
+  and removing somebody belongs there, next to the `access/revoke` button that
+  already ends a person's sessions.
+
+  The design tension is worth stating before anyone builds it, because it is
+  the whole reason this does not exist yet. Every permission in this bot is
+  *derived* — from what an account owns, runs or plays in — so nothing is
+  administered, nobody can be promoted by mistake, and there is no table of
+  grants to drift out of step with Discord. A user-management screen introduces
+  granted state, which is exactly what `web/viewer.js` was built to avoid.
+
+  So the scope has to stay narrow: **admission and revocation only**. Who may
+  hold a session at all, and ending one. Never "give this person creator" —
+  that would make the level a thing somebody was awarded rather than a thing
+  that is true, and the whole model falls over. See `maySignIn` in
+  `web/authority.js`, which is deliberately the only list-shaped check in the
+  codebase.
+
 - **Thread resolution tracking** — `unresolvedThreads` only ever grows; nothing
   marks one resolved once a later session answers it.
 - **Auto-join/leave on voice activity** — deliberately skipped so far, since it

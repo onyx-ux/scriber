@@ -48,6 +48,28 @@ export const config = validate({
   discordToken: required('DISCORD_TOKEN'),
   discordClientId: required('DISCORD_CLIENT_ID'),
 
+  // The other half of the application's credentials, from the same page of the
+  // Discord developer portal — OAuth2 → Client Secret.
+  //
+  // Optional, because the BOT does not need it: a bot token is what logs the
+  // gateway in, and everything this thing does in Discord goes through that.
+  // This is only spent signing people in to the dashboard, so an install that
+  // never opens the dashboard to anybody but its operator can leave it unset
+  // and simply not offer sign-in. See web/discord-oauth.js.
+  discordClientSecret: optional('DISCORD_CLIENT_SECRET', null),
+
+  // Where Discord sends somebody back to after they have been asked.
+  //
+  // Must match a redirect registered in the developer portal EXACTLY — scheme,
+  // host, port and path — so it is stated rather than sniffed from the request:
+  // a Host header is whatever the client said it was, and building a redirect
+  // out of one is how open redirects happen.
+  //
+  // Unset, it is derived from DASHBOARD_URL as <origin>/api/auth/callback,
+  // which is where the dashboard's nginx already proxies this API. Set it for
+  // anything that is not that layout.
+  discordRedirectUri: optional('DISCORD_REDIRECT_URI', null),
+
   dataDir: optional('DATA_DIR', '/data'),
 
   // whisper.cpp — WHISPER_MODEL_PATH defaults from WHISPER_MODEL_NAME rather
@@ -192,7 +214,7 @@ export const config = validate({
   // "no credential configured" as "everyone is welcome". See web/server.js.
   statusToken: optional('STATUS_TOKEN', null),
 
-  // The key sign-in codes and session cookies are hashed with.
+  // The key session cookies are hashed with.
   //
   // Defaults to STATUS_TOKEN, because an install that has one already has a
   // secret the operator chose and keeps out of git — and adding a second thing
@@ -215,6 +237,22 @@ export const config = validate({
   // Turn it on AFTER signing in successfully once. Turning it on first is how
   // you lock yourself out of your own Pi.
   dashboardRequireLogin: optional('DASHBOARD_REQUIRE_LOGIN', 'false') === 'true',
+
+  // Who may sign in at all — Discord user ids, comma separated.
+  //
+  // Empty by default, which means anybody Discord vouches for may hold a
+  // session. That is far less open than it sounds: signing in grants nothing
+  // on its own, and what somebody can see is still derived entirely from what
+  // their account owns, runs and plays in, so an account with no claim on this
+  // bot signs in and is shown nothing at all. See web/viewer.js.
+  //
+  // Set it when you want a shorter answer than "nothing at all" — while the
+  // dashboard is newly reachable from outside the house, say, or before the
+  // table has been invited. It is the ONE place in this bot where access is a
+  // hand-written list rather than a fact checked against Discord, which is why
+  // it is opt-in and deliberately small: a list is a thing that goes stale,
+  // and everything else here cannot.
+  dashboardAllowedUsers: optional('DASHBOARD_ALLOWED_USERS', null),
 
   // Where to find the dashboard, for the notification DMs to link to.
   //

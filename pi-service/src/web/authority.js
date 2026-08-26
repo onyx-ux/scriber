@@ -13,8 +13,9 @@
 // genuinely different jobs and both are deep — but nothing outside this file
 // imports them any more. A caller asks here, or it does not ask.
 //
-// The order of the questions matters and is unchanged:
+// The order of the questions matters:
 //
+//   0. the guest list — may this account sign in at all (maySignIn)
 //   1. the door   — is there a credential at all (checkDoor)
 //   2. the name   — who is walking through it (identify)
 //   3. the act    — does that person's level cover this (mayAct)
@@ -27,6 +28,53 @@ import { scopeStatus, scopeCampaign } from './scope.js';
 // The read-side surface, re-exported so a caller needs one import rather than
 // three. These are not re-implemented here — they are the same functions.
 export { maySee, mayManage, atLeast, LEVELS, LEVEL_WORDS, OPERATOR, buildViewer, scopeStatus, scopeCampaign };
+
+// --- 0. the guest list ---
+
+// Who may open a session at all, asked once at sign-in rather than on every
+// request.
+//
+// This is the odd one out in this file, and worth saying why. Every other
+// question here is answered from something the bot can check for itself — what
+// a Discord account owns, runs or plays in — so nobody administers it and
+// nothing drifts out of step with reality. This one is a list somebody typed.
+//
+// It exists because "derived from reality" and "shut for now" are different
+// needs. An account with no claim on this bot already signs in and sees
+// nothing, which is the right answer forever; it is not the right answer on
+// the afternoon the dashboard first gets a public hostname and you would
+// rather it simply refused strangers outright.
+//
+// So: unset, it is empty and everybody is welcome to a session that grants
+// them nothing. Set, it is the whole guest list.
+const guestList = (cfg) =>
+  new Set(
+    String(cfg?.dashboardAllowedUsers ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+  );
+
+export function maySignIn(cfg, userId) {
+  // Falsy BEFORE stringifying, which is not the same check. `String(0 ?? '')`
+  // is "0" — a perfectly non-empty string that would sail past an emptiness
+  // test and, with no list configured, be admitted as somebody.
+  if (!userId) return false;
+  const id = String(userId);
+
+  const invited = guestList(cfg);
+  if (invited.size === 0) return true;
+  if (invited.has(id)) return true;
+
+  // The operator is always on their own guest list.
+  //
+  // A list that can lock the owner out of their own dashboard is a list that
+  // eventually will, and the only way back is an SSH session and a text
+  // editor. Every other permission here is derived rather than granted; this
+  // line is the one exception, and it exists so that the exception cannot
+  // become a trap.
+  return Boolean(cfg?.ownerUserId) && id === String(cfg.ownerUserId);
+}
 
 // --- 1. the door ---
 

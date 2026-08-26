@@ -1,26 +1,25 @@
 // Signing in to the dashboard, without ever holding a password.
 //
-// You type the Discord name the bot already knows you by. The bot DMs you six
-// digits. Typing them back proves you can read that account's DMs, which is
-// exactly as strong a claim as "you control that Discord account" — and that is
-// the only identity this bot has ever cared about. Every permission it grants is
-// derived from what that account owns, runs or plays in.
+// You sign in with Discord. Discord asks you, Discord checks you, and hands
+// this bot back a user id — which is exactly as strong a claim as "you control
+// that Discord account", and that is the only identity this bot has ever cared
+// about. Every permission it grants is derived from what that account owns,
+// runs or plays in.
 //
 // So there is no password to choose, forget, reuse or leak, and nothing stored
 // that a database leak would make worse: a Discord id and a username, both
-// public in any server you share. The code is stored as an HMAC and the session
-// cookie is stored as an HMAC, so neither table can be turned back into a
-// credential.
+// public in any server you share. The session cookie is stored as an HMAC, so
+// the table cannot be turned back into a login. The OAuth access token is
+// spent on one question and revoked — see web/discord-oauth.js.
 //
-// The six digits are only strong enough because of the fence around them: one
-// live code per person, ten minutes, five attempts, and the row is destroyed on
-// the first success. Remove any one of those and six digits is a number you can
-// guess.
-import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+// This module owns the two credentials that live in the browser: the session
+// cookie, and the short-lived state cookie that ties one sign-in attempt to
+// the browser that started it. The protocol Discord speaks lives next door;
+// the hashing, the storage and the cookie attributes live here, and nothing
+// outside this module reaches the credential tables. See docs/adr/0001.
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-export const CODE_TTL_MS = 10 * 60 * 1000;
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-export const MAX_ATTEMPTS = 5;
 export const COOKIE = 'quill_session';
 
 // The key everything here is hashed with.
@@ -40,77 +39,43 @@ export function authSecret(cfg) {
 const hmac = (secret, value) => createHmac('sha256', secret).update(String(value)).digest('hex');
 
 // Comparison that does not leak how much of the value was right via how long it
-// took. Overkill for six digits behind an attempt counter, and exactly the kind
-// of thing that is easy now and impossible to retrofit once something longer
-// lives in the same function.
+// took. The state below is the one thing here an attacker gets to guess at
+// repeatedly, and this is the kind of thing that is easy now and impossible to
+// retrofit once something longer lives in the same function.
 function sameSecret(a, b) {
   const left = Buffer.from(String(a));
   const right = Buffer.from(String(b));
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-// Six digits, uniformly. randomInt rather than Math.random: this is a
-// credential, and the difference costs nothing.
-export function newCode() {
-  return String(randomInt(0, 1_000_000)).padStart(6, '0');
+// --- one sign-in attempt ---
+//
+// The `state` parameter, which is the whole of OAuth's CSRF defence. A random
+// value goes out on the authorize URL and into a cookie at the same moment;
+// only a callback carrying both, matching, is a callback this browser actually
+// asked for. Without it, anyone can hand somebody a link that quietly signs
+// them into an attacker's Discord account and leaves them typing into it.
+export const STATE_COOKIE = 'quill_signin';
+
+// Long enough to walk through Discord's screen and short enough that a stale
+// tab does not carry a live attempt around for the afternoon.
+export const STATE_TTL_MS = 10 * 60 * 1000;
+
+// 32 bytes. Guessing it is not a thing anybody attempts.
+//
+// The mode rides along on the end rather than in a second cookie: the state is
+// compared whole, so the flag cannot be edited without breaking the match, and
+// the callback needs to know whether it has already retried or it can bounce
+// off `consent_required` for ever. See web/auth-routes.js.
+export function newState({ consent = false } = {}) {
+  return `${randomBytes(32).toString('hex')}.${consent ? 'c' : 'n'}`;
 }
 
-// --- asking for a code ---
+export const askedForConsent = (state) => String(state ?? '').endsWith('.c');
 
-export function issueCode(db, cfg, { userId, username, now = Date.now(), code = newCode() } = {}) {
-  const secret = authSecret(cfg);
-  if (!secret) return { ok: false, message: 'This bot has no sign-in secret configured.' };
-
-  const expiresAt = new Date(now + CODE_TTL_MS).toISOString();
-  db.putAuthCode(userId, username, hmac(secret, `${userId}:${code}`), expiresAt);
-
-  // The code is returned so the caller can DM it and then forget it. It is
-  // never written anywhere, never logged, and never returned over HTTP.
-  return { ok: true, code, expiresAt };
-}
-
-// --- proving you got it ---
-
-const REFUSED = {
-  none: 'That code has expired or was never asked for. Ask for a new one.',
-  expired: 'That code has expired. Ask for a new one.',
-  spent: 'Too many wrong tries. Ask for a new code.',
-  wrong: 'That code is not right.',
-};
-
-export function checkCode(db, cfg, { userId, code, now = Date.now() } = {}) {
-  const secret = authSecret(cfg);
-  if (!secret) return { ok: false, reason: 'none', message: REFUSED.none };
-
-  const row = db.getAuthCode(userId);
-  if (!row) return { ok: false, reason: 'none', message: REFUSED.none };
-
-  if (new Date(row.expires_at).getTime() <= now) {
-    db.dropAuthCode(userId);
-    return { ok: false, reason: 'expired', message: REFUSED.expired };
-  }
-
-  // Checked BEFORE comparing, so a burnt code cannot be tested one more time.
-  if (row.attempts >= MAX_ATTEMPTS) {
-    db.dropAuthCode(userId);
-    return { ok: false, reason: 'spent', message: REFUSED.spent };
-  }
-
-  if (!sameSecret(row.code_hash, hmac(secret, `${userId}:${String(code ?? '').trim()}`))) {
-    db.countAuthAttempt(userId);
-    const left = MAX_ATTEMPTS - (row.attempts + 1);
-    return {
-      ok: false,
-      reason: 'wrong',
-      attemptsLeft: Math.max(0, left),
-      message: left > 0 ? `${REFUSED.wrong} ${left} ${left === 1 ? 'try' : 'tries'} left.` : REFUSED.spent,
-    };
-  }
-
-  // Spent on first success. A code that still works after it has been used is
-  // a code that works twice.
-  db.dropAuthCode(userId);
-  return { ok: true, userId, username: row.username };
+// Whether this callback belongs to the browser that started it.
+export function stateMatches(fromCookie, fromQuery) {
+  return Boolean(fromCookie) && Boolean(fromQuery) && sameSecret(fromCookie, fromQuery);
 }
 
 // --- the session ---
@@ -167,16 +132,21 @@ export function closeSession(db, cfg, token, { everywhere = false } = {}) {
   return row ? db.closeAllAuthSessions(row.user_id) : 0;
 }
 
-// --- the cookie ---
+// --- the cookies ---
 //
-// HttpOnly so a script on the page cannot read it, SameSite=Lax so it is not
-// sent from another site's form post, Path=/ so it covers the API and the page
-// alike. Secure only when the page is actually on https: setting it on a LAN
-// dashboard served over http would mean the browser silently discards the
-// cookie and nobody can ever sign in.
-export function sessionCookie(token, { secure = false, maxAgeMs = SESSION_TTL_MS } = {}) {
+// HttpOnly so a script on the page cannot read either of them, SameSite=Lax so
+// they are not sent from another site's form post, Path=/ so they cover the API
+// and the page alike. Secure only when the page is actually on https: setting
+// it on a LAN dashboard served over http would mean the browser silently
+// discards the cookie and nobody can ever sign in.
+//
+// Lax rather than Strict is load-bearing for the state cookie specifically.
+// The callback is a top-level GET navigation arriving from discord.com, which
+// Lax allows and Strict does not — under Strict the cookie would not be sent
+// back and every single sign-in would fail its own CSRF check.
+function bake(name, value, { secure = false, maxAgeMs = SESSION_TTL_MS } = {}) {
   return [
-    `${COOKIE}=${token}`,
+    `${name}=${value}`,
     'HttpOnly',
     'SameSite=Lax',
     'Path=/',
@@ -185,56 +155,37 @@ export function sessionCookie(token, { secure = false, maxAgeMs = SESSION_TTL_MS
   ].filter(Boolean).join('; ');
 }
 
-export const clearedCookie = ({ secure = false } = {}) =>
-  `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`;
+export const sessionCookie = (token, opts = {}) => bake(COOKIE, token, opts);
+export const stateCookie = (state, opts = {}) => bake(STATE_COOKIE, state, { maxAgeMs: STATE_TTL_MS, ...opts });
 
-export function cookieFrom(header) {
+const cleared = (name, { secure = false } = {}) =>
+  `${name}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`;
+
+export const clearedCookie = (opts) => cleared(COOKIE, opts);
+// Spent on the first callback that reads it, successful or not. A state that
+// still works after it has been answered is a state that works twice.
+export const clearedStateCookie = (opts) => cleared(STATE_COOKIE, opts);
+
+export function cookieFrom(header, name = COOKIE) {
   for (const part of String(header ?? '').split(';')) {
-    const [name, ...rest] = part.trim().split('=');
-    if (name === COOKIE) return rest.join('=') || null;
+    const [key, ...rest] = part.trim().split('=');
+    if (key === name) return rest.join('=') || null;
   }
   return null;
 }
 
-// The three things somebody outside this module used to reach past it for.
+// The two things somebody outside this module used to reach past it for.
 //
 // Every other function here goes through auth.js because the hashing lives
-// here — a caller cannot look a code up without knowing how it was stored. But
-// dropping a code, ending a person's sessions and sweeping the expired ones do
-// not need the secret, so three callers reached straight into the store for
-// them: auth-routes.js, actions.js and server.js.
+// here — a caller cannot look a session up without knowing how it was stored.
+// But ending a person's sessions and sweeping the expired ones do not need the
+// secret, so callers reached straight into the store for them: actions.js and
+// server.js.
 //
-// That is the credential tables being read and written from four modules
+// That is the credential table being read and written from three modules
 // rather than one. Nothing was wrong with any single call — it is that "where
-// do sessions get destroyed" had four answers, and a rule about credentials
-// added here would not have covered three of them.
-
-// Give up on a code that was issued but could not be delivered.
-//
-// The one case worth breaking the uniform "if that name is on a table here,
-// the code is on its way" answer for: it is not about whether the account
-// exists, it is about that account's DM settings, and without saying so the
-// person retries for ever.
-export function abandonCode(db, userId) {
-  return db.dropAuthCode(userId);
-}
-
-// Who the bot DMed a code to under this name, if anybody.
-//
-// Here rather than in auth-routes.js because the credential tables are reached
-// from one module -- see docs/adr/0001. Verifying needs a user id and is given
-// a typed name, and for somebody the bot has never recorded speaking there is
-// no other local record connecting the two: campaign_members and
-// campaign_consent hold ids, and characters holds a character name. The live
-// code row is the one place the display name was written down, by the request
-// that sent it.
-//
-// This grants nothing on its own. It answers "who was this code sent to", and
-// the code still has to be right.
-export function whoWasSentACode(db, name) {
-  const wanted = String(name ?? '').trim();
-  return wanted ? db.findAuthCodeByUsername(wanted) : null;
-}
+// do sessions get destroyed" had three answers, and a rule about credentials
+// added here would not have covered two of them.
 
 // Sign somebody out of the dashboard, everywhere at once.
 //
@@ -248,7 +199,7 @@ export function revokeAllSessions(db, userId) {
   return db.closeAllAuthSessions(userId);
 }
 
-// Delete dead codes and sessions rather than merely ignoring them.
+// Delete dead sessions rather than merely ignoring them.
 //
 // A table of dead credentials is a table of things that could come back if a
 // clock moved. Swept on a timer and checked again on every use, the same

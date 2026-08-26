@@ -35,7 +35,7 @@ export function accessRoster({ db, cfg, client = null }) {
   // Some people hold access by role and may never have spoken or signed in --
   // a server owner who has only ever watched, or the operator on a fresh
   // install. Leaving them off the page would understate who can get in.
-  const blank = (userId) => ({ userId, name: null, sessions: 0, lastSeen: null, codePending: 0, lines: 0 });
+  const blank = (userId) => ({ userId, name: null, sessions: 0, lastSeen: null, lines: 0 });
   for (const id of [cfg?.ownerUserId, ...owns.keys()]) {
     if (id && !known.has(id)) known.set(id, blank(id));
   }
@@ -60,13 +60,12 @@ export function accessRoster({ db, cfg, client = null }) {
         signedIn: p.sessions > 0,
         sessions: p.sessions,
         lastSeen: p.lastSeen,
-        codePending: p.codePending > 0,
         lines: p.lines,
       };
     })
     // Somebody with no level and no history is not a person with access; they
     // are a row in a table. Keep them only if they have actually been seen.
-    .filter((p) => p.level !== 'none' || p.lines > 0 || p.signedIn || p.codePending)
+    .filter((p) => p.level !== 'none' || p.lines > 0 || p.signedIn)
     .sort(
       (a, b) =>
         ORDER[a.level] - ORDER[b.level] ||

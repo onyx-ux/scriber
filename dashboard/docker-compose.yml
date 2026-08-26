@@ -45,5 +45,7 @@ services:
       # Who gets in without a password. Kept out of the template so the list
       # can be edited without a container rebuild.
       - ./config/allowed-ips.conf:/etc/nginx/allowed-ips.conf:ro
-      # htpasswd -B -c config/.htpasswd <username>
+      # See dashboard/config/.htpasswd.example for how to generate this —
+      # including the chmod 644, without which nginx's workers cannot read it
+      # and every password prompt becomes a 500.
       - ./config/.htpasswd:/etc/nginx/.htpasswd:ro
