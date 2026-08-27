@@ -156,7 +156,16 @@ CREATE TABLE IF NOT EXISTS dashboard_access (
   tier INTEGER,
   set_by TEXT,
   set_at TEXT NOT NULL DEFAULT (datetime('now')),
-  note TEXT
+  note TEXT,
+  -- When this person asked to be let in, if they ever did. A row with this set
+  -- and invited = 0 is somebody waiting at the door: Discord vouched for them,
+  -- the guest list did not, and they pressed the button rather than leaving.
+  --
+  -- Separate from "invited" rather than a third state of it, because the two
+  -- answer different questions and both can be true. Admitting somebody who
+  -- asked should not erase the fact that they asked, or the date -- that is the
+  -- only record of how long they waited.
+  requested_at TEXT
 );
 
 -- Asking for a deleted campaign back.
@@ -390,6 +399,12 @@ function migrate(db) {
   // held one campaign: two tables in one Discord would otherwise share a
   // roster, so naming your paladin in one game renames you in the other, and
   // a /correct for one campaign's NPC rewrites the other's transcripts.
+  const accessCols = db.prepare(`PRAGMA table_info(dashboard_access)`).all().map((c) => c.name);
+  if (accessCols.length && !accessCols.includes('requested_at')) {
+    db.prepare(`ALTER TABLE dashboard_access ADD COLUMN requested_at TEXT`).run();
+    console.log('[db] migrated: added dashboard_access.requested_at');
+  }
+
   const charCols = db.prepare(`PRAGMA table_info(characters)`).all().map((c) => c.name);
   const corrCols = db.prepare(`PRAGMA table_info(corrections)`).all().map((c) => c.name);
 
@@ -1534,7 +1549,8 @@ function wrap(db) {
       return db
         .prepare(
           `SELECT user_id AS userId, username, invited, cap, tier,
-                  set_by AS setBy, set_at AS setAt, note
+                  set_by AS setBy, set_at AS setAt, note,
+                  requested_at AS requestedAt
              FROM dashboard_access ORDER BY set_at DESC, user_id`
         )
         .all()
@@ -1601,7 +1617,8 @@ function wrap(db) {
     tidyAccess(userId) {
       db.prepare(
         `DELETE FROM dashboard_access
-          WHERE user_id = ? AND invited = 0 AND cap IS NULL AND tier IS NULL`
+          WHERE user_id = ?
+            AND invited = 0 AND cap IS NULL AND tier IS NULL AND requested_at IS NULL`
       ).run(String(userId));
     },
 
@@ -1621,6 +1638,69 @@ function wrap(db) {
 
     countInvited() {
       return db.prepare(`SELECT COUNT(*) AS n FROM dashboard_access WHERE invited = 1`).get().n;
+    },
+
+    // --- people waiting at the door ---
+
+    // Somebody who got as far as Discord, came back, and was turned away.
+    //
+    // The timestamp is only written the FIRST time. Somebody who tries again
+    // next week is still somebody who asked last week, and refreshing the date
+    // on every attempt would turn the queue into a list sorted by impatience.
+    // The name is refreshed, because names change and the newer one is the one
+    // that will be recognised.
+    recordRequest(userId, { username = null } = {}) {
+      db.prepare(
+        `INSERT INTO dashboard_access (user_id, username, invited, requested_at)
+         VALUES (?, ?, 0, datetime('now'))
+         ON CONFLICT(user_id) DO UPDATE SET
+           username = COALESCE(excluded.username, dashboard_access.username),
+           requested_at = COALESCE(dashboard_access.requested_at, excluded.requested_at)`
+      ).run(String(userId), username);
+      return this.requestFor(userId);
+    },
+
+    requestFor(userId) {
+      return (
+        db.prepare(
+          `SELECT user_id AS userId, username, requested_at AS requestedAt, invited
+             FROM dashboard_access WHERE user_id = ? AND requested_at IS NOT NULL`
+        ).get(String(userId)) ?? null
+      );
+    },
+
+    // Still waiting: they asked, and nobody has let them in. Oldest first,
+    // because a queue that puts the newest arrival on top is not a queue.
+    listRequests() {
+      return db
+        .prepare(
+          `SELECT user_id AS userId, username, requested_at AS requestedAt
+             FROM dashboard_access
+            WHERE requested_at IS NOT NULL AND invited = 0
+            ORDER BY requested_at`
+        )
+        .all();
+    },
+
+    countRequests() {
+      return db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM dashboard_access
+            WHERE requested_at IS NOT NULL AND invited = 0`
+        ).get().n;
+    },
+
+    // "No thank you" -- clears the ask without admitting them, and lets
+    // tidyAccess remove the row entirely if it now says nothing. They can ask
+    // again; this is a decision about a queue, not a ban.
+    dismissRequest(userId) {
+      const changed = db
+        .prepare(
+          `UPDATE dashboard_access SET requested_at = NULL
+            WHERE user_id = ? AND requested_at IS NOT NULL`
+        ).run(String(userId)).changes;
+      this.tidyAccess(userId);
+      return changed;
     },
 
     // --- what the models have cost ---

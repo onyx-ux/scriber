@@ -56,6 +56,8 @@ function sameSecret(a, b) {
 // asked for. Without it, anyone can hand somebody a link that quietly signs
 // them into an attacker's Discord account and leaves them typing into it.
 export const STATE_COOKIE = 'quill_signin';
+// Not a session. See askToken -- it can only put a name in a queue.
+export const ASK_COOKIE = 'quill_ask';
 
 // Long enough to walk through Discord's screen and short enough that a stale
 // tab does not carry a live attempt around for the afternoon.
@@ -156,6 +158,7 @@ function bake(name, value, { secure = false, maxAgeMs = SESSION_TTL_MS } = {}) {
 }
 
 export const sessionCookie = (token, opts = {}) => bake(COOKIE, token, opts);
+export const askCookie = (token, opts = {}) => bake(ASK_COOKIE, token, { maxAgeMs: ASK_TTL_MS, ...opts });
 export const stateCookie = (state, opts = {}) => bake(STATE_COOKIE, state, { maxAgeMs: STATE_TTL_MS, ...opts });
 
 const cleared = (name, { secure = false } = {}) =>
@@ -165,6 +168,59 @@ export const clearedCookie = (opts) => cleared(COOKIE, opts);
 // Spent on the first callback that reads it, successful or not. A state that
 // still works after it has been answered is a state that works twice.
 export const clearedStateCookie = (opts) => cleared(STATE_COOKIE, opts);
+export const clearedAskCookie = (opts) => cleared(ASK_COOKIE, opts);
+
+// --- the one credential that grants nothing ---
+//
+// Somebody turned away at the door has no session, by design: web/auth-routes
+// checks the guest list BEFORE it writes a row, because a row written and then
+// reasoned about is a row that outlives the reasoning. That leaves a real
+// problem for a Request an invite button — the person pressing it is, as far
+// as the server is concerned, nobody at all, and a button that posts its own
+// user id is a button that lets anybody put any name in the queue.
+//
+// So the callback hands back a short-lived signed note saying only "Discord
+// confirmed this is user X, called Y". It is not a session and cannot become
+// one. Everything that reads a session reads COOKIE via readSession; nothing
+// anywhere reads this except askedBy below, and the single thing askedBy is
+// allowed to do is write a request row.
+//
+// Stateless on purpose. A refused sign-in writes NOTHING until the button is
+// pressed, so somebody who bounces off the door and leaves has left no trace
+// but the log line -- which is the behaviour that was there before this
+// existed, and worth keeping for everyone who never asks.
+const ASK_TTL_MS = 30 * 60 * 1000;
+
+export function askToken(cfg, { userId, username = null, now = Date.now() } = {}) {
+  const secret = authSecret(cfg);
+  if (!secret || !userId) return null;
+
+  // Base64url, so a username with a comma, a dot or a non-ASCII character in
+  // it cannot break the field separator. Discord allows all three.
+  const name = Buffer.from(String(username ?? ''), 'utf8').toString('base64url');
+  const body = `${String(userId)}.${name}.${now + ASK_TTL_MS}`;
+  return `${body}.${hmac(secret, body)}`;
+}
+
+// Who this note says asked -- or null, which every caller must treat as "no
+// idea who this is" rather than as an error worth explaining. A forged note
+// and an expired one are the same answer on purpose: telling the two apart out
+// loud would say whether a signature was right, which is a thing worth
+// guessing at.
+export function askedBy(cfg, token, { now = Date.now() } = {}) {
+  const secret = authSecret(cfg);
+  if (!secret || !token) return null;
+
+  const parts = String(token).split('.');
+  if (parts.length !== 4) return null;
+
+  const [userId, name, expiresAt, signature] = parts;
+  if (!sameSecret(hmac(secret, `${userId}.${name}.${expiresAt}`), signature)) return null;
+  if (!Number(expiresAt) || Number(expiresAt) < now) return null;
+
+  const username = Buffer.from(name, 'base64url').toString('utf8');
+  return { userId, username: username || null };
+}
 
 export function cookieFrom(header, name = COOKIE) {
   for (const part of String(header ?? '').split(';')) {

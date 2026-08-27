@@ -56,6 +56,11 @@ const DEV_ONLY = new Set([
   // somebody to the dashboard: /gatehouse/ is the only place it happens, so
   // there is one door to guard rather than two.
   'access/invite', 'access/uninvite', 'access/level', 'access/tier',
+  // Clearing somebody out of the request queue. The asking half is not an
+  // action at all -- it is POST /auth/ask, which carries its own credential
+  // because the person asking has no session and never will until this
+  // decides they do.
+  'access/dismiss',
   // Deciding a restore request is the operator reviewing their own queue.
   // The requester never needs this; they file the ticket from Discord.
   'campaign/restore-review',

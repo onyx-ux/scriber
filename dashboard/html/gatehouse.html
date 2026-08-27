@@ -450,6 +450,41 @@
     .doing { justify-content: flex-start; }
     .admit input { flex-basis: 100%; }
   }
+
+  /* People at the door. The one block on this page that is somebody waiting on
+     you, so it gets the verdigris the admission accent already means, and sits
+     above the hero rather than in the table. */
+  .asks {
+    border: 1px solid var(--bronze); border-radius: 8px;
+    padding: 16px 18px 14px; margin: 0 0 26px;
+    background: color-mix(in srgb, var(--bronze) 5%, var(--card));
+  }
+  .asks-head {
+    display: flex; align-items: center; gap: 9px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--bronze); margin-bottom: 12px;
+  }
+  .asks-mark {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--bronze); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bronze) 18%, transparent);
+  }
+  .ask-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 14px; align-items: center;
+    padding: 9px 0; border-top: 1px solid color-mix(in srgb, var(--bronze) 22%, transparent);
+  }
+  .ask-who { min-width: 0; }
+  .ask-who b { font-size: 16px; }
+  .ask-id { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: 8px; }
+  .ask-when { font-family: var(--mono); font-size: 12px; color: var(--faint); white-space: nowrap; }
+  .ask-do { display: flex; gap: 7px; }
+  .asks-foot { font-size: 13px; color: var(--faint); margin: 12px 0 0; max-width: 62ch; }
+
+  @media (max-width: 620px) {
+    .ask-row { grid-template-columns: 1fr; gap: 6px; }
+    .ask-do { margin-top: 4px; }
+  }
+
 </style>
 </head>
 <body>
@@ -606,7 +641,7 @@ function paint() {
     return;
   }
 
-  morph($('page'), door() + tools() + `
+  morph($('page'), queue() + door() + tools() + `
     <div class="grid">
       <div class="thead">
         <div>Person</div>
@@ -626,6 +661,47 @@ function paint() {
 // door is locked at all. With DASHBOARD_REQUIRE_LOGIN off, everything below is
 // hypothetical, and a page that led with the list instead would be quietly
 // lying by arrangement.
+// People who got as far as Discord, were turned away, and pressed the button.
+//
+// Above the door rather than a row in the table, because it is the one thing on
+// this page that is somebody else waiting on you. Everything below is a list
+// you maintain at your own pace; this is a question with a person behind it.
+function queue() {
+  const waiting = (access.people ?? []).filter((p) => p.waiting);
+  if (!waiting.length) return '';
+
+  const rows = waiting.map((p) => {
+    const name = p.name || p.userId;
+    return `
+      <div class="ask-row" data-key="ask-${esc(p.userId)}">
+        <div class="ask-who">
+          <b>${esc(name)}</b>
+          ${p.name ? `<span class="ask-id">${esc(p.userId)}</span>` : ''}
+        </div>
+        <div class="ask-when">asked ${esc(since(stamp(p.requestedAt)))}</div>
+        <div class="ask-do">
+          <button class="btn go" data-do="access/invite" data-user="${esc(p.userId)}"
+                  data-name="${esc(p.name ?? '')}">Let them in</button>
+          <button class="btn" data-do="access/dismiss" data-user="${esc(p.userId)}"
+                  data-said="Clear ${esc(name)} from the queue? They can ask again.">Not now</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="asks">
+      <div class="asks-head">
+        <span class="asks-mark" aria-hidden="true"></span>
+        ${waiting.length === 1 ? 'One person is waiting' : `${waiting.length} people are waiting`}
+      </div>
+      ${rows}
+      <p class="asks-foot">
+        Letting somebody in means they can sign in. It does not decide what they see — that is
+        still worked out from what their account owns, runs and plays in.
+      </p>
+    </div>`;
+}
+
 function door() {
   if (!access.requireLogin) {
     return `
@@ -664,6 +740,7 @@ function door() {
 
 const FILTERS = {
   all:  { label: 'Everyone',    keep: () => true },
+  ask:  { label: 'Asked to join', keep: (p) => p.waiting },
   on:   { label: 'On the list', keep: (p) => p.invited },
   off:  { label: 'Turned away', keep: (p) => !p.invited },
   live: { label: 'Signed in',   keep: (p) => p.signedIn },
@@ -673,9 +750,12 @@ const FILTERS = {
 function tools() {
   const people = access.people ?? [];
   // A chip for a state nobody is in is a chip that only ever says zero. The
-  // three describing the shape of the list stay whatever the count; the two
-  // describing an exception appear only when there is one.
-  const shown = ['all', 'on', 'off', 'live', 'held'].filter(
+  // three describing the shape of the list stay whatever the count; the rest
+  // describe an exception and appear only when there is one.
+  //
+  // "Asked to join" is first among those, not last, because it is the only
+  // one that is somebody waiting on an answer rather than a state of the list.
+  const shown = ['all', 'ask', 'on', 'off', 'live', 'held'].filter(
     (k) => ['all', 'on', 'off'].includes(k) || people.some(FILTERS[k].keep)
   );
 

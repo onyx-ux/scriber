@@ -232,6 +232,7 @@ export const ACTION_NEEDS = {
   'access/uninvite': 'everything',
   'access/level': 'everything',
   'access/tier': 'everything',
+  'access/dismiss': 'everything',
 };
 
 // The two actions you may aim at yourself wherever you are welcome.

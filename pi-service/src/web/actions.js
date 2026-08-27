@@ -357,6 +357,27 @@ export const ACTIONS = {
   // much of my GPU and my API bill may they spend", which no fact in the world
   // answers -- it is the person paying deciding what they will pay, and that is
   // a decision, not a lookup.
+  // "No thank you." Clears the ask without admitting them and without marking
+  // them in any way -- they can ask again, because this is a decision about a
+  // queue rather than a ban. Admitting somebody is the other button, and it
+  // keeps the date they asked on.
+  'access/dismiss': (db, cfg, body) => {
+    const id = userId(body);
+    if (!id) return badRequest('A Discord user id is required.');
+
+    const cleared = db.dismissRequest(id);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        cleared: cleared > 0,
+        message: cleared
+          ? 'Cleared. They can ask again, and nothing about them was written down.'
+          : 'Nobody by that id was waiting.',
+      },
+    };
+  },
+
   'access/tier': (db, cfg, body, ctx) => {
     const id = userId(body);
     if (!id) return badRequest('A Discord user id is required.');

@@ -162,6 +162,33 @@ A validation on the summary output that if the output has no real content of val
       in `access/operators.js`, and it is the only thing that answers "who runs
       this".
 
+- [x] **Request an invite** — being turned away used to be a line of red text
+      under a Continue with Discord button, which reads as a fault and offers a
+      loop: press the button again and be refused again. It is now its own
+      screen. **Quill is not open yet** — pre-alpha, the list is short, and here
+      is the one thing you can do about it.
+
+      The button puts their Discord name in a queue. The gatehouse shows the
+      queue above everything else on the page, because it is the only thing
+      there that is somebody waiting on you rather than a list you keep at your
+      own pace: **Let them in** or **Not now**, and an *Asked to join* chip.
+      Dismissing is not a ban — it clears the ask, leaves no row behind, and
+      they can ask again.
+
+      The awkward part is that somebody turned away has **no session**, by
+      design: `auth-routes` checks the guest list before it writes any row. So a
+      button that posted its own user id would let anybody put any name in front
+      of the operator. Instead the callback hands back a short-lived signed note
+      saying only *"Discord confirmed this is user X, called Y"* — thirty
+      minutes, spent on use, and the single thing it can do is create a request
+      row. It is not a session and cannot become one.
+
+      Nothing is written until the button is pressed, so somebody who reads the
+      screen and closes the tab costs the database exactly what they always did:
+      one log line. Asking twice does not refresh the date — a queue sorted by
+      impatience is not a queue — and admitting somebody keeps the date they
+      asked on, which is the only record of how long they waited.
+
 ## Ideas not built yet
 
 - **Limits behind the tiers** — the tier is set, stored and visible, and it

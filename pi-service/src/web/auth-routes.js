@@ -29,6 +29,11 @@ import {
   clearedStateCookie,
   cookieFrom,
   STATE_COOKIE,
+  askToken,
+  askedBy,
+  askCookie,
+  clearedAskCookie,
+  ASK_COOKIE,
 } from './auth.js';
 import { authorizeUrl, identifyByCode, oauthReady } from './discord-oauth.js';
 import { maySignIn } from './authority.js';
@@ -37,6 +42,7 @@ export async function handleAuthRoute({ pathname, method = 'POST', url, body, re
   if (method === 'GET' && pathname === '/auth/discord') return start({ cfg, secure });
   if (method === 'GET' && pathname === '/auth/callback') return callback({ url, req, db, cfg, secure, fetchImpl });
   if (method === 'POST' && pathname === '/auth/logout') return logout({ body, req, db, cfg, secure });
+  if (method === 'POST' && pathname === '/auth/ask') return askForInvite({ req, db, cfg, secure });
   return null;
 }
 
@@ -92,7 +98,16 @@ async function callback({ url, req, db, cfg, secure, fetchImpl }) {
     // The only trace a turned-away sign-in leaves. No session row is written,
     // so without this line somebody being refused over and over is invisible.
     console.log(`[auth] refused ${who.username} (${who.userId}) — not on the guest list`);
-    return refuse(cfg, 'notinvited', { secure });
+
+    // Still nothing written. They leave with a signed note saying who Discord
+    // says they are, which the Request an invite button spends and nothing
+    // else will accept — see askToken. Somebody who reads the message and
+    // closes the tab has cost this database nothing at all.
+    const note = askToken(cfg, { userId: who.userId, username: who.username });
+    return {
+      redirect: dashboard(cfg, '#signin-error=notinvited'),
+      cookie: [clearedStateCookie({ secure }), ...(note ? [askCookie(note, { secure })] : [])],
+    };
   }
 
   const session = openSession(db, cfg, { userId: who.userId, username: who.username });
@@ -104,6 +119,55 @@ async function callback({ url, req, db, cfg, secure, fetchImpl }) {
     // worked, and leaving a live state behind would leave a second callback
     // able to use it.
     cookie: [clearedStateCookie({ secure }), sessionCookie(session.token, { secure })],
+  };
+}
+
+// --- asking to be let in ---
+
+// The far side of the button on the turned-away screen.
+//
+// Deliberately not an /actions/ route: everything there runs through mayAct,
+// which starts from a viewer, and the whole point of this one is that the
+// person has no viewer and never will until somebody admits them. It carries
+// its own credential and its own single power.
+function askForInvite({ req, db, cfg, secure }) {
+  const asked = askedBy(cfg, cookieFrom(req.headers.cookie, ASK_COOKIE));
+
+  // No note, a forged one, or one older than half an hour. All the same
+  // answer: this is not a person we can put in a queue. Nothing is written.
+  if (!asked) {
+    return {
+      status: 400,
+      payload: {
+        ok: false,
+        message: 'That request has gone stale — they only last half an hour. Sign in again and it will work.',
+      },
+    };
+  }
+
+  // Asking after being admitted is not an error, it is a stale tab. Say the
+  // useful thing rather than filing a request nobody needs to answer.
+  if (maySignIn(cfg, asked.userId, db)) {
+    return {
+      status: 200,
+      payload: { ok: true, already: true, message: 'You are already on the list — sign in and it will work.' },
+      cookie: clearedAskCookie({ secure }),
+    };
+  }
+
+  const row = db.recordRequest(asked.userId, { username: asked.username });
+  console.log(`[auth] ${asked.username} (${asked.userId}) asked for an invite`);
+
+  return {
+    status: 200,
+    payload: {
+      ok: true,
+      message: 'Asked. Whoever runs this bot will see it next time they open the gatehouse.',
+      requestedAt: row?.requestedAt ?? null,
+    },
+    // Spent. Pressing the button twice is not an error, but it should not
+    // silently keep working from a note that has already been answered.
+    cookie: clearedAskCookie({ secure }),
   };
 }
 

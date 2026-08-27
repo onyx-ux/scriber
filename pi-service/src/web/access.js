@@ -92,15 +92,27 @@ export function accessRoster({ db, cfg, client = null }) {
         invited: admission !== null && admission !== 'open',
         admittedAt: said?.setAt ?? null,
         note: said?.note ?? null,
+        // When they asked to be let in, if they did. Kept even after they are
+        // admitted -- it is the only record of how long somebody waited, and
+        // erasing it on admission would make the queue look like it was always
+        // empty.
+        requestedAt: said?.requestedAt ?? null,
+        waiting: Boolean(said?.requestedAt) && !said?.invited,
       };
     })
     // Somebody with no level and no history is not a person with access; they
     // are a row in a table. Keep them only if they have actually been seen --
     // or if somebody deliberately put them on the list, which is the one case
     // where a person with no history at all is the most important row here.
+    //
+    // `waiting` is the second such case and arrived later: somebody who asked
+    // to be let in has, by definition, no level, no lines and no session, so
+    // every other clause here is false about them. Without this they pressed
+    // the button, the row was written, and the page that exists to answer them
+    // never showed it.
     .filter(
       (p) =>
-        p.level !== 'none' || p.lines > 0 || p.signedIn ||
+        p.level !== 'none' || p.lines > 0 || p.signedIn || p.waiting ||
         p.admission === 'list' || p.admission === 'env' || p.cap
     )
     .sort(
@@ -131,6 +143,10 @@ export function accessRoster({ db, cfg, client = null }) {
     // Who runs this install. The page says it out loud, because "there are two
     // of you" belongs on the screen that decides who gets in.
     operators: operatorIds(cfg),
+    // How many people are at the door right now. Its own number rather than
+    // something to count out of `people`, because it is the one thing on this
+    // page that is somebody else waiting on the operator.
+    waiting: db.countRequests?.() ?? 0,
     // What the environment's half holds, including ids nobody has ever seen.
     // Shown so a name admitted in .env and never used is not simply missing.
     envList,

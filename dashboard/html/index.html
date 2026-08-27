@@ -1083,6 +1083,9 @@
     margin: 14px 0 0; max-width: 44ch;
   }
   .gate-say b { color: var(--ink); font-weight: 600; }
+  /* What the button will actually do, set below it rather than inside it. A
+     label labels; the explaining goes here. */
+  .gate-say.quiet-say { font-size: 14px; margin-top: 12px; opacity: .72; }
 
   .gate-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
   .gate-btn {
@@ -1891,9 +1894,94 @@ const SIGNIN_TROUBLE = {
   state: 'That sign-in had gone stale — they only last ten minutes. Press the button again and it will work.',
   discord: 'Discord did not finish the sign-in. That is usually momentary; try again.',
   config: 'This bot is not set up for Discord sign-in yet, so there is nothing to sign in to.',
-  notinvited: 'Discord knows you, but this bot does not have you on its list yet. Whoever runs it can add you.',
+  // Handled by its own screen rather than a line of red text -- being turned
+  // away is the one outcome here that is nobody's mistake, so it gets an
+  // explanation and something to do rather than an error.
+  notinvited: null,
   secret: 'This bot has no key to sign sessions with, so it cannot keep you signed in.',
 };
+
+// Where the ask got to. Nothing is stored anywhere until the button is
+// pressed, so this is the whole of the state: what the server last said, and
+// whether the button should still be live.
+const invite = { asking: false, asked: false, failed: false, message: null };
+
+async function askForInvite() {
+  if (invite.asking || invite.asked) return;
+  invite.asking = true;
+  invite.message = null;
+  renderScreen();
+
+  try {
+    const res = await fetch(`${API}/auth/ask`, { method: 'POST', headers: { 'content-type': 'application/json' } });
+    const payload = await res.json().catch(() => ({}));
+    invite.asked = res.ok && payload.ok === true;
+    invite.failed = !invite.asked;
+    invite.message = payload.message ?? 'That did not go through. Try signing in again.';
+  } catch {
+    invite.failed = true;
+    invite.message = `Could not reach the bot at ${API}. Try again in a moment.`;
+  } finally {
+    invite.asking = false;
+    renderScreen();
+  }
+}
+
+// Turned away at the door.
+//
+// Discord vouched for them and this bot's list did not, which is not an error
+// and not their fault. So: say what Quill is, say plainly that the door is
+// shut for now, and give them the one thing they can actually do about it.
+function notInvitedScreen() {
+  loadGateFonts();
+
+  return `
+    <div class="gate">
+      <div class="gate-inner">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M20.5 2.6c-7 .9-11.8 5-14 11.4l-1.7 4.9 4.8-1.7C16 15 20 10.2 20.5 2.6Z" stroke="#2434A8" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M5.1 19.6 2.6 22.2" stroke="#2434A8" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+
+        <p class="gate-eyebrow">Pre-alpha</p>
+        <h1>Quill is not open yet.</h1>
+
+        <p class="gate-say">
+          Discord vouched for you — that part worked. Quill itself is still in pre-alpha and only
+          lets in people it has been told about, so there is nothing behind this door for you today.
+        </p>
+
+        ${invite.asked
+          ? `<p class="gate-msg">${esc(invite.message ?? 'Asked.')}</p>
+             <p class="gate-say">
+               Nothing else to do. Whoever runs this bot decides, and you will simply be able to
+               sign in the next time you try.
+             </p>`
+          : `
+          <div class="gate-btns">
+            <button class="gate-btn discord" type="button" data-ask-invite ${invite.asking ? 'disabled' : ''}>
+              ${invite.asking ? 'Asking…' : 'Request an invite'}
+            </button>
+          </div>
+          <p class="gate-say quiet-say">
+            This puts your Discord name in a queue for whoever runs Quill. Nothing else is sent and
+            nothing is shared.
+          </p>`}
+
+        ${invite.failed && invite.message
+          ? `<p class="gate-msg bad">${esc(invite.message)}</p>`
+          : ''}
+
+        <p class="gate-foot">
+          Quill records a table's session, writes up what happened, and keeps the campaign's notes in
+          one place. It asked Discord for one thing, the smallest it offers: who you are. Not your
+          email, not your servers, and nothing it could post or change on your behalf.
+        </p>
+
+        <a class="gate-back" href="/">&larr; Back to the landing page</a>
+      </div>
+    </div>`;
+}
 
 function signInScreen() {
   loadGateFonts();
@@ -1973,7 +2061,10 @@ function renderScreen() {
 
   if (gateOpen) {
     el.className = '';
-    morph(el, signInScreen());
+    // Turned away is its own screen, not a red line under the sign-in button.
+    // Offering Continue with Discord again to somebody Discord has already
+    // vouched for is a loop, and the loop is what makes it read as a fault.
+    morph(el, view.notInvited ? notInvitedScreen() : signInScreen());
     return;
   }
 
@@ -4099,6 +4190,7 @@ document.addEventListener('click', async (event) => {
   if (t.closest('[data-delete-campaign]')) { closeDialogs(); view.deleting = true; return paint(); }
 
   if (t.closest('[data-signin-cancel]')) { view.signingIn = false; return paint(); }
+  if (t.closest('[data-ask-invite]')) return askForInvite();
 
   if (t.closest('[data-signin]')) {
     closeDialogs();
@@ -4418,7 +4510,10 @@ const arrivedAt = location.hash ?? '';
 if (arrivedAt === '#signin' || arrivedAt.startsWith('#signin-error=')) {
   view.signingIn = true;
   const trouble = arrivedAt.slice('#signin-error='.length);
-  if (SIGNIN_TROUBLE[trouble]) {
+  // The one outcome that is nobody's mistake gets a screen of its own; every
+  // other one is a sentence under the button.
+  if (trouble === 'notinvited') view.notInvited = true;
+  else if (SIGNIN_TROUBLE[trouble]) {
     login.failed = true;
     login.message = SIGNIN_TROUBLE[trouble];
   }
