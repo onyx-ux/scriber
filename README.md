@@ -745,6 +745,47 @@ servers it's in, what it's recording, what it's transcribing, what's queued —
 and it's where you **approve** things, manage a campaign's roster and
 corrections, and pull a transcript.
 
+### What you land on
+
+**The desk.** Signing in used to land on the ledger of campaigns, which answers
+"which table" and nothing else — the wrong first question for whoever runs the
+bot, since on a given evening what they came for is as likely to be the night
+waiting to be released, or the bill, or a name at the gate. The desk is every
+place there is to go, one square each: whatever is recording, whatever is
+waiting on you, the table you last played, the whole ledger, the servers, the
+bill, the gatehouse. A square is only drawn when it is both true and yours —
+nothing says "not recording", and a player's desk has their own table on it and
+nothing else.
+
+### Inside a campaign
+
+A column of four things — **Sessions, NPCs, Places, Items** — and a pane that
+reads whichever you picked. The pane's tabs go **Notes, Corrections, The
+table**, in that order, because reading is what it is for; **Settings** sits
+apart at the end and only for whoever manages that campaign.
+
+Two things worth knowing about what the pane draws:
+
+- **Names in a write-up are links.** Every NPC and place a recap has named has
+  a page in the compendium, so the recap that names one is a way of getting
+  there. The linking happens as the page is read, against the list the campaign
+  actually has, rather than being asked of the summariser — so it works on
+  every session already written, costs no re-summarise, and cannot link to an
+  entry that does not exist. The rules are the four
+  [`export/linkify.js`](pi-service/src/export/linkify.js) already used for the
+  Obsidian vault, so a name is a link here if and only if it is one there.
+  **Copy for Obsidian** carries them as real `[[Name]]` brackets.
+- **Items are one list**, grouped by the night each thing was found, with coin
+  and experience left out of it. Those stay in the session's own Loot and
+  rewards — they are what the night was worth — but a campaign-wide list of
+  *things* is not an accounts page. The test is not the word "gold": money
+  reads as a quantity and an item reads as a name.
+
+A session is called **Session 4** everywhere a person reads about one. The
+`Cipher_04` form is for slash commands, which are typed on a server that may
+run several campaigns and so need the campaign in the reference; the vault keeps
+it for the same reason.
+
 Two pieces, deliberately:
 
 - **the bot** serves JSON on `STATUS_PORT` (8090). This is the only inbound

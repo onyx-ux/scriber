@@ -189,6 +189,163 @@ A validation on the summary output that if the output has no real content of val
       impatience is not a queue — and admitting somebody keeps the date they
       asked on, which is the only record of how long they waited.
 
+## Implemented (2026-08-28)
+
+- [x] **The desk** — signing in used to land on the ledger of campaigns, which
+      answers "which table" and nothing else. That is the wrong first question
+      for the person who runs the bot: on a given evening what they came for is
+      as likely to be the night waiting to be released, or the bill, or a name
+      at the gate, as it is a campaign.
+
+      The first screen is now every place there is to go, drawn as one sheet of
+      ledger paper ruled into squares — the cells share their borders rather
+      than floating apart as cards, so it reads as a page divided up rather
+      than six objects arranged on a background. Each square is written at the
+      foot and the ruling shows in the space above the writing, so a square
+      with little on it is mostly rule. The pen draws itself under whichever
+      one you are about to open, and the two squares that are about tonight —
+      something recording, something waiting on you — keep their rule drawn
+      without being asked.
+
+      Squares for things that are not happening are not drawn. There is no
+      "nothing is recording" square, because a page of absences answers
+      nothing. Nor is any square drawn that its viewer would be refused: the
+      bill, the servers and the gatehouse are the operator's, and a player's
+      desk has their own table on it and nothing else.
+
+      The old shortcut — one campaign, so go straight into it, on the grounds
+      that an index of one is a door with nothing behind it — did not survive
+      this. The desk is not an index of campaigns, and even a one-table
+      operator has three other doors on it. The table is still one click away,
+      by name, in its own square.
+
+- [x] **Wikilinks in the write-ups** — every NPC and every place a write-up has
+      named already had a page of its own in the compendium, and no way to get
+      to it from the recap that named it. Names in the prose are now links: a
+      dotted pen underline at rest, the highlighter under the cursor, and
+      clicking one opens that entry. **Copy for Obsidian** carries the same
+      links as real `[[Name]]` brackets, so a recap pasted into a vault
+      arrives already joined to the notes the exporter writes.
+
+      Nothing is asked of the summariser for this, deliberately. Links written
+      into the stored recap would exist only for sessions summarised after the
+      prompt changed; every session already written would need re-summarising —
+      real money, on the owner's bill — to gain one; and the model would be
+      inventing link targets with no way of knowing which entries exist.
+      Linking at the moment of reading, against the list the campaign actually
+      has, is retrospective for nothing and cannot point at a page that is not
+      there.
+
+      The rules are the four `export/linkify.js` already used for the vault —
+      first occurrence only, case-sensitive, whole words, longest name first —
+      so a name is a link on this page if and only if it is one in Obsidian.
+
+- [x] **Items are one list** — an item used to be a page. There was never more
+      to put on it than the one sentence the summariser wrote on the night it
+      was found, so the page was a click that led to that sentence in a larger
+      font, and reading down the campaign's haul meant opening forty of them.
+      The Items shelf is now a single ledger, grouped by the night each thing
+      was found, and the column beside it lists those nights rather than a
+      second copy of the same forty lines.
+
+      **Coin and experience are left out of it.** They still appear in the
+      session's own Loot and rewards, because that is what the night was worth
+      — but a campaign-wide list of *things* with forty entries of gold in it
+      is an accounts page, and the two actual items are lost in among them. The
+      test is not the word "gold": "a golden idol" and "the Goldvein amulet"
+      both name something. Money reads as a quantity — a number, then what it
+      is counted in, and nothing else — and an item reads as a name, so a line
+      is money only when every word in it is a number, a unit, or a word for
+      joining those together.
+
+- [x] **The pane reads first** — the tabs were The table, Corrections, Notes,
+      Settings. Reading is what the pane is for and what nine visits in ten
+      are, so it comes first; Corrections is second, because it is what you go
+      and do having just read a name that came back wrong; the roster is third,
+      being looked at when somebody joins or leaves rather than weekly.
+
+      **Settings left the row entirely.** It is not a fourth thing to read — it
+      is what the person who runs the campaign does *to* it, and everybody
+      else's click on it landed on a screen of values they could not change. It
+      now sits apart at the end of the strip, in the utility face, and only for
+      whoever manages that campaign.
+
+- [x] **Fixing a name where you notice it** — the corrections list is the right
+      home for the rules and the wrong place to write one: nobody opens a list
+      of corrections and remembers a name from it. **Fix a name** on a write-up
+      opens the same two boxes under the recap that made you want them. The
+      corrections screen also stopped naming the transcriber — that is the same
+      rule the health line already follows below dev, and a correction is about
+      the name rather than about which program mishears it.
+
+- [x] **A session is "Session 4"** — everywhere a person reads about one. The
+      bot's own reference is `Cipher_04` and has to be: it is typed into a
+      slash command on a server that may run several campaigns, so it carries
+      its campaign with it. Inside the dashboard the campaign is the thing you
+      are already in, so the slug said nothing the header did not and read like
+      a filename. The vault keeps the slug, because a note in a vault does have
+      to say which campaign it belongs to.
+
+      The session column was rearranged around the same point: the name of the
+      night and its state have the first line to themselves, and the date and
+      line count moved to their own line underneath. All three used to share
+      one line and the name came third in the fight for it, which on a narrow
+      column left "Session 12" wrapping under a word of its own date.
+
+- [x] **The reading grows with the window** — the recap's prose was pinned at
+      70ch, which is the right measure on a laptop and two thirds of a monitor
+      left empty. It now grows with the window and stops at a line that can
+      still be tracked back to its own left edge.
+
+## Known faults, not fixed yet
+
+These are the operator's own reports, written down before they are argued
+with — two of them collide with a design decision that is recorded on purpose,
+and whoever picks them up should read the argument before deciding against it.
+
+- **Tier 9 does not grant dev access.** The gatehouse offers tier 9 as "the
+  house", and the expectation is that setting it makes that account an
+  operator. It does not, and today that is deliberate: `access/tiers.js`
+  argues that a *level* answers "what may they see" and is derivable from facts
+  in the world — `OWNER_USER_ID` in a file, Discord saying somebody owns a
+  server, a campaign naming its manager — while a *tier* answers "how much of
+  the owner's GPU and API bill may they spend", which no fact answers and only
+  the person paying can decide. Granting a level from a tier would mean
+  inventing the fact.
+
+  So this is a decision to take rather than a bug to fix. If tier 9 is to mean
+  "runs this bot", the honest shape is probably not to derive the level from it
+  but to make tier 9 a *fourth* way of being an operator alongside
+  `OWNER_USER_ID` and `OPERATOR_USER_IDS` — in which case it has to answer
+  the question those two answer with an SSH session: what stops somebody who
+  reaches the gatehouse from promoting themselves. The likely answer is that
+  only `dev` may set tier 9, which is already true, and that it is written
+  down as such rather than being a side effect.
+
+- **Levels can only be taken away.** The Level column caps somebody below what
+  they have earned; it cannot raise them. Same argument as above — the rungs
+  rest on facts, and picking one on this page does not make the fact true. What
+  the operator actually wants is to hand somebody `creator` or `owner`
+  without going through Discord, which needs a stored grant that
+  `buildViewer` unions with the derived level rather than intersecting, and a
+  rule for what happens when the derived level later rises above the granted
+  one. Note that the cap and the grant are then two different columns doing
+  opposite jobs, and one control that goes both ways is probably clearer than
+  two.
+
+- **The Settings tab cannot pick a channel.** The destination switch offers
+  "Where we played", "A chosen channel" and "DM to me", and the middle one is
+  permanently disabled with a note pointing at `/campaign output` in Discord.
+  The reason is that choosing a channel means listing the channels the bot may
+  post in, and only Discord can answer that — the dashboard's payload has never
+  carried one. The shape of the fix: `/campaign?id=` gains the text channels
+  the bot can both see and send in for that guild (the same question
+  `canCreateIn` already asks for guilds), the segment becomes a picker when
+  that list is non-empty, and `campaign/output` takes a `channelId`
+  alongside its mode. Worth checking what happens to a campaign whose chosen
+  channel is later deleted or made invisible to the bot, since that is a state
+  `/campaign output` can already leave behind.
+
 ## Ideas not built yet
 
 - **Limits behind the tiers** — the tier is set, stored and visible, and it

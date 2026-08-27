@@ -62,12 +62,17 @@ async function world(t) {
     ]);
     db.endMeeting(meeting, `2026-08-0${i + 1}T22:00:00Z`);
     db.setSummary(meeting, {
-      tldr: 'They talked their way into the lower registry.',
+      // The recap names an NPC and a place that the campaign also has entries
+      // for, which is what makes a wikilink possible at all.
+      tldr: 'They talked their way into the lower registry. Wren Halloway signed the writ.',
       scenes: [{ title: 'The queue at the notary', points: ['The writ passed on the second reading.'] }],
       npcsIntroduced: ['Wren Halloway: the notary clerk'],
       locationsVisited: ['The Ashen Vaults'],
       partyDecisions: ['Leave the stone in the wall.'],
-      unresolvedThreads: [], followUps: [], lootAndRewards: [], funnyMoments: [],
+      // One thing and one quantity, so the item list has something to keep and
+      // something to leave out.
+      lootAndRewards: ['A brass key stamped with a wren', '450 gold pieces'],
+      unresolvedThreads: [], followUps: [], funnyMoments: [],
     });
     db.setMeetingStatus(meeting, 'done');
   }
@@ -166,11 +171,17 @@ async function render({ base, cookie }) {
 
   const panels = {};
   const listeners = {};
+  const copied = [];
   const el = (id) => (panels[id] ??= {
     id, _html: '', className: '', textContent: '', dataset: {},
     set innerHTML(v) { this._html = v; },
     get innerHTML() { return this._html; },
     focus() {}, querySelector() { return null; }, setSelectionRange() {}, closest: () => null,
+    // measureChrome() asks the split how far down the page it starts, to
+    // budget the sticky columns' height. Nothing here has a layout, so the
+    // honest answer is a zero box — the same answer a display:none element
+    // would give, and the page is written to survive it.
+    getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
   });
 
   const sandbox = {
@@ -182,11 +193,15 @@ async function render({ base, cookie }) {
     URLSearchParams, URL, Date, Math, JSON, Number, String, Boolean, Array, Object, Set, Map, Intl,
     FormData: class {},
     location: { search: '' },
-    navigator: { clipboard: { writeText: async () => {} } },
+    navigator: { clipboard: { writeText: async (text) => { copied.push(text); } } },
     confirm: () => true,
     setTimeout, clearTimeout,
     // The page's own polling would keep firing under the test runner.
     setInterval: () => 0,
+    // The page re-measures its chrome on resize. Nothing here ever resizes;
+    // this exists so registering the handler is not a TypeError.
+    addEventListener: (type, fn) => { listeners[type] = fn; },
+    scrollY: 0,
     document: {
       getElementById: el,
       addEventListener: (type, fn) => { listeners[type] = fn; },
@@ -204,8 +219,20 @@ async function render({ base, cookie }) {
       // markup either side of the animation, not the animation.
       querySelector: () => null,
       // The theme control writes the mode onto <html>, and does it OUTSIDE the
-      // try/catch that guards localStorage.
-      documentElement: { setAttribute() {}, removeAttribute() {}, getAttribute: () => null },
+      // try/catch that guards localStorage. measureChrome writes --above onto
+      // the same element, so the style map has to agree with itself: it is
+      // read before it is written, and a stub that always answered '' would
+      // hide a page that rewrote the property on every paint.
+      documentElement: {
+        setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
+        style: (() => {
+          const props = new Map();
+          return {
+            setProperty: (name, value) => props.set(name, value),
+            getPropertyValue: (name) => props.get(name) ?? '',
+          };
+        })(),
+      },
       get title() { return this._t; },
       set title(v) { this._t = v; },
     },
@@ -241,7 +268,7 @@ async function render({ base, cookie }) {
   };
 
   await settle((html_) => html_.length > 500);
-  return { body, click, settle };
+  return { body, click, settle, copied };
 }
 
 // Every element opened is closed. A template that throws part-way through
@@ -256,11 +283,18 @@ function balanced(markup) {
 const cookieFor = (db, cfg, userId, username) =>
   `quill_session=${openSession(db, cfg, { userId, username }).token}`;
 
+// The page opens on the desk, so anything about the inside of a campaign has
+// to walk in through its square. Done as a click rather than by reaching into
+// `view`, because the square being clickable is half of what is under test.
+const enter = (page, campaignId, until) =>
+  page.click(['[data-campaign]:not([data-act]):not(form)'], { campaign: String(campaignId) }, until);
+
 // --- it draws at all ---
 
 test('the operator sees the app, with the machinery on it', async (t) => {
-  const { db, cfg, base } = await world(t);
+  const { db, cfg, base, campaignId } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /data-import/.test(m));
   const markup = page.body();
 
   assert.ok(balanced(markup).ok, 'unbalanced markup means a template threw part-way');
@@ -273,10 +307,17 @@ test('the operator sees the app, with the machinery on it', async (t) => {
 // The specific failure this catches: a field read off a payload the viewer was
 // never given renders the string "undefined" into the page.
 test('no screen renders undefined, NaN or [object Object]', async (t) => {
-  const { db, cfg, base } = await world(t);
+  const { db, cfg, base, campaignId } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
 
   for (const [matches, dataset] of [
+    [['[data-screen]'], { screen: 'desk' }],
+    [['[data-campaign]:not([data-act]):not(form)'], { campaign: String(campaignId) }],
+    [['[data-shelf]'], { shelf: 'npcs' }],
+    [['[data-shelf]'], { shelf: 'places' }],
+    [['[data-shelf]'], { shelf: 'items' }],
+    [['[data-shelf]'], { shelf: 'sessions' }],
     [['[data-tab]'], { tab: 'table' }],
     [['[data-tab]'], { tab: 'corrections' }],
     [['[data-tab]'], { tab: 'settings' }],
@@ -314,8 +355,9 @@ for (const [level, userId, username] of [
   ['player', PLAYER, 'saf'],
 ]) {
   test(`${level === 'owner' ? 'an' : 'a'} ${level} is offered nothing their level cannot do`, async (t) => {
-    const { db, cfg, base } = await world(t);
+    const { db, cfg, base, campaignId } = await world(t);
     const page = await render({ base, cookie: cookieFor(db, cfg, userId, username) });
+    await enter(page, campaignId);
     // The table tab is where the roster and the invite panel live, so a check
     // that never opens it would pass for the wrong reason.
     await page.click(['[data-tab]'], { tab: 'table' });
@@ -357,8 +399,9 @@ test('a signed-out visitor gets the sign-in card and no campaign names', async (
 // A player reads the notes; the transcript is the verbatim record and is not
 // theirs. The page must not offer a button whose every click answers 403.
 test('a player is shown notes and never a transcript button', async (t) => {
-  const { db, cfg, base } = await world(t);
+  const { db, cfg, base, campaignId } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  await enter(page, campaignId);
 
   // The recap arrives a fetch after the screen first paints, and render() only
   // waits for the page to have drawn SOMETHING. On an idle machine it is there
@@ -390,4 +433,165 @@ test('the Models screen shows spend and never claims a remaining balance', async
   assert.match(markup, /gemini-3\.1-flash-lite/, 'and the cheap one it uses for questions');
   assert.match(markup, /Counted by this bot/, 'the honest framing survives to the page');
   assert.doesNotMatch(markup, /remaining balance.*\d/, 'no invented quota figure');
+});
+
+// --- the desk --------------------------------------------------------------
+
+// The first screen after signing in. What is under test is not the layout —
+// there is none here — but which doors it draws, because a square is a
+// promise that a place exists and can be got to.
+test('the desk is the first screen, and holds a door per place', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /Where would you like to start\?/);
+  assert.match(markup, /class="leaf/, 'the squares are drawn');
+  assert.match(markup, /Cipher/, 'the table you last played has its own square');
+  assert.match(markup, /data-screen="campaigns"/, 'and the whole ledger is one of them');
+  assert.match(markup, /href="\/gatehouse\/"/, 'the operator can get to the guest list');
+  assert.doesNotMatch(markup, /data-import/, 'the campaign column is not on this screen');
+});
+
+// Every square is a door somebody may walk through, so a viewer must not be
+// drawn one that would refuse them.
+test('a player is offered no machinery on the desk', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /class="leaf/);
+  assert.match(markup, /Cipher/, 'their own table is still theirs to open');
+  assert.doesNotMatch(markup, /data-screen="models"/);
+  assert.doesNotMatch(markup, /data-screen="servers"/);
+  assert.doesNotMatch(markup, /gatehouse/);
+});
+
+// --- wikilinks -------------------------------------------------------------
+
+// The connection the compendium already knew about, made clickable where it
+// is read. The campaign has an NPC entry for Wren Halloway and the recap says
+// the name, so the recap must offer the way there.
+test('a name in the write-up links to that entry', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.settle((m) => /class="wiki"/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /<button type="button" class="wiki" data-entry="npcs:wren halloway">Wren Halloway<\/button>/);
+  assert.doesNotMatch(markup, /\[\[/, 'the brackets are how a link is written, not how it is read');
+
+  // And following it lands on that entry rather than merely selecting it.
+  await page.click(['[data-entry]'], { entry: 'npcs:wren halloway' },
+                   (m) => /notary clerk/.test(m));
+  assert.match(page.body(), /Wren Halloway/);
+  assert.match(page.body(), /First met in\s+Session 1/, 'and the entry says which night, by number');
+});
+
+// A name that has no entry must not be dressed as a link to one.
+test('only names the campaign actually has become links', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.settle((m) => /class="wiki"/.test(m));
+
+  assert.doesNotMatch(page.body(), /class="wiki" data-entry="[^"]*registry/i);
+});
+
+// --- the item list ---------------------------------------------------------
+
+test('items are one list, and coin is not on it', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-shelf]'], { shelf: 'items' }, (m) => /brass key/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /A brass key stamped with a wren/);
+  assert.doesNotMatch(markup, /450 gold pieces/, 'a quantity is what a night was worth, not a thing');
+  assert.match(markup, /class="ledger\b/, 'and what is drawn is a list rather than a page per item');
+});
+
+// --- the pane's own furniture ---------------------------------------------
+
+test('a session is called Session N, never by its command reference', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /Session 2/.test(m));
+  const markup = page.body();
+
+  assert.match(markup, /Session 1/);
+  assert.match(markup, /Session 2/);
+  assert.doesNotMatch(markup, /Cipher_0\d/, 'the slug is for slash commands, not for reading');
+});
+
+test('the tabs read first and settings belongs to whoever runs the campaign', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+
+  const dev = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(dev, campaignId);
+  const asDev = dev.body();
+  assert.match(asDev, /data-tab="settings"/, 'the operator manages every campaign');
+  assert.ok(
+    asDev.indexOf('data-tab="notes"') < asDev.indexOf('data-tab="corrections"')
+      && asDev.indexOf('data-tab="corrections"') < asDev.indexOf('data-tab="table"'),
+    'reading, then fixing, then the roster'
+  );
+
+  const player = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  await enter(player, campaignId);
+  assert.doesNotMatch(player.body(), /data-tab="settings"/,
+    'a player would only be shown values they cannot change');
+});
+
+// Corrections are about the name, not about which program mishears it — the
+// user's own rule, and the same one the health line already follows.
+test('the corrections tab names no transcriber', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  // The creator, not the operator: the operator's top bar names the whisper
+  // server on every screen, which would fail this for the wrong reason.
+  const page = await render({ base, cookie: cookieFor(db, cfg, CREATOR, 'kez') });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'corrections' }, (m) => /Heard as/.test(m));
+
+  assert.match(page.body(), /Names that come back wrong/);
+  assert.doesNotMatch(page.body(), /whisper/i);
+});
+
+// The fix is offered where the mangled name is read, not only on the tab that
+// keeps the list.
+test('a write-up offers to fix a name it got wrong', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /data-fix-name/.test(m));
+
+  await page.click(['[data-fix-name]'], {}, (m) => /corrections\/add/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /data-act="corrections\/add"/);
+  assert.match(markup, /name="wrong"/);
+  assert.match(markup, /name="right"/);
+});
+
+// What the Copy button puts on the clipboard is a file for a vault, and a file
+// for a vault says [[Wren Halloway]] where this page draws an underline. The
+// two come from one list of spans, so this also pins the linking rules
+// themselves somewhere they can be read as text.
+test('the notes copied for Obsidian carry their wikilinks', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.settle((m) => /class="wiki"/.test(m));
+
+  await page.click(['[data-copy-notes]'], {}, () => page.copied.length > 0);
+  const markdown = page.copied.at(-1) ?? '';
+
+  assert.match(markdown, /\[\[Wren Halloway\]\] signed the writ/);
+  assert.match(markdown, /^# Cipher_0\d/, 'the heading is the name the vault gives the file');
 });

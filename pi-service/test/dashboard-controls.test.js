@@ -287,6 +287,9 @@ async function driver({ base, typed = {}, signedInAs = null }) {
     get innerHTML() { return this._html; },
     set textContent(v) { this._text = v; }, get textContent() { return this._text; },
     focus() {}, setSelectionRange() {}, closest: () => null, querySelector: () => null,
+    // measureChrome() asks the split how far down the page it starts. Nothing
+    // here has a layout, so a zero box is the honest answer.
+    getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
   });
 
   const sandbox = {
@@ -333,6 +336,10 @@ async function driver({ base, typed = {}, signedInAs = null }) {
     })(),
     confirm: () => { confirms.push(1); return true; },
     setTimeout, clearTimeout, setInterval: () => 0,
+    // The page re-measures its chrome on resize. Nothing here resizes; this is
+    // so registering the handler is not a TypeError.
+    addEventListener: (type, fn) => { (listeners[type] ??= []).push(fn); },
+    scrollY: 0,
     document: {
       getElementById: el,
       // Every listener, not just the last: the page registers three separate
@@ -359,7 +366,18 @@ async function driver({ base, typed = {}, signedInAs = null }) {
       // The theme control writes the mode onto <html>, and does it OUTSIDE the
       // try/catch that guards localStorage — so without this, clicking it
       // throws rather than being recorded as a control that did something.
-      documentElement: { setAttribute() {}, removeAttribute() {}, getAttribute: () => null },
+      documentElement: {
+        setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
+        // measureChrome writes --above here. Read before written, so the style
+        // map has to remember what it was given.
+        style: (() => {
+          const props = new Map();
+          return {
+            setProperty: (name, value) => props.set(name, value),
+            getPropertyValue: (name) => props.get(name) ?? '',
+          };
+        })(),
+      },
       get title() { return this._t; }, set title(v) { this._t = v; },
     },
   };
