@@ -198,26 +198,42 @@ between the Pi and PC for Ollama:
 
 ## What's NOT done yet
 
-Carried over from the original handoff's "immediate next steps," updated
-for what's actually confirmed vs. still open:
+Rewritten 2026-08-28. Everything the original handoff listed here has
+since been done. It was checked against the Pi over ssh rather than
+against this workspace, because the Pi's own git checkout is not the
+thing that runs: the bot runs from a CI-built image and the dashboard
+runs from a bind-mounted copy of `dashboard/html`.
 
-- [x] Confirm the current GitHub Actions build (commit `15bb2fe`) is
-      green. — Confirmed 2026-07-30, run #4, `conclusion: success`.
-- [ ] `.env` on the Pi is **not yet created** (not present in this
-      workspace copy as of end of session) — needs `DISCORD_TOKEN`,
-      `DISCORD_CLIENT_ID` from the Discord Developer Portal (this step
-      itself was never done this session either), plus `OLLAMA_URL`
-      pointing at the PC's real LAN IP.
-- [ ] Confirm `rclone.conf` / Drive OAuth actually completed (see above).
-- [ ] `docker compose pull && docker compose up -d` on the Pi — not done.
-- [ ] Test `/join` against a real voice channel — not done. This is the
-      big unknown: the voice capture pipeline
-      (`pi-service/src/voice/capture.js`, especially its naive
-      48kHz→16kHz downsampler) has never been run against real Discord
-      infrastructure.
-- [ ] Full end-to-end chain (`/join` → capture → `/leave` → transcribe →
-      queue → summarize → Discord post → ledger update → Drive sync) —
-      never run start-to-finish.
+Confirmed on the Pi, 2026-08-28:
+
+- [x] GitHub Actions build green — confirmed 2026-07-30, run #4.
+- [x] `pi-service/.env` exists and is populated. It does **not** want
+      `OLLAMA_URL`. The Ollama summariser was deliberately removed in
+      `d7a4486` and summarising runs through Gemini/Anthropic now. The
+      old wording of this section still asked for it, which is exactly
+      how a stale doc talks a fresh session into re-adding something
+      that was taken out on purpose.
+- [x] `pi-service/rclone/rclone.conf` exists, so the Drive OAuth flow
+      did complete after the winnat fix described above.
+- [x] `docker compose up -d` — running, as the `pi-service` project:
+      `pi-service-bot-1` from `ghcr.io/onyx-ux/scriber:latest`,
+      `pi-service-dashboard-1` on `nginx:alpine`, and
+      `pi-service-tunnel-1` on `cloudflare/cloudflared:latest`.
+
+One item is left open rather than ticked, because it was not re-checked:
+
+- [ ] The full chain (`/join` → capture → `/leave` → transcribe → queue
+      → summarize → Discord post → ledger update → Drive sync) was not
+      queried end to end on 2026-08-28. It is near-certainly long since
+      done — the bot has been up continuously and the campaign, consent,
+      correction and compendium features listed in `new features.md`
+      were built against real recorded games — but nobody read the
+      `meetings` and `summaries` tables to say so out loud. Read them if
+      it matters.
+
+Open work is no longer tracked in this file. It lives in
+`new features.md`, under "Known faults, not fixed yet" and "Ideas not
+built yet".
 
 ## Why this session used Cowork instead of Claude Code
 

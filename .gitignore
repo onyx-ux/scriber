@@ -49,3 +49,7 @@ backups/
 # history for ever once pushed, and it is a build output rather than a source.
 *.zip
 temp.md
+# Single-file design-tool exports (`Quill Landing Page.dc.html` and friends).
+# Same reasoning as the zip: they are a render of a design, not a source the
+# dashboard is built from, and each save writes a whole new copy of the file.
+*.dc.html
