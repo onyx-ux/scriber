@@ -29,6 +29,42 @@
 # says https. The bot uses this to decide whether the session cookie may carry
 # Secure, and getting it wrong either drops the cookie on a LAN page or leaves
 # it unprotected behind real TLS.
+# ── How often one address may knock ──────────────────────────────────────
+#
+# There was none of this while everything sat behind a password, because the
+# password was the meter. Opening the front door removes it, and three things
+# here are worth more to an attacker than bandwidth:
+#
+#   the sign-in callback makes TWO outbound calls to Discord per request, so
+#   hammering it turns this Pi into something spamming Discord's API with the
+#   bot's own credentials -- the failure mode is the bot being rate-limited or
+#   flagged, which is expensive and not obviously self-inflicted;
+#
+#   /status is rebuilt per request and reads the database;
+#
+#   and the paths still behind the password now verify a bcrypt hash at cost
+#   12, which is deliberately ~0.25s of CPU. That is the right cost against a
+#   guesser and the wrong one to hand out for free, so the gated paths are
+#   metered harder than the open ones rather than less.
+#
+# Keyed on $binary_remote_addr, which realip has already rewritten to the
+# visitor's own address for tunnel requests -- so one abusive client is limited
+# rather than every visitor sharing cloudflared's address.
+#
+# The dashboard polls /me and /status every five seconds, so a signed-in tab is
+# ~24 requests a minute on its own; the general limit has to sit well above
+# that or the tool throttles the people using it.
+limit_req_zone $binary_remote_addr zone=quill_api:10m  rate=120r/m;
+limit_req_zone $binary_remote_addr zone=quill_auth:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=quill_page:10m rate=60r/m;
+limit_req_zone $binary_remote_addr zone=quill_gate:10m rate=20r/m;
+limit_conn_zone $binary_remote_addr zone=quill_conn:10m;
+
+# 429 rather than 503, which is what a rate limit actually means and what every
+# client library already understands.
+limit_req_status 429;
+limit_conn_status 429;
+
 map $http_cf_visitor $forwarded_proto {
     default   $scheme;   # nobody in front of us: whatever we are actually serving
     "~*https" https;     # Cloudflare terminated TLS for us
@@ -111,28 +147,34 @@ server {
     # To open it: delete the five gate lines from each of these two blocks and
     # `docker compose restart dashboard`. Nothing else has to change, and the
     # dashboard itself stays behind its own gate below either way.
+    # Pre-alpha. Open to anyone with the address, but not advertised to
+    # crawlers -- a search result is far easier to create than to remove, and
+    # the invite queue is not a support desk. Delete this block when the door
+    # is genuinely open.
+    location = /robots.txt {
+        add_header Content-Type text/plain;
+        return 200 "User-agent: *\nDisallow: /\n";
+    }
+
     location = / {
-        satisfy any;
-        include /etc/nginx/allowed-ips.conf;
-        deny all;
-        auth_basic "Scriber";
-        auth_basic_user_file /etc/nginx/.htpasswd;
+        limit_req zone=quill_page burst=20 nodelay;
+        limit_conn quill_conn 24;
 
         root /usr/share/nginx/html;
         try_files /quill-landing.html =404;
     }
     location = /quill-landing.html {
-        satisfy any;
-        include /etc/nginx/allowed-ips.conf;
-        deny all;
-        auth_basic "Scriber";
-        auth_basic_user_file /etc/nginx/.htpasswd;
+        limit_req zone=quill_page burst=20 nodelay;
+        limit_conn quill_conn 24;
 
         root /usr/share/nginx/html;
     }
 
     # Everything else under the root, /index.html included, stays gated.
     location / {
+        limit_req zone=quill_gate burst=10 nodelay;
+        limit_conn quill_conn 8;
+
         satisfy any;
         include /etc/nginx/allowed-ips.conf;
         deny all;
@@ -169,14 +211,24 @@ server {
     # confusing way to meet a login box. The destination asks.
     location = /app  { return 301 /app/; }
     location = /app/ {
-        satisfy any;
-        include /etc/nginx/allowed-ips.conf;
-        deny all;
-        auth_basic "Scriber";
-        auth_basic_user_file /etc/nginx/.htpasswd;
+        limit_req zone=quill_page burst=20 nodelay;
+        limit_conn quill_conn 24;
 
         root /usr/share/nginx/html;
         try_files /index.html =404;
+    }
+
+    # The page's own script, and anything else it grows.
+    #
+    # Open because /app/ is: a dashboard whose JavaScript answers 401 is a
+    # blank screen. Nothing here is secret -- it is the same file every visitor
+    # would read in view-source anyway -- and it carries no data, which all
+    # arrives from /api/ and is scoped to whoever is asking.
+    location /dash/ {
+        limit_req zone=quill_page burst=40 nodelay;
+        limit_conn quill_conn 24;
+
+        root /usr/share/nginx/html;
     }
 
     # The gatehouse, which decides who may sign in at all.
@@ -196,6 +248,9 @@ server {
     # visitor arriving from outside is refused whatever password they know.
     location = /gatehouse  { return 301 /gatehouse/; }
     location = /gatehouse/ {
+        limit_req zone=quill_gate burst=10 nodelay;
+        limit_conn quill_conn 8;
+
         satisfy any;
         include /etc/nginx/allowed-ips.conf;
         deny all;
@@ -226,12 +281,46 @@ server {
     # state cookie rides in the Cookie header, and the bot's 302 back to /app/
     # is relative, so the browser resolves it against whatever host and port it
     # actually used.
+    # The sign-in flow lives in here, so this cannot stay behind the password
+    # once the dashboard is open: a stranger who cannot reach /api/auth/discord
+    # cannot sign in, and the pre-alpha screen they are meant to land on is
+    # served by a page that cannot load its own data.
+    #
+    # What makes that safe is DASHBOARD_REQUIRE_LOGIN, not this block. With it
+    # on, a request carrying no Discord session is level `none`: every
+    # capability false, /status with no campaigns and no recordings, /access
+    # 403 and every action 403. The status token nginx injects below proves
+    # only that a request came through this proxy -- it is not an identity and
+    # must never be treated as one. pi-service/test/no-session.test.js holds
+    # that shut over a real socket and fails loudly if it stops being true.
+    #
+    # Turning DASHBOARD_REQUIRE_LOGIN off with this block open would hand the
+    # entire bot to the internet. The two settings are one decision.
+    # Signing in, metered on its own and much harder than the rest.
+    #
+    # /api/auth/callback makes TWO outbound calls to Discord per request, with
+    # this bot's own client credentials. Hammering it does not cost bandwidth,
+    # it costs the bot's standing with Discord -- and a bot that has been rate
+    # limited or flagged is a slow, confusing failure that does not look
+    # self-inflicted. Ten a minute is generous: a person signing in makes about
+    # three requests in total, once.
+    #
+    # Before the general /api/ block so this wins for the paths it names.
+    location /api/auth/ {
+        limit_req zone=quill_auth burst=5 nodelay;
+        limit_conn quill_conn 8;
+
+        proxy_pass ${PI_API}/auth/;
+        proxy_set_header X-Status-Token "${STATUS_TOKEN}";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 10s;
+    }
+
     location /api/ {
-        satisfy any;
-        include /etc/nginx/allowed-ips.conf;
-        deny all;
-        auth_basic "Scriber";
-        auth_basic_user_file /etc/nginx/.htpasswd;
+        limit_req zone=quill_api burst=40 nodelay;
+        limit_conn quill_conn 24;
 
         proxy_pass ${PI_API}/;
         proxy_set_header X-Status-Token "${STATUS_TOKEN}";
