@@ -24,6 +24,7 @@ import { openSession } from '../src/web/auth.js';
 // CSS and no real events. What it does have is the page's real logic against
 // the real API, which is enough to catch every dashboard bug found so far.
 
+const HTML = fileURLToPath(new URL('../../dashboard/html/', import.meta.url));
 const PAGE = fileURLToPath(new URL('../../dashboard/html/index.html', import.meta.url));
 
 const DEV = '10000000000000001';
@@ -143,16 +144,25 @@ const classList = () => {
 // Non-greedy and per-block, so a third one changes nothing here. The head
 // script is harmless in the sandbox: it reads localStorage, which does not
 // exist here, inside its own try/catch.
-function pageScripts(html) {
-  const blocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
-  assert.ok(blocks.length > 0, 'no <script> found in the dashboard page');
-  return blocks;
+// Every script the page carries, in the order a browser would run them —
+// including the ones it fetches. A `src` on this page is always an absolute
+// path, because the dashboard and the gatehouse are served from prefixes of
+// their own and a relative one would resolve under each of them; here that
+// means it resolves against dashboard/html rather than against this file.
+async function pageScripts(html, what) {
+  const found = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+  assert.ok(found.length > 0, `no <script> found in the ${what} page`);
+
+  return Promise.all(found.map(([, attrs, inline]) => {
+    const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(attrs);
+    return src ? readFile(join(HTML, src[1].replace(/^\//, '')), 'utf8') : inline;
+  }));
 }
 
 // Load the page's script into a sandbox with just enough DOM to run.
 async function render({ base, cookie }) {
   const html = await readFile(PAGE, 'utf8');
-  const scripts = pageScripts(html);
+  const scripts = await pageScripts(html, 'dashboard');
 
   const panels = {};
   const listeners = {};
@@ -272,7 +282,6 @@ test('no screen renders undefined, NaN or [object Object]', async (t) => {
     [['[data-tab]'], { tab: 'settings' }],
     [['[data-tab]'], { tab: 'notes' }],
     [['[data-screen]'], { screen: 'servers' }],
-    [['[data-screen]'], { screen: 'access' }],
     [['[data-screen]'], { screen: 'campaign' }],
     [['[data-import]'], {}],
     [['[data-close-modal]'], {}],

@@ -115,6 +115,50 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 
+-- What the operator has said about a person, as opposed to what is true of
+-- them.
+--
+-- Everything else about a viewer is derived: what their Discord account owns,
+-- runs and plays in decides what they see, so nothing is administered and
+-- nothing drifts out of step with reality. This table is the one place an
+-- opinion is recorded, and it holds exactly two of them.
+--
+--   invited  may this account open a session at all. Nothing more -- being on
+--            the list shows you nothing you would not otherwise see.
+--
+--   tier     how much of the owner's GPU and API bill they may spend, 1 to 4.
+--            The one opinion here that goes UP as well as down, because
+--            unlike a level it answers a question no fact in the world
+--            answers: what the person paying is willing to pay. See
+--            access/tiers.js.
+--
+--   cap      a CEILING on the level they resolve to, never a floor. It can
+--            take an owner down to a player; it cannot make a player anything.
+--            That asymmetry is not squeamishness, it is what the levels are:
+--            "owner" means Discord says you own a server and "player"
+--            means you actually spoke at a table, and this bot cannot make
+--            either true by writing a row. What it can always do is show
+--            somebody less than they have earned.
+--
+-- A row may hold any of the three, or all of them. Clearing them all deletes
+-- the row, so an empty table means the operator has never had an opinion about
+-- anybody -- the state every install starts in and the state most stay in.
+CREATE TABLE IF NOT EXISTS dashboard_access (
+  user_id TEXT PRIMARY KEY,
+  -- A name to show beside the id, captured when the row was written. Only ever
+  -- decoration: nothing is matched on it, because names change and ids do not.
+  username TEXT,
+  invited INTEGER NOT NULL DEFAULT 0,
+  cap TEXT,
+  -- NULL means "whatever DEFAULT_TIER says", not tier 1. Storing the default
+  -- would freeze today's answer into every row and quietly ignore the setting
+  -- the next time it changed.
+  tier INTEGER,
+  set_by TEXT,
+  set_at TEXT NOT NULL DEFAULT (datetime('now')),
+  note TEXT
+);
+
 -- Asking for a deleted campaign back.
 --
 -- Restoring is not the requester's decision, because deleting was not
@@ -748,13 +792,20 @@ function wrap(db) {
              UNION SELECT user_id FROM campaign_consent
              UNION SELECT user_id FROM auth_sessions
              UNION SELECT user_id FROM utterances
+             -- Somebody admitted this morning who has not signed in yet is
+             -- the person most worth seeing on the access page, not the one
+             -- to leave off it for lack of history. Same for anybody the
+             -- operator has capped: a ceiling on a person who then vanishes
+             -- from the page is a ceiling nobody can lift.
+             UNION SELECT user_id FROM dashboard_access
            )
            SELECT p.user_id AS userId,
              COALESCE(
                (SELECT s.username FROM auth_sessions s WHERE s.user_id = p.user_id
                  ORDER BY s.created_at DESC LIMIT 1),
                (SELECT u.display_name FROM utterances u WHERE u.user_id = p.user_id
-                 ORDER BY u.id DESC LIMIT 1)
+                 ORDER BY u.id DESC LIMIT 1),
+               (SELECT a.username FROM dashboard_access a WHERE a.user_id = p.user_id)
              ) AS name,
              (SELECT COUNT(*) FROM auth_sessions s
                WHERE s.user_id = p.user_id AND s.expires_at > datetime('now')) AS sessions,
@@ -1471,6 +1522,105 @@ function wrap(db) {
     sweepAuth(nowIso = new Date().toISOString()) {
       const sessions = db.prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(nowIso).changes;
       return { sessions };
+    },
+
+    // --- what the operator has said about a person ---
+    //
+    // Storage only. Whether an invited id may actually sign in is maySignIn's
+    // question and whether a cap bites is buildViewer's; both weigh this
+    // against things it knows nothing about. See web/authority.js.
+
+    listAccessRows() {
+      return db
+        .prepare(
+          `SELECT user_id AS userId, username, invited, cap, tier,
+                  set_by AS setBy, set_at AS setAt, note
+             FROM dashboard_access ORDER BY set_at DESC, user_id`
+        )
+        .all()
+        .map((r) => ({ ...r, invited: Boolean(r.invited) }));
+    },
+
+    // One row per person holding both opinions, so setting either has to leave
+    // the other alone. Writing the whole row would mean admitting somebody
+    // silently lifted the ceiling you put on them last week.
+    setInvited(userId, { username = null, setBy = null, note = null } = {}) {
+      db.prepare(
+        `INSERT INTO dashboard_access (user_id, username, invited, set_by, note)
+         VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           invited = 1,
+           username = COALESCE(excluded.username, dashboard_access.username),
+           note = COALESCE(excluded.note, dashboard_access.note)`
+      ).run(String(userId), username, setBy, note);
+    },
+
+    setCap(userId, cap, { username = null, setBy = null } = {}) {
+      db.prepare(
+        `INSERT INTO dashboard_access (user_id, username, cap, set_by)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           cap = excluded.cap,
+           username = COALESCE(excluded.username, dashboard_access.username),
+           set_by = excluded.set_by`
+      ).run(String(userId), username, cap === null ? null : String(cap), setBy);
+      this.tidyAccess(userId);
+    },
+
+    setTier(userId, tier, { username = null, setBy = null } = {}) {
+      db.prepare(
+        `INSERT INTO dashboard_access (user_id, username, tier, set_by)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           tier = excluded.tier,
+           username = COALESCE(excluded.username, dashboard_access.username),
+           set_by = excluded.set_by`
+      ).run(String(userId), username, tier === null ? null : Number(tier), setBy);
+      this.tidyAccess(userId);
+    },
+
+    tierOf(userId) {
+      return (
+        db.prepare(`SELECT tier FROM dashboard_access WHERE user_id = ?`).get(String(userId))?.tier
+        ?? null
+      );
+    },
+
+    clearInvited(userId) {
+      const changed = db
+        .prepare(`UPDATE dashboard_access SET invited = 0 WHERE user_id = ? AND invited = 1`)
+        .run(String(userId)).changes;
+      this.tidyAccess(userId);
+      return changed;
+    },
+
+    // A row saying nothing is not a record of a decision, it is litter -- and
+    // litter here is worse than elsewhere, because listKnownPeople treats any
+    // row as "the operator has an opinion about this person" and puts them on
+    // the page for ever.
+    tidyAccess(userId) {
+      db.prepare(
+        `DELETE FROM dashboard_access
+          WHERE user_id = ? AND invited = 0 AND cap IS NULL AND tier IS NULL`
+      ).run(String(userId));
+    },
+
+    isInvited(userId) {
+      return Boolean(
+        db.prepare(`SELECT 1 FROM dashboard_access WHERE user_id = ? AND invited = 1`)
+          .get(String(userId))
+      );
+    },
+
+    capFor(userId) {
+      return (
+        db.prepare(`SELECT cap FROM dashboard_access WHERE user_id = ?`).get(String(userId))?.cap
+        ?? null
+      );
+    },
+
+    countInvited() {
+      return db.prepare(`SELECT COUNT(*) AS n FROM dashboard_access WHERE invited = 1`).get().n;
     },
 
     // --- what the models have cost ---

@@ -52,6 +52,10 @@ const DEV_ONLY = new Set([
   'pause', 'transcribe', 'import', 'session/discard',
   'summary/approve', 'summary/approve-all', 'summary/park', 'summary/again',
   'model/choose', 'health/probe', 'access/revoke',
+  // The guest list. There is deliberately no slash command that admits
+  // somebody to the dashboard: /gatehouse/ is the only place it happens, so
+  // there is one door to guard rather than two.
+  'access/invite', 'access/uninvite', 'access/level', 'access/tier',
   // Deciding a restore request is the operator reviewing their own queue.
   // The requester never needs this; they file the ticket from Discord.
   'campaign/restore-review',

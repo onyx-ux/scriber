@@ -13,6 +13,7 @@
 // bottom about what does NOT happen on day thirty.
 
 import { campaignLabel } from './resolve.js';
+import { isOperator } from '../access/operators.js';
 
 // Long enough to outlast the mood that caused it, and to survive somebody being
 // away for a few weeks and coming back to find their table gone.
@@ -32,7 +33,7 @@ export function daysLeftToRestore(archivedAt, now = Date.now()) {
 // another DM in the same Discord, not whoever happens to own the server.
 export function mayDelete({ campaign, userId, cfg }) {
   if (!campaign || !userId) return false;
-  return campaign.manager_user_id === userId || (Boolean(cfg?.ownerUserId) && userId === cfg.ownerUserId);
+  return campaign.manager_user_id === userId || isOperator(cfg, userId);
 }
 
 // Typing the name is the confirmation.
@@ -123,7 +124,7 @@ export function restoreArchivedCampaign({ db, cfg, campaignId, userId, now = Dat
 
 // What somebody may currently bring back.
 export function restorableBy({ db, cfg, userId, now = Date.now() }) {
-  const mine = Boolean(cfg?.ownerUserId) && userId === cfg.ownerUserId
+  const mine = isOperator(cfg, userId)
     ? db.listArchivedCampaigns()
     : db.listArchivedCampaigns({ userId });
 

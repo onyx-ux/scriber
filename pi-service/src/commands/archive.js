@@ -15,7 +15,8 @@
 import { MessageFlags } from 'discord.js';
 
 import { archiveCampaign, restoreArchivedCampaign, RESTORE_WINDOW_DAYS, daysLeftToRestore } from '../campaign/archive.js';
-import { isOperator, pendingRestoreRequests } from '../campaign/restore-request.js';
+import { pendingRestoreRequests } from '../campaign/restore-request.js';
+import { isOperator } from '../access/operators.js';
 import { openRestoreRequest } from './restore-request.js';
 import { campaignLabel } from '../campaign/resolve.js';
 
@@ -41,12 +42,12 @@ function askableBy(db, cfg, userId) {
   return all
     .map((c) => ({ ...c, daysLeft: daysLeftToRestore(c.archived_at) }))
     .filter((c) => c.daysLeft > 0)
-    .filter((c) => isOperator(userId, cfg) || c.manager_user_id === userId || db.isCampaignMember?.(c.id, userId));
+    .filter((c) => isOperator(cfg, userId) || c.manager_user_id === userId || db.isCampaignMember?.(c.id, userId));
 }
 
 export async function handleCampaignRestore(interaction, db, cfg) {
   const userId = interaction.user.id;
-  const operator = isOperator(userId, cfg);
+  const operator = isOperator(cfg, userId);
   const waiting = askableBy(db, cfg, userId);
 
   const wanted = interaction.options.getString('campaign');

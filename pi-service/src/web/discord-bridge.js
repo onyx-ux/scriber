@@ -71,6 +71,19 @@ export function createDiscordBridge({ client, db, cfg }) {
     // does it: a DM can be refused outright by the recipient's privacy
     // settings, and a pending invite nobody can see is worse than none — it
     // sits in the roster looking like the question has been asked.
+    // Does this id belong to anybody, and what are they called.
+    //
+    // The gatehouse asks before writing a row. A Discord id is eighteen digits
+    // with no check digit, so a typo is a perfectly well-formed id belonging
+    // to nobody -- and an admitted account that does not exist is a line on a
+    // guest list that can never be explained later.
+    async lookUp({ userId }) {
+      const user = await client?.users?.fetch?.(userId).catch(() => null);
+      if (!user) return { ok: false, message: 'Discord does not know that account.' };
+      if (user.bot) return { ok: false, message: 'That is a bot account.' };
+      return { ok: true, userId: user.id, username: user.username ?? null };
+    },
+
     async invite({ campaignId, userId, characterName, inviterName }) {
       const campaign = db.getCampaign(campaignId);
       if (!campaign) return { ok: false, message: '⚠️ No such campaign.' };

@@ -4,7 +4,6 @@ import { detectOpusBackend } from '../voice/opus-backend.js';
 import { configuredProviders } from '../pipeline/model-client.js';
 import { topModel, ladderFor, knownModels } from '../pipeline/model-choice.js';
 import { lastBackupCheck } from '../maintenance/backup-check.js';
-import { accessRoster } from './access.js';
 
 // The snapshot the dashboard renders.
 //
@@ -126,9 +125,11 @@ function sessionView(guildId, session, guildName, now) {
 // it was paid on every poll by everyone regardless of who was allowed to read
 // it.
 //
-// The dashboard polls every five seconds. `access` is the expensive one: it
-// resolves a level for every person the bot has ever seen, which is two full
-// campaign scans each, and below `dev` it was thrown away every single time.
+// The dashboard polls every five seconds, which is why the roster is no longer
+// built here at all: resolving a level for every person the bot has ever seen
+// is two full campaign scans each, and nothing on the dashboard reads it any
+// more. It has its own route, GET /access, asked for by the one page that
+// wants it. See web/access.js.
 //
 // Anything NOT listed here is unconditional — the bot's identity, the
 // campaigns (filtered per viewer rather than withheld), what is recording now,
@@ -142,7 +143,6 @@ export const SECTIONS = {
   providers: 'machinery',
   models: 'machinery',
   backup: 'machinery',
-  access: 'everything',
 };
 
 // `viewer` is optional, and its absence means "build everything".
@@ -337,14 +337,5 @@ export function buildStatus({
   }
 
   // Who can get into this bot, at what level, and who is signed in now.
-  //
-  // Behind `everything`, because a roster of everyone the bot knows is exactly
-  // the thing a player should not be handed — and because building it is the
-  // most expensive thing in this file, so a player's poll should not pay for a
-  // list they will never be sent.
-  if (mayHave(SECTIONS.access)) {
-    status.access = accessRoster({ db, cfg, client });
-  }
-
   return status;
 }

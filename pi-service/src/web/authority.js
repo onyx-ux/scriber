@@ -22,12 +22,13 @@
 //   4. the id     — whose name does the act happen under (actingUserId)
 //   5. the answer — what of the reply is theirs to see (scopeStatus/Campaign)
 import { cookieFrom, readSession } from './auth.js';
-import { buildViewer, OPERATOR, maySee, mayManage, atLeast, LEVELS, LEVEL_WORDS } from './viewer.js';
+import { buildViewer, OPERATOR, maySee, mayManage, atLeast, LEVELS, LEVEL_WORDS, HOW_TO_RAISE } from './viewer.js';
 import { scopeStatus, scopeCampaign } from './scope.js';
+import { isOperator, isPrimaryOperator } from '../access/operators.js';
 
 // The read-side surface, re-exported so a caller needs one import rather than
 // three. These are not re-implemented here — they are the same functions.
-export { maySee, mayManage, atLeast, LEVELS, LEVEL_WORDS, OPERATOR, buildViewer, scopeStatus, scopeCampaign };
+export { maySee, mayManage, atLeast, LEVELS, LEVEL_WORDS, HOW_TO_RAISE, OPERATOR, buildViewer, scopeStatus, scopeCampaign };
 
 // --- 0. the guest list ---
 
@@ -47,7 +48,7 @@ export { maySee, mayManage, atLeast, LEVELS, LEVEL_WORDS, OPERATOR, buildViewer,
 //
 // So: unset, it is empty and everybody is welcome to a session that grants
 // them nothing. Set, it is the whole guest list.
-const guestList = (cfg) =>
+const fromEnv = (cfg) =>
   new Set(
     String(cfg?.dashboardAllowedUsers ?? '')
       .split(',')
@@ -55,25 +56,74 @@ const guestList = (cfg) =>
       .filter(Boolean)
   );
 
-export function maySignIn(cfg, userId) {
+// Two halves of one list, and the page at /gatehouse/ shows them as two halves
+// on purpose.
+//
+// DASHBOARD_ALLOWED_USERS is typed into a file and survives anything that
+// happens to the database, but changing it costs an SSH session and a restart.
+// dashboard_invites is a row somebody added from a browser in the ten seconds
+// before their friend tried to sign in. Both are the guest list; neither is
+// allowed to quietly overrule the other, so this is a union and the gatehouse
+// refuses to offer a Remove button for a name it cannot actually remove.
+function guestList(cfg, db) {
+  const invited = fromEnv(cfg);
+  for (const row of db?.listAccessRows?.() ?? []) {
+    if (row?.invited && row.userId) invited.add(String(row.userId));
+  }
+  return invited;
+}
+
+export function maySignIn(cfg, userId, db = null) {
   // Falsy BEFORE stringifying, which is not the same check. `String(0 ?? '')`
-  // is "0" — a perfectly non-empty string that would sail past an emptiness
+  // is "0" -- a perfectly non-empty string that would sail past an emptiness
   // test and, with no list configured, be admitted as somebody.
   if (!userId) return false;
   const id = String(userId);
 
-  const invited = guestList(cfg);
+  const invited = guestList(cfg, db);
   if (invited.size === 0) return true;
   if (invited.has(id)) return true;
 
-  // The operator is always on their own guest list.
+  // An operator is always on their own guest list.
   //
-  // A list that can lock the owner out of their own dashboard is a list that
-  // eventually will, and the only way back is an SSH session and a text
-  // editor. Every other permission here is derived rather than granted; this
-  // line is the one exception, and it exists so that the exception cannot
-  // become a trap.
-  return Boolean(cfg?.ownerUserId) && id === String(cfg.ownerUserId);
+  // A list that can lock the people who run this out of their own dashboard is
+  // a list that eventually will, and the only way back is an SSH session and a
+  // text editor. Every other permission here is derived rather than granted;
+  // this line is the one exception, and it exists so that the exception cannot
+  // become a trap. It covers OPERATOR_USER_IDS as well as OWNER_USER_ID —
+  // appointing a second operator and then locking them out with a list would
+  // be the same trap wearing a different name.
+  return isOperator(cfg, id);
+}
+
+// Whether a guest list exists at all.
+//
+// Worth its own name because of what happens at the boundary: taking the last
+// name off the list does not tighten anything, it opens the door to every
+// Discord account. That is the correct reading of "no list" and it is the state
+// every install starts in, but it is the opposite of what somebody pressing
+// Remove expects, so the two callers that could cause it say so out loud.
+export const listInForce = (cfg, db) => guestList(cfg, db).size > 0;
+
+// Why a given id is admitted, which the gatehouse needs and maySignIn does
+// not: the difference between a name it can strike off and a name it can only
+// point at a config file about.
+//
+//   'owner'  OWNER_USER_ID, admitted unconditionally and not removable here
+//   'op'     OPERATOR_USER_IDS, the same but not the primary owner
+//   'env'    DASHBOARD_ALLOWED_USERS, removable only in pi-service/.env
+//   'list'   a row in dashboard_invites, removable on the page
+//   'open'   no list is in use, so everybody is welcome
+//   null     not admitted
+export function admissionOf(cfg, userId, db = null) {
+  if (!userId) return null;
+  const id = String(userId);
+
+  if (isPrimaryOperator(cfg, id)) return 'owner';
+  if (isOperator(cfg, id)) return 'op';
+  if (db?.isInvited?.(id)) return 'list';
+  if (fromEnv(cfg).has(id)) return 'env';
+  return guestList(cfg, db).size === 0 ? 'open' : null;
 }
 
 // --- 1. the door ---
@@ -174,8 +224,14 @@ export const ACTION_NEEDS = {
   // Deciding a request is the operator's, and only theirs.
   'campaign/restore-review': 'everything',
   // Ending somebody else's session is the operator's alone. A server owner
-  // has `servers` too, so gating on that would hand it to them as well.
+  // has `servers` too, so gating on that would hand it to them as well. The
+  // same goes for the guest list either side of it: who may hold a session on
+  // this bot is one person's decision, and it is the person whose Pi it is.
   'access/revoke': 'everything',
+  'access/invite': 'everything',
+  'access/uninvite': 'everything',
+  'access/level': 'everything',
+  'access/tier': 'everything',
 };
 
 // The two actions you may aim at yourself wherever you are welcome.

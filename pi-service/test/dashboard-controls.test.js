@@ -26,6 +26,7 @@ import { openSession } from '../src/web/auth.js';
 // (clicking the tab you are already on) are re-clicked from the opposite state,
 // where they must do something.
 
+const HTML = fileURLToPath(new URL('../../dashboard/html/', import.meta.url));
 const PAGE = fileURLToPath(new URL('../../dashboard/html/index.html', import.meta.url));
 
 const DEV = '10000000000000001';
@@ -91,7 +92,7 @@ async function world(t) {
 
   db.recordModelUsage({ provider: 'gemini', model: 'gemini-3.6-flash', role: 'summary', totalTokens: 1400 });
 
-  // Somebody signed in, so the access roster has a live session to show and
+  // Somebody signed in, so the account sheet has a session to show and
   // its sign-out button is rendered rather than skipped.
   openSession(db, { statusToken: 'sesame' }, { userId: PLAYER, username: 'saf' });
 
@@ -210,10 +211,19 @@ const TYPED = {
 // Non-greedy and per-block, so a third one changes nothing here. The head
 // script is harmless in the sandbox: it reads localStorage, which does not
 // exist here, inside its own try/catch.
-function pageScripts(html) {
-  const blocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
-  assert.ok(blocks.length > 0, 'no <script> found in the dashboard page');
-  return blocks;
+// Every script the page carries, in the order a browser would run them —
+// including the ones it fetches. A `src` on this page is always an absolute
+// path, because the dashboard and the gatehouse are served from prefixes of
+// their own and a relative one would resolve under each of them; here that
+// means it resolves against dashboard/html rather than against this file.
+async function pageScripts(html, what) {
+  const found = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+  assert.ok(found.length > 0, `no <script> found in the ${what} page`);
+
+  return Promise.all(found.map(([, attrs, inline]) => {
+    const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(attrs);
+    return src ? readFile(join(HTML, src[1].replace(/^\//, '')), 'utf8') : inline;
+  }));
 }
 
 // `signedInAs` seeds the jar with a session cookie the caller already holds,
@@ -223,7 +233,7 @@ function pageScripts(html) {
 // in auth-flow.test.js; what belongs here is what the PAGE does either side.
 async function driver({ base, typed = {}, signedInAs = null }) {
   const html = await readFile(PAGE, 'utf8');
-  const scripts = pageScripts(html);
+  const scripts = await pageScripts(html, 'dashboard');
 
   const requests = [];
   const posts = [];
@@ -381,6 +391,14 @@ async function driver({ base, typed = {}, signedInAs = null }) {
       const dataset = {};
       for (const a of attrs.matchAll(/data-([a-z-]+)(?:="([^"]*)")?/g)) dataset[camel(a[1])] = a[2] ?? '';
 
+      // data-key is not a control. It is how dash/morph.js recognises a row
+      // across two renders so the node — and with it the caret, the scroll
+      // offset and any transition mid-flight — survives the redraw. Clicking
+      // one is meant to do nothing, and every keyed row also carries the
+      // control that DOES do something, which this walk still finds.
+      delete dataset.key;
+      if (Object.keys(dataset).length === 0) continue;
+
       let fields = [];
       if (tag === 'form') {
         const rest = markup.slice(m.index);
@@ -450,7 +468,6 @@ test('every control the dashboard renders does something', async (t) => {
     ['transcript reader', [CAMPAIGN, nav({ transcript: String(parked) })]],
     ['models', [nav({ screen: 'models' }, ['navlink'])]],
     ['servers', [nav({ screen: 'servers' }, ['navlink'])]],
-    ['access', [nav({ screen: 'access' }, ['navlink'])]],
     ['import dialog', [CAMPAIGN, nav({ import: '' })]],
     // Both dialogs get their own stop, because the controls inside one only
     // exist while it is open and are invisible to the walk otherwise.

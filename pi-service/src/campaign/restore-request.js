@@ -16,6 +16,7 @@
 
 import { campaignLabel } from './resolve.js';
 import { daysLeftToRestore } from './archive.js';
+import { isOperator } from '../access/operators.js';
 
 export const QUESTIONS = {
   reason: 'What is the reason for requesting the restore?',
@@ -23,7 +24,11 @@ export const QUESTIONS = {
   takingOwnership: 'Are you intending to take ownership of the campaign?',
 };
 
-export const isOperator = (userId, cfg) => Boolean(cfg?.ownerUserId) && userId === cfg.ownerUserId;
+// isOperator used to live here, spelled (userId, cfg) -- the reverse of the
+// one in access/operators.js. web/actions.js imported this one and called the
+// other's argument order three lines apart, which compiled and would have
+// answered the wrong question about the wrong person. Gone; callers import
+// from access/operators.js, which is the only module that answers this now.
 
 // Anyone who was actually at the table. Not the whole Discord — a campaign
 // somebody never played in is not theirs to petition about, and the deleted
@@ -118,7 +123,7 @@ export function requestRestore({
 // thing: there is no path where a ticket is filed and the campaign comes back
 // without somebody having read it.
 export function decideRestoreRequest({ db, cfg, requestId, decidedBy, approve, note = null }) {
-  if (!isOperator(decidedBy, cfg)) {
+  if (!isOperator(cfg, decidedBy)) {
     return { ok: false, reason: 'not-yours', message: '⚠️ Only the bot owner decides these.' };
   }
 

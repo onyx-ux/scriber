@@ -29,15 +29,18 @@ import {
 import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
 import { createCampaign, guildsCreatableBy } from '../campaign/create.js';
 import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js';
-import { requestRestore, decideRestoreRequest, isOperator } from '../campaign/restore-request.js';
+import { requestRestore, decideRestoreRequest } from '../campaign/restore-request.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { ROLES } from '../pipeline/model-choice.js';
 // Whose name an act happens under. Asked rather than re-derived: four actions
 // here used to each decide for themselves what the operator's console is.
-import { actingUserId } from './authority.js';
+import { actingUserId, listInForce } from './authority.js';
+import { buildViewer, LEVELS, LEVEL_WORDS, HOW_TO_RAISE } from './viewer.js';
+import { TIERS, TOP_TIER, isTier, askLimitFor } from '../access/tiers.js';
 // Ending somebody's sessions goes through the module that owns credentials,
 // not straight at the store — see web/auth.js.
 import { revokeAllSessions } from './auth.js';
+import { isOperator, isPrimaryOperator } from '../access/operators.js';
 
 // An id arriving over HTTP is a string from a JSON body written by a page that
 // could have been edited. "12abc" must not become 12.
@@ -176,6 +179,233 @@ export const ACTIONS = {
     };
   },
 
+  // Put somebody on the guest list.
+  //
+  // This grants nothing. It opens the front door for an account and stops
+  // there — what they see once they are through is still worked out from what
+  // that account owns, runs and plays in, so admitting the wrong person shows
+  // them an empty dashboard rather than somebody else's campaign. That is the
+  // whole reason this button is allowed to exist: web/viewer.js was built so
+  // that no list could hand out a level, and this list cannot.
+  //
+  // Discord is asked whether the id is real before a row is written. Eighteen
+  // digits with no check digit means a typo is still a well-formed id, and a
+  // line admitting an account that does not exist is one nobody can explain a
+  // year later.
+  'access/invite': async (db, cfg, body, ctx) => {
+    const id = userId(body);
+    if (!id) return badRequest('A Discord user id is required — 17 or 18 digits.');
+
+    const note = String(body?.note ?? '').trim().slice(0, 200) || null;
+
+    let username = String(body?.username ?? '').trim() || null;
+    if (typeof ctx?.discord?.lookUp === 'function') {
+      const found = await ctx.discord.lookUp({ userId: id });
+      if (!found.ok) return { status: 400, payload: { ok: false, message: found.message } };
+      username = found.username ?? username;
+    }
+
+    db.setInvited(id, { username, setBy: actingUserId(ctx?.viewer, cfg), note });
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        userId: id,
+        username,
+        message: `${username || id} can sign in. What they see is still their own.`,
+      },
+    };
+  },
+
+  // Take somebody off it, and out of the building.
+  //
+  // Admission and revocation ARE different acts -- access/revoke above is the
+  // other one, for ending a session without withdrawing the welcome. But
+  // striking a name off a guest list while the person keeps walking around for
+  // another month is not striking a name off a guest list. maySignIn is asked
+  // when a session is opened and never again, so removing alone would change
+  // nothing until the session expired.
+  //
+  // It still does not happen quietly: the reply says how many sessions it
+  // ended, because "removed" and "removed, and three devices just lost the
+  // page" deserve different reactions.
+  'access/uninvite': (db, cfg, body) => {
+    const id = userId(body);
+    if (!id) return badRequest('A Discord user id is required.');
+
+    // Somebody admitted by the environment or by being the owner cannot be
+    // struck off here, and deleting nothing while reporting success would be
+    // the worst available answer.
+    if (!db.isInvited(id)) {
+      return {
+        status: 400,
+        payload: {
+          ok: false,
+          message:
+            'That name is not on the list this page can edit. It is admitted by DASHBOARD_ALLOWED_USERS ' +
+            'or by being OWNER_USER_ID, and only pi-service/.env can change either.',
+        },
+      };
+    }
+
+    db.clearInvited(id);
+    const ended = revokeAllSessions(db, id);
+
+    // Taking the last name off does not shut the door harder, it removes the
+    // door. Reporting "off the list" and nothing else would be true and would
+    // leave somebody believing they had just tightened access at the exact
+    // moment they opened it to every Discord account there is.
+    const emptied = !listInForce(cfg, db);
+
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        ended,
+        emptied,
+        message:
+          (ended
+            ? `Off the list, and signed out of ${ended} session${ended === 1 ? '' : 's'}.`
+            : 'Off the list. They had no sessions open.') +
+          (emptied
+            ? ' That was the last name on it — with no list, ANY Discord account can now sign in.'
+            : ''),
+      },
+    };
+  },
+
+  // Hold somebody below the level they resolve to.
+  //
+  // This is the only action in this file that touches a level, and it is worth
+  // saying exactly what it can and cannot do, because the name invites the
+  // wrong reading.
+  //
+  // It sets a CEILING. Every level below dev is derived from a fact -- Discord
+  // says you own that server, this campaign names you as its manager, you
+  // actually spoke at that table -- and none of those becomes true because a
+  // row was written here. So a level ABOVE what somebody resolves to is
+  // refused, with the thing that would actually raise it, rather than accepted
+  // and silently ignored. What the owner of the hardware can always do is
+  // decide to show a person less than they have earned, and that is this.
+  //
+  // Clearing the ceiling is the empty string, not a level, so "back to whatever
+  // is true of them" cannot be confused with "hold them at the level they
+  // happen to be at today".
+  'access/level': (db, cfg, body, ctx) => {
+    const id = userId(body);
+    if (!id) return badRequest('A Discord user id is required.');
+
+    const raw = String(body?.level ?? '').trim();
+    if (raw && !LEVELS.includes(raw)) {
+      return badRequest(`Not a level. They are: ${LEVELS.join(', ')}.`);
+    }
+
+    // An operator cannot be held down, for the same reason they are always on
+    // their own guest list: the only way back from that click is SSH.
+    //
+    // It would also be a control that lies. buildViewer ignores a cap on
+    // anybody it calls dev, so the click would report success and change
+    // nothing at all — worse than a refusal that says where the real switch is.
+    if (isOperator(cfg, id)) {
+      const which = isPrimaryOperator(cfg, id) ? 'OWNER_USER_ID' : 'OPERATOR_USER_IDS';
+      return {
+        status: 400,
+        payload: {
+          ok: false,
+          message:
+            `That account is an operator, named by ${which}. Holding an operator below ` +
+            'their own level is a click you could not undo from this page, and a cap on an ' +
+            `operator is ignored anyway — change ${which} in pi-service/.env if you mean it.`,
+        },
+      };
+    }
+
+    const guildsOwned = ctx?.guildsOwnedBy?.(id) ?? [];
+    const { derivedLevel } = buildViewer({ db, cfg, userId: id, guildsOwned });
+
+    if (raw && LEVELS.indexOf(raw) > LEVELS.indexOf(derivedLevel)) {
+      return {
+        status: 400,
+        payload: { ok: false, level: derivedLevel, message: HOW_TO_RAISE[raw] },
+      };
+    }
+
+    db.setCap(id, raw && raw !== derivedLevel ? raw : null, {
+      setBy: actingUserId(ctx?.viewer, cfg),
+    });
+
+    const now = raw && raw !== derivedLevel ? raw : derivedLevel;
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        level: now,
+        derivedLevel,
+        message:
+          now === derivedLevel
+            ? `Back to ${derivedLevel} — whatever is true of their account is what they see.`
+            : `Held at ${now}: sees ${LEVEL_WORDS[now]}. They resolve to ${derivedLevel}, so this is a ceiling you can lift.`,
+      },
+    };
+  },
+
+  // Move somebody between tiers.
+  //
+  // The one control on this page that goes up as well as down, and the reason
+  // is in access/tiers.js: a level answers "what may they see" and is derivable
+  // from facts, so granting one would be inventing a fact. A tier answers "how
+  // much of my GPU and my API bill may they spend", which no fact in the world
+  // answers -- it is the person paying deciding what they will pay, and that is
+  // a decision, not a lookup.
+  'access/tier': (db, cfg, body, ctx) => {
+    const id = userId(body);
+    if (!id) return badRequest('A Discord user id is required.');
+
+    // Asked BEFORE the Number(), which is not the same check. Number(null) is
+    // 0 and Number('') is 0, and 0 is a real tier now -- so coercing first
+    // turns a body with no tier in it at all into "put them on the free tier",
+    // which is a decision nobody made.
+    if (!isTier(body?.tier)) return badRequest(`Not a tier. They are ${TIERS.join(', ')}.`);
+    const tier = Number(body.tier);
+
+    // Every operator is always on the top tier, for the same reason they are
+    // always on their own guest list. Every ceiling here exists to stop
+    // somebody spending the operator's money; an operator spending it is the
+    // thing being protected, not the thing being stopped.
+    if (isOperator(cfg, id)) {
+      const which = isPrimaryOperator(cfg, id) ? 'OWNER_USER_ID' : 'OPERATOR_USER_IDS';
+      return {
+        status: 400,
+        payload: {
+          ok: false,
+          message:
+            `That account is an operator, named by ${which}, and is always tier ${TOP_TIER} — ` +
+            'a bot that can rate-limit the people who run it out of their own API key is a ' +
+            'bot with a trap in it.',
+        },
+      };
+    }
+
+    db.setTier(id, tier, { setBy: actingUserId(ctx?.viewer, cfg) });
+
+    const asks = askLimitFor(cfg, tier);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        tier,
+        message:
+          `Tier ${tier}. ` +
+          (asks > 0
+            ? `${asks} question${asks === 1 ? '' : 's'} a day on /campaign ask.`
+            : 'Questions on /campaign ask are unlimited.') +
+          (Object.keys(cfg?.tierAskLimits ?? {}).length
+            ? ''
+            : ' Every tier is worth the same until TIER_ASK_LIMITS is set in pi-service/.env.'),
+      },
+    };
+  },
+
   // Start a campaign without going to Discord.
   //
   // Who it belongs to comes from the session, never from the body: a manager id
@@ -222,7 +452,7 @@ export const ACTIONS = {
     const id = campaignId(body);
     if (!id) return badRequest('A numeric campaignId is required.');
 
-    if (isOperator(userId, cfg)) {
+    if (isOperator(cfg, userId)) {
       return { status: 200, payload: restoreArchivedCampaign({ db, cfg, campaignId: id, userId }) };
     }
 

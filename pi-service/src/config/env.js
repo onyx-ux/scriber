@@ -30,6 +30,23 @@ function optional(name, fallback) {
   return v && v.trim() ? v.trim() : fallback;
 }
 
+// `0:5,2:40` -> { 0: 5, 2: 40 }. Anything that is not a pair of whole numbers
+// is dropped rather than guessed at: a malformed entry that became tier 0 or
+// limit 0 would silently be the most permissive possible reading of a typo.
+function tierMap(raw) {
+  const out = {};
+  for (const part of String(raw ?? '').split(',')) {
+    if (!part.trim()) continue;
+    const [tier, limit] = part.split(':').map((x) => parseInt(String(x).trim(), 10));
+    if (Number.isInteger(tier) && tier >= 0 && Number.isInteger(limit) && limit >= 0) {
+      out[tier] = limit;
+    } else {
+      console.warn(`[config] TIER_ASK_LIMITS: ignoring "${part.trim()}" — expected tier:limit`);
+    }
+  }
+  return out;
+}
+
 function validate(cfg) {
   if (cfg.summaryProvider === 'anthropic' && !cfg.anthropicApiKey) {
     throw new Error(
@@ -194,6 +211,22 @@ export const config = validate({
   // what a bored one could run up. 0 removes the limit.
   askDailyLimit: parseInt(optional('ASK_DAILY_LIMIT', '20'), 10),
 
+  // Which tier somebody is on before anybody has said otherwise. 0 is free,
+  // and free is the right thing to be on when nobody has thought about you.
+  defaultTier: parseInt(optional('DEFAULT_TIER', '0'), 10),
+
+  // What each tier buys, as a daily /ask allowance keyed by tier:
+  //
+  //   TIER_ASK_LIMITS=0:5,1:20,2:60,3:200,4:0
+  //
+  // Keyed rather than positional because the tiers have a deliberate hole in
+  // them (0, 1-4, 9) and a list would re-point itself the day something filled
+  // it. 0 is unlimited. Unset means every tier gets ASK_DAILY_LIMIT, so tiers
+  // change nothing until this is written -- the only honest default for a
+  // setting whose numbers only the operator can know. See access/tiers.js for
+  // how a tier nobody wrote a number for is answered.
+  tierAskLimits: tierMap(optional('TIER_ASK_LIMITS', '')),
+
   // A daily token ceiling, for the dashboard's gauge only — nothing refuses a
   // call because of it. Neither provider reports how much allowance is left
   // (Anthropic sends a header, Google sends nothing), so a bar needs a number
@@ -318,6 +351,19 @@ export const config = validate({
   // Discord user ID to DM for that approval (and for pipeline nudges).
   // Without it, approval still works via /pending, there's just no DM.
   ownerUserId: optional('OWNER_USER_ID', null),
+
+  // Anybody else who runs this install, comma separated. Empty is the normal
+  // case and means one operator.
+  //
+  // These accounts get the `dev` level, tier 9 and a permanent place on the
+  // guest list -- the machinery, unmetered. They do NOT get the owner's DMs or
+  // adopt orphaned campaigns; see access/operators.js, which is the only place
+  // that answers "who runs this".
+  //
+  // Here rather than on the gatehouse on purpose: handing somebody your GPU
+  // and your API bill should cost an SSH session and a restart, and it should
+  // survive whatever happens to the database.
+  operatorUserIds: optional('OPERATOR_USER_IDS', null),
 
   // Job queue / retry behaviour for when the summariser can't be reached
   summarizeRetryBaseMs: parseInt(optional('SUMMARIZE_RETRY_BASE_MS', '60000'), 10), // 1 min

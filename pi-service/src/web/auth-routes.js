@@ -88,10 +88,10 @@ async function callback({ url, req, db, cfg, secure, fetchImpl }) {
   // Discord has said who they are. Whether this bot wants them is a separate
   // question, and it is asked BEFORE a session exists rather than after — a
   // row written and then reasoned about is a row that outlives the reasoning.
-  if (!maySignIn(cfg, who.userId)) {
+  if (!maySignIn(cfg, who.userId, db)) {
     // The only trace a turned-away sign-in leaves. No session row is written,
     // so without this line somebody being refused over and over is invisible.
-    console.log(`[auth] refused ${who.username} (${who.userId}) — not on DASHBOARD_ALLOWED_USERS`);
+    console.log(`[auth] refused ${who.username} (${who.userId}) — not on the guest list`);
     return refuse(cfg, 'notinvited', { secure });
   }
 

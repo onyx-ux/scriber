@@ -1,0 +1,1018 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>The Gatehouse</title>
+
+<!-- A key, drawn at the quill's line weight so the two marks are the same
+     hand. Verdigris rather than brass: this is the door furniture, not the pen. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'%3E%3Ccircle cx='7.5' cy='8' r='4' stroke='%232C6A5F' stroke-width='1.4'/%3E%3Cpath d='M10.4 10.9 20 20.5M17 18.3l2-2M14.4 15.7l1.6-1.6' stroke='%232C6A5F' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E">
+
+<!-- Three faces, one of them new.
+     Newsreader and Spline Sans Mono carry over from the dashboard, because
+     this is the same bot's back office and not a different product. Libre
+     Caslon Display is only here: Caslon is the face English registers and
+     warrants were set in for two centuries, which is exactly the job of the
+     one line at the top of this page. It is used at that size and nowhere
+     else. Every one has a system fallback -- this is served off a Pi and
+     opened from machines with no internet. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Display&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..500&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  /* -- The palette ------------------------------------------------------
+     Ledger stock and iron-gall ink, and light by default -- which is the one
+     place this page deliberately parts company with the dashboard.
+
+     The dashboard is dark because it is a tool you open at the table with the
+     lights down. This is not that: it is the page you open on purpose, in the
+     middle of the day, to change who can get in. Making it a different room
+     is the point, and the ground is how a room announces itself.
+
+     Two accents, and they mean one thing each. Verdigris is admission -- the
+     colour of the bronze on a door that has been there a while. Seal red is
+     the exception: somebody held below their level, or the door standing open
+     when it should not be. Nothing else here is coloured at all. */
+
+  :root {
+    color-scheme: light;
+
+    --stock:   #D9D7CE;  /* the page */
+    --card:    #E9E7DE;  /* the toolbar and the admit box */
+    --sunk:    #CFCDC3;  /* inputs */
+    --iron:    #1F211C;  /* the ink */
+    --faint:   #6B6C62;  /* secondary ink */
+    --rule:    #C2C0B4;  /* the ruling */
+    --edge:    #B3B1A4;  /* borders that have a job */
+    --hover:   #E2E0D7;  /* the wash under a hovered row */
+
+    --bronze:    #2C6A5F;
+    --bronze-bg: #CFDCD5;
+    --seal:      #9A2E1D;
+    --seal-bg:   #E7D2CB;
+
+    --shadow: #1F211C1A;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+
+      --stock:   #14171A;
+      --card:    #1B1F23;
+      --sunk:    #101316;
+      --iron:    #E4E2D9;
+      --faint:   #8B8D84;
+      --rule:    #2B3035;
+      --edge:    #3A4046;
+      --hover:   #1E2226;
+
+      --bronze:    #6FBFAE;
+      --bronze-bg: #16302C;
+      --seal:      #DD7A66;
+      --seal-bg:   #331A16;
+
+      --shadow: #0006;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    background: var(--stock);
+    color: var(--iron);
+    font: 400 15.5px/1.6 'Newsreader', Georgia, 'Times New Roman', serif;
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+
+  .mono {
+    font-family: 'Spline Sans Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  a { color: inherit; }
+
+  :focus-visible {
+    outline: 2px solid var(--bronze);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  /* -- The bar ---------------------------------------------------------- */
+
+  .bar {
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 22px; height: 52px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--card);
+  }
+  .bar .back {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 12px; color: var(--faint); text-decoration: none;
+    padding: 5px 9px 5px 6px; border-radius: 5px;
+  }
+  .bar .back:hover { color: var(--iron); background: var(--sunk); }
+  .bar .here {
+    margin-left: auto;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 10.5px; letter-spacing: .17em; text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* -- The column ------------------------------------------------------- */
+
+  .col { max-width: 1180px; margin: 0 auto; padding: 0 22px; }
+
+  /* -- The door state, which is the headline ---------------------------- */
+
+  .door { padding: 50px 0 26px; }
+
+  .eyebrow {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .19em; text-transform: uppercase;
+    color: var(--bronze);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow.alarm { color: var(--seal); }
+  .eyebrow::after { content: ''; flex: 1; height: 1px; background: currentColor; opacity: .3; }
+
+  .door h1 {
+    font-family: 'Libre Caslon Display', 'Big Caslon', 'Hoefler Text', Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(31px, 5.6vw, 46px);
+    line-height: 1.11;
+    letter-spacing: -.012em;
+    margin: 20px 0 0;
+    text-wrap: balance;
+  }
+
+  .door p { margin-top: 17px; max-width: 58ch; color: var(--faint); font-size: 16px; }
+  .door p em { font-style: italic; color: var(--iron); }
+  .door p code, .foot code {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: .84em; color: var(--iron);
+    background: var(--sunk); padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* -- Finding somebody -------------------------------------------------
+     A guest list is short until the day it is not. Search filters what is
+     already on the page rather than asking the Pi again: the whole roster is a
+     few dozen rows at the very most, and a round trip per keystroke to sort a
+     list you can already see is work for nobody. */
+
+  .tools {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 14px;
+    background: var(--card); border: 1px solid var(--rule); border-radius: 9px;
+  }
+
+  .find { position: relative; flex: 1 1 260px; min-width: 0; display: flex; }
+  .find svg { position: absolute; left: 11px; top: 50%; margin-top: -8px; color: var(--faint); }
+  .find input {
+    width: 100%;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 13px; color: var(--iron);
+    padding: 9px 12px 9px 33px; border-radius: 6px;
+    border: 1px solid var(--edge); background: var(--sunk);
+  }
+  .find input::placeholder { color: var(--faint); opacity: .8; }
+
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: .04em;
+    padding: 7px 11px; border-radius: 6px;
+    border: 1px solid transparent; background: transparent; color: var(--faint);
+    cursor: pointer; white-space: nowrap;
+  }
+  .chip:hover { background: var(--sunk); color: var(--iron); }
+  .chip.on { border-color: var(--bronze); color: var(--bronze); background: var(--bronze-bg); }
+  .chip .n { opacity: .65; margin-left: 5px; }
+
+  /* -- The table --------------------------------------------------------
+     Semi-tabled on purpose. Real columns, because five facts about twenty
+     people is what a table is for -- but ruled rather than boxed, and the id
+     under the name rather than in a column of its own, because it is the thing
+     you check and never the thing you read. */
+
+  .grid { --cols: minmax(0, 1.3fr) 168px 158px minmax(0, 1fr) 76px 148px; }
+
+  .thead, .row {
+    display: grid;
+    grid-template-columns: var(--cols);
+    align-items: center;
+    gap: 16px;
+  }
+
+  .thead {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 10.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--faint);
+    padding: 22px 2px 10px 20px;
+    border-bottom: 1px solid var(--edge);
+  }
+
+  /* -- One person ------------------------------------------------------
+     The standing rule down the left is the whole page in one mark. Solid
+     verdigris means the door opens for them, a dashed hairline means it does
+     not, and a bead at the top means they are signed in right now. Admission
+     and nothing else -- being held below your level is a red select and a red
+     caption, and giving the rule that job too would mean the one mark you can
+     read at arm's length answered whichever question came second. */
+
+  .row {
+    position: relative;
+    padding: 13px 2px 13px 20px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .row:hover { background: var(--hover); }
+
+  .row::before {
+    content: '';
+    position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+    background: var(--bronze); border-radius: 2px;
+    transform-origin: top center;
+  }
+  .row.out::before {
+    width: 1.5px; left: .75px; background: none;
+    background-image: repeating-linear-gradient(
+      to bottom, var(--edge) 0 4px, transparent 4px 9px);
+  }
+  .row.live::after {
+    content: '';
+    position: absolute; left: -2.5px; top: 5px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--bronze);
+    box-shadow: 0 0 0 3px var(--stock);
+  }
+  .row.live:hover::after { box-shadow: 0 0 0 3px var(--hover); }
+
+  .cell { min-width: 0; }
+
+  .who { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 16.5px; }
+  .who.nameless { font-size: 13px; letter-spacing: .01em; }
+  .id {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; color: var(--faint); overflow-wrap: anywhere;
+  }
+
+  .tag {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 4px;
+    background: var(--sunk); color: var(--faint);
+  }
+  .tag.you { background: var(--bronze-bg); color: var(--bronze); }
+
+  .reaches { font-size: 14px; color: var(--faint); }
+  .seen {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11.5px; color: var(--faint);
+  }
+  .seen b { font-weight: 500; color: var(--bronze); }
+
+  /* -- The level control ------------------------------------------------
+     A select and not a row of buttons, because the options are ordered, they
+     are mutually exclusive, and there are five of them. The rungs somebody
+     cannot be raised to are disabled AND labelled with what would actually
+     raise them, so "why can't I promote them" is answered in the place the
+     question gets asked rather than in a toast afterwards. */
+
+  .lvl {
+    width: 100%;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 12.5px; color: var(--iron);
+    padding: 7px 9px; border-radius: 6px;
+    border: 1px solid var(--edge); background: var(--sunk);
+    cursor: pointer;
+  }
+  .lvl:disabled { cursor: default; opacity: .6; }
+  .lvl.held { border-color: var(--seal); color: var(--seal); background: var(--seal-bg); }
+  .why {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 10px; letter-spacing: .05em; color: var(--faint); margin-top: 4px;
+  }
+  .why.held { color: var(--seal); }
+
+  /* -- The tier ---------------------------------------------------------
+     Four buttons rather than a select, because unlike the level this one goes
+     UP as well as down and every option is always available -- so there is
+     nothing to disable, nothing to explain, and no reason to hide four choices
+     behind a click. It reads as a scale, which is what it is. */
+
+  .tier { display: flex; }
+  .tier .t {
+    flex: 1 1 0; min-width: 0;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11.5px; color: var(--faint);
+    padding: 6px 0; border: 1px solid var(--edge); border-right-width: 0;
+    background: var(--sunk); cursor: pointer;
+  }
+  /* The house tier is set apart from the paid band the way the numbering sets
+     it apart -- 5 to 8 do not exist, and the control should not pretend the
+     step from 4 to 9 is the same size as the one from 3 to 4. */
+  .tier .t.house { margin-left: 5px; border-left-width: 1px; border-radius: 6px; }
+  .tier .t:first-child { border-radius: 6px 0 0 6px; }
+  .tier .t:last-child { border-right-width: 1px; border-radius: 0 6px 6px 0; }
+  .tier .t:hover { color: var(--iron); background: var(--hover); }
+  .tier .t.on {
+    color: var(--bronze); background: var(--bronze-bg);
+    border-color: var(--bronze); font-weight: 600;
+  }
+  /* The neighbour's left border would sit on top of the selected one's right. */
+  .tier .t.on + .t { border-left-color: var(--bronze); }
+  .tier[aria-disabled="true"] .t { cursor: default; opacity: .6; }
+  .tier[aria-disabled="true"] .t:hover { color: var(--faint); background: var(--sunk); }
+  .tier[aria-disabled="true"] .t.on:hover { color: var(--bronze); background: var(--bronze-bg); }
+
+  .spent {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 10px; letter-spacing: .05em; color: var(--faint); margin-top: 4px;
+  }
+  .spent.full { color: var(--seal); }
+
+  /* -- Buttons ---------------------------------------------------------- */
+
+  .doing { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+  .btn {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11.5px; font-weight: 500;
+    padding: 7px 12px; border-radius: 6px;
+    border: 1px solid var(--edge); background: transparent; color: var(--iron);
+    cursor: pointer; white-space: nowrap;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .btn:hover { background: var(--sunk); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn:disabled:hover { background: transparent; }
+  .btn.go { border-color: var(--bronze); color: var(--bronze); }
+  .btn.go:hover { background: var(--bronze-bg); }
+
+  /* Armed is the second half of a two-step. No modal: the button says what
+     the next click does, which is the shortest honest way to ask. */
+  .btn.armed { border-color: var(--seal); color: var(--seal); background: var(--seal-bg); }
+
+  /* -- Admitting somebody the bot has never seen ------------------------ */
+
+  .admit {
+    display: flex; gap: 9px; flex-wrap: wrap; align-items: center;
+    margin-top: 20px; padding: 15px 17px;
+    background: var(--card); border: 1px solid var(--rule); border-radius: 9px;
+  }
+  .admit label {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--faint); width: 100%;
+  }
+  .admit input {
+    flex: 1 1 240px; min-width: 0;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 13.5px; color: var(--iron);
+    padding: 9px 12px; border-radius: 6px;
+    border: 1px solid var(--edge); background: var(--sunk);
+  }
+  .admit input::placeholder { color: var(--faint); opacity: .75; }
+  .admit .hint { width: 100%; font-size: 13.5px; color: var(--faint); margin-top: -2px; }
+
+  /* -- The footing ------------------------------------------------------ */
+
+  .foot {
+    margin-top: 42px; padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-size: 14px; color: var(--faint); max-width: 82ch;
+  }
+  .foot p + p { margin-top: 11px; }
+  .foot b { font-weight: 400; color: var(--iron); }
+
+  .empty { padding: 30px 2px; color: var(--faint); font-size: 15px; }
+
+  /* -- Saying something happened ---------------------------------------- */
+
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 14px);
+    max-width: min(620px, calc(100vw - 36px));
+    padding: 12px 17px; border-radius: 8px;
+    background: var(--card); color: var(--iron);
+    border: 1px solid var(--edge); border-left-width: 3px;
+    box-shadow: 0 10px 30px var(--shadow);
+    font-size: 14.5px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .16s, transform .16s;
+    z-index: 40;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.good { border-left-color: var(--bronze); }
+  .toast.bad  { border-left-color: var(--seal); }
+
+  /* -- The one animation ------------------------------------------------
+     The standing rules draw down as the list arrives, in the order the list
+     is in. It is the signature introducing itself, and it happens once. */
+
+  @media (prefers-reduced-motion: no-preference) {
+    .row::before { animation: rule .3s cubic-bezier(.2,.7,.3,1) backwards; }
+    .row.live::after { animation: bead .2s ease-out backwards; }
+  }
+  @keyframes rule { from { transform: scaleY(0); } }
+  @keyframes bead { from { opacity: 0; transform: scale(.3); } }
+
+  /* -- Narrower ---------------------------------------------------------
+     Reaches goes first: it is the only column that is a nicety rather than
+     something you act on, and it is the widest. */
+
+  @media (max-width: 1060px) {
+    .grid { --cols: minmax(0, 1.2fr) 164px 152px 74px 144px; }
+    .thead .h-reaches, .row .c-reaches { display: none; }
+  }
+
+  @media (max-width: 680px) {
+    .col { padding: 0 16px; }
+    .door { padding: 36px 0 22px; }
+    .thead { display: none; }
+    .row { display: block; padding: 15px 2px 15px 20px; }
+    .row .cell + .cell { margin-top: 10px; }
+    .row .c-reaches { display: block; }
+    .lvl { max-width: 280px; }
+    /* The header is gone at this width, so the two value-only cells say what
+       they are. "3 d" on a line of its own is a number, not a fact. */
+    .row .c-reaches::before, .row .seen::before {
+      color: var(--faint); opacity: .8;
+    }
+    .row .c-reaches::before { content: 'sees '; }
+    .row .seen::before { content: 'last in '; }
+    .doing { justify-content: flex-start; }
+    .admit input { flex-basis: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <a class="back" href="/app/">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M14.5 5.5 8 12l6.5 6.5" stroke="currentColor" stroke-width="1.6"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Quill
+  </a>
+  <span class="here">Gatehouse</span>
+</header>
+
+<main class="col" id="page">
+  <div class="door">
+    <div class="eyebrow">Reading the list</div>
+    <h1>&nbsp;</h1>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- Patches a panel instead of replacing it, so a poll that lands while
+     somebody is typing does not take their caret. Ordinary script, absolute
+     path, no build step: nginx's catch-all `location /` serves it under the
+     same gate as the page, and the test harness reads it off disk. -->
+<script src="/dash/morph.js"></script>
+<script>
+// The porter's lodge.
+//
+// Two questions, asked and answered in one screen: who can sign in to this bot,
+// and how much of it each of them is shown. The second only ever goes down --
+// see levelPicker below, and web/viewer.js for why.
+//
+// This is a separate page from the dashboard rather than a screen inside it,
+// and the reason is the audience. The dashboard is opened by everybody at the
+// table; this is opened by one person, rarely, on purpose. A tab in a nav bar
+// that four out of five viewers are refused is an invitation to rattle a
+// locked door.
+
+const API = new URLSearchParams(location.search).get('api') || '/api';
+
+let me = null;
+let access = null;
+
+// Which rows are on screen. Deliberately not sent anywhere: filtering is a fact
+// about this browser at this moment, and asking the Pi to sort a list it has
+// already sent would be a round trip per keystroke.
+let query = '';
+let only = 'all';
+
+const $ = (id) => document.getElementById(id);
+
+const esc = (s) =>
+  String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function since(ms) {
+  if (!ms || Number.isNaN(ms)) return '—';
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 90) return 'now';
+  if (s < 3600) return `${Math.round(s / 60)} min`;
+  if (s < 86400) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} d`;
+}
+
+// SQLite writes naive UTC; without the Z a browser reads it as local time and
+// everything looks like it happened in the future.
+const stamp = (iso) => (iso ? Date.parse(/[Z+]/.test(iso) ? iso : iso + 'Z') : NaN);
+
+let toastTimer = null;
+function toast(message, ok) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = `toast show ${ok ? 'good' : 'bad'}`;
+  clearTimeout(toastTimer);
+  // A refusal that explains a level is a sentence to read, not a flash. Twice
+  // as long on screen as a success, which only has to be noticed.
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, ok ? 5000 : 11000);
+}
+
+// ==========================================================================
+// Talking to the bot
+// ==========================================================================
+
+async function get(path) {
+  const res = await fetch(`${API}${path}`, { cache: 'no-store' });
+  // 403 on /access is an answer, not a failure -- it is the bot saying this
+  // roster is not yours. Distinguished from a real outage, which is the thing
+  // the caller has to tell apart.
+  if (res.status === 403) return null;
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function send(action, body) {
+  let payload = {};
+  try {
+    const res = await fetch(`${API}/actions/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    payload = await res.json().catch(() => ({}));
+    toast(payload.message || `HTTP ${res.status}`, res.ok && payload.ok !== false);
+  } catch (err) {
+    toast(`Couldn't reach the bot — ${err.message}`, false);
+    return null;
+  }
+  await load();
+  return payload;
+}
+
+async function load() {
+  try {
+    const [who, roster] = await Promise.all([get('/me'), get('/access')]);
+    me = who;
+    access = roster;
+  } catch (err) {
+    morph($('page'), `
+      <div class="door">
+        <div class="eyebrow alarm">No answer</div>
+        <h1>The bot is not reachable.</h1>
+        <p><code>${esc(API)}</code> said <em>${esc(err.message)}</em>. Nothing on this
+           page is current, so nothing on it can be changed.</p>
+      </div>`);
+    return;
+  }
+  paint();
+}
+
+// ==========================================================================
+// The page
+// ==========================================================================
+
+function paint() {
+  // The roster only reaches the owner, and the server decides that, not this
+  // page -- /access answers 403 for anybody else. Saying so beats an empty
+  // table, which could equally mean "nobody has ever signed in".
+  if (!access) {
+    morph($('page'), `
+      <div class="door">
+        <div class="eyebrow">Not yours</div>
+        <h1>This one is the bot owner's.</h1>
+        <p>A list of everyone who can reach this bot, and what each of them can see,
+           is not a list to hand around. Your own level is in the dashboard, under
+           your initial at the end of the top bar.</p>
+      </div>
+      <div class="foot">
+        <p>Signed in as <b>${esc(me?.username ?? 'nobody')}</b> — sees ${esc(me?.sees ?? 'nothing yet')}.</p>
+      </div>`);
+    return;
+  }
+
+  morph($('page'), door() + tools() + `
+    <div class="grid">
+      <div class="thead">
+        <div>Person</div>
+        <div>Level</div>
+        <div>Tier</div>
+        <div class="h-reaches">Reaches</div>
+        <div>Last in</div>
+        <div></div>
+      </div>
+      <div id="rows"></div>
+    </div>` + admitForm() + footing());
+
+  fill();
+}
+
+// The single most important fact here is not the list -- it is whether the
+// door is locked at all. With DASHBOARD_REQUIRE_LOGIN off, everything below is
+// hypothetical, and a page that led with the list instead would be quietly
+// lying by arrangement.
+function door() {
+  if (!access.requireLogin) {
+    return `
+      <div class="door">
+        <div class="eyebrow alarm">The door is not locked</div>
+        <h1>Everyone who reaches this page is you.</h1>
+        <p><code>DASHBOARD_REQUIRE_LOGIN</code> is off, so no session is needed and every
+           visitor is treated as the operator. Nothing below is being enforced — it is
+           what <em>would</em> happen. Sign in as yourself once, then turn it on.</p>
+      </div>`;
+  }
+
+  if (!access.listInUse) {
+    return `
+      <div class="door">
+        <div class="eyebrow">No list in use</div>
+        <h1>Any Discord account can sign in.</h1>
+        <p>And see nothing, unless it owns a server this bot is in or has spoken at one
+           of your tables. That is the right answer on a home network and the wrong one
+           now this dashboard has a hostname. Admit somebody and the list closes to
+           exactly the names on it.</p>
+      </div>`;
+  }
+
+  const n = access.people.filter((p) => p.invited).length;
+  return `
+    <div class="door">
+      <div class="eyebrow">The list is closed</div>
+      <h1>${n} account${n === 1 ? '' : 's'} can sign in.</h1>
+      <p>Everybody else is turned away at Discord's door, with no session written.
+         Signing in grants nothing on its own — what each of them sees is worked out
+         from their own account, and the Level column is the only place that is
+         overruled.</p>
+    </div>`;
+}
+
+const FILTERS = {
+  all:  { label: 'Everyone',    keep: () => true },
+  on:   { label: 'On the list', keep: (p) => p.invited },
+  off:  { label: 'Turned away', keep: (p) => !p.invited },
+  live: { label: 'Signed in',   keep: (p) => p.signedIn },
+  held: { label: 'Held down',   keep: (p) => Boolean(p.cap) },
+};
+
+function tools() {
+  const people = access.people ?? [];
+  // A chip for a state nobody is in is a chip that only ever says zero. The
+  // three describing the shape of the list stay whatever the count; the two
+  // describing an exception appear only when there is one.
+  const shown = ['all', 'on', 'off', 'live', 'held'].filter(
+    (k) => ['all', 'on', 'off'].includes(k) || people.some(FILTERS[k].keep)
+  );
+
+  return `
+    <div class="tools">
+      <div class="find">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M15 15l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <input id="q" type="search" autocomplete="off" spellcheck="false"
+               aria-label="Search by name or id"
+               value="${esc(query)}" placeholder="Search a name or an id">
+      </div>
+      <div class="chips">
+        ${shown.map((k) => `
+          <button type="button" class="chip${only === k ? ' on' : ''}" data-only="${k}"
+                  aria-pressed="${only === k}">${FILTERS[k].label}<span class="n">${
+            people.filter(FILTERS[k].keep).length}</span></button>`).join('')}
+      </div>
+    </div>`;
+}
+
+// Only the rows are redrawn on a keystroke. Repainting the whole page would
+// take the search box out from under the person typing into it.
+function fill() {
+  const people = (access.people ?? []).filter(FILTERS[only]?.keep ?? (() => true));
+  const q = query.trim().toLowerCase();
+  const found = q
+    ? people.filter((p) =>
+        String(p.name ?? '').toLowerCase().includes(q) || p.userId.includes(q))
+    : people;
+
+  morph($('rows'), found.length
+    ? found.map(row).join('')
+    : `<div class="empty">${
+        q ? `Nobody here matches “${esc(query)}”.` : 'Nobody in this group.'}</div>`);
+}
+
+// Where each name stands.
+function row(p) {
+  // Nobody is given an invented name. An account the bot has only ever been
+  // told about wears its id on the top line and does not repeat it below.
+  const named = Boolean(p.name);
+  const name = p.name || p.userId;
+  const isMe = me?.userId && p.userId === me.userId;
+
+  // Only these rows carry a tag, all for the same reason: they are the ones
+  // this page cannot remove, so the missing button wants explaining. Every
+  // other row says what it is with a button.
+  const tag =
+    isMe ? '<span class="tag you">you</span>'
+    : p.admission === 'owner' ? '<span class="tag">operator</span>'
+    : p.admission === 'op' ? '<span class="tag">operator</span>'
+    : p.admission === 'env' ? '<span class="tag">in .env</span>'
+    : '';
+
+  const reach =
+    p.level === 'dev' ? 'everything on this bot'
+    : p.guilds?.length ? esc(p.guilds.join(', '))
+    : p.campaigns ? `${p.campaigns} campaign${p.campaigns === 1 ? '' : 's'}${
+        p.manages ? `, runs ${p.manages}` : ''}`
+    : 'nothing yet';
+
+  // Same words as every other cell in the column. "signed in" beside "3 d" was
+  // two vocabularies in one column, and the bead on the rule already says they
+  // are here -- what this cell is for is when.
+  const seen = p.signedIn
+    ? `<b>now${p.sessions > 1 ? ` ×${p.sessions}` : ''}</b>`
+    : esc(since(stamp(p.lastSeen)));
+
+  // Only a row this page wrote can be struck off here. Offering a Remove that
+  // would delete nothing and report success is worse than not offering one, so
+  // the two it cannot strike off get no button and wear a tag instead.
+  const strike =
+    p.admission === 'list'
+      ? `<button class="btn" data-do="access/uninvite" data-user="${esc(p.userId)}"
+                data-said="Remove ${esc(name)} and end their sessions?">Remove</button>`
+      : ['owner', 'op', 'env'].includes(p.admission) ? ''
+      : `<button class="btn go" data-do="access/invite" data-user="${esc(p.userId)}"
+                data-name="${esc(p.name ?? '')}">Admit</button>`;
+
+  const out = p.signedIn
+    ? `<button class="btn" data-do="access/revoke" data-user="${esc(p.userId)}"
+              data-said="Sign ${esc(name)} out everywhere?">Sign out</button>`
+    : '';
+
+  return `
+    <div class="row ${p.invited ? '' : 'out'} ${p.signedIn ? 'live' : ''} ${p.cap ? 'held' : ''}"
+         data-key="who-${p.userId}">
+      <div class="cell">
+        <div class="who ${named ? '' : 'nameless mono'}">${esc(name)}${tag}</div>
+        ${named ? `<div class="id">${esc(p.userId)}</div>` : ''}
+      </div>
+      <div class="cell">${levelPicker(p, isMe)}</div>
+      <div class="cell">${tierPicker(p)}</div>
+      <div class="cell c-reaches reaches">${reach}</div>
+      <div class="cell seen">${seen}</div>
+      <div class="cell doing">${out}${strike}</div>
+    </div>`;
+}
+
+// The level control.
+//
+// It sets a CEILING and never a floor, and the dropdown is built to say so
+// rather than to hide it. Every rung is listed; the ones above what this person
+// resolves to are disabled and carry the thing that would actually raise them,
+// so "why can't I promote them" is answered where the question occurs rather
+// than in a toast after a failed attempt.
+//
+// The reason it only goes down is web/viewer.js: `owner` means Discord says
+// they own a server, `creator` means a campaign names them as its manager,
+// `player` means they actually spoke at a table. None of those becomes true
+// because a row was written here. Showing somebody LESS than they have earned
+// needs no fact at all, which is why that half works.
+const SHORT = {
+  dev: 'in .env',
+  owner: "Discord's",
+  creator: 'give them a campaign',
+  player: 'they must speak',
+  none: '',
+};
+
+function levelPicker(p, isMe) {
+  const order = access.levels ?? [];
+  const derived = p.derivedLevel ?? p.level;
+
+  // An operator is never held down. That click would be unreachable afterwards
+  // except over SSH, which is the same trap maySignIn refuses to set -- and a
+  // cap on a dev is ignored anyway, so the click would report success and do
+  // nothing. The control is shown, disabled, saying which file decides instead.
+  if (p.admission === 'owner' || p.admission === 'op') {
+    const file = p.admission === 'owner' ? 'OWNER_USER_ID' : 'OPERATOR_USER_IDS';
+    return `
+      <select class="lvl" disabled aria-label="Level for ${esc(p.name ?? p.userId)}">
+        <option>dev</option>
+      </select>
+      <div class="why">${isMe ? 'you' : 'an operator'} — ${file} in .env</div>`;
+  }
+
+  const options = [...order].reverse().map((l) => {
+    const above = order.indexOf(l) > order.indexOf(derived);
+    const note = above && SHORT[l] ? ` · ${SHORT[l]}` : '';
+    return `<option value="${l}"${l === p.level ? ' selected' : ''}${
+      above ? ' disabled' : ''}>${l}${note}</option>`;
+  }).join('');
+
+  // No caption on a row sitting at its own level: "owner — from their account"
+  // under a select reading "owner" is the same word twice, and a line under
+  // every row would stop the two that matter from standing out.
+  return `
+    <select class="lvl${p.cap ? ' held' : ''}" data-level="${esc(p.userId)}"
+            aria-label="Level for ${esc(p.name ?? p.userId)}">${options}</select>
+    ${p.cap ? `<div class="why held">held down from ${esc(derived)}</div>` : ''}`;
+}
+
+// The tier control.
+//
+// Unlike the level beside it, this one goes up. A level answers "what may they
+// see" and is derived from facts, so granting one would mean inventing a fact.
+// A tier answers "how much of the owner's GPU and API bill may they spend",
+// which no fact answers -- it is the person paying deciding what they will pay.
+// See access/tiers.js, which is where the argument lives in full.
+function tierPicker(p) {
+  const tiers = access.tiers ?? [0, 1, 2, 3, 4, 9];
+  // An operator is always on the top tier. A bot that can rate-limit the people
+  // who run it out of their own API key is a bot with a trap in it.
+  const fixed = p.admission === 'owner' || p.admission === 'op';
+
+  const top = tiers[tiers.length - 1];
+  const buttons = tiers.map((t) => `
+    <button type="button" class="t${t === p.tier ? ' on' : ''}${t === top ? ' house' : ''}"${
+      fixed ? ' disabled' : ''}
+            ${fixed ? '' : `data-tier="${t}" data-user="${esc(p.userId)}"`}
+            aria-pressed="${t === p.tier}">${t}</button>`).join('');
+
+  // Only shown once somebody has actually spent something. A "0/20" under every
+  // row is four dozen zeroes and hides the one row that is at its ceiling.
+  const spent =
+    p.asksToday > 0
+      ? `<div class="spent${p.askLimit > 0 && p.asksToday >= p.askLimit ? ' full' : ''}">${
+          p.asksToday}${p.askLimit > 0 ? `/${p.askLimit}` : ''} asks today</div>`
+      : '';
+
+  return `<div class="tier" role="group" aria-label="Tier for ${esc(p.name ?? p.userId)}"${
+    fixed ? ' aria-disabled="true"' : ''}>${buttons}</div>${spent}`;
+}
+
+function admitForm() {
+  return `
+    <form class="admit" id="admit">
+      <label for="newid">Admit an account the bot has never seen</label>
+      <input id="newid" name="userId" class="mono" inputmode="numeric"
+             autocomplete="off" spellcheck="false"
+             placeholder="Discord user id — 17 or 18 digits">
+      <button type="submit" class="btn go">Admit</button>
+      <div class="hint">Anybody the bot already knows is in the table above with an Admit
+        button beside their name; this is for the ones it does not. Right-click a name in
+        Discord and choose Copy User ID — Developer Mode has to be on, under
+        Settings → Advanced.</div>
+    </form>`;
+}
+
+function footing() {
+  return `
+    <div class="foot">
+      <p><b>The Level column only goes down.</b> Every level is derived from something
+         real — Discord says they own that server, a campaign names them as its manager,
+         they actually spoke at that table — and none of it becomes true because this
+         page wrote a row. So the rungs above somebody are disabled and say what would
+         raise them instead. Picking a lower one sets a ceiling, and picking their own
+         level back lifts it.</p>
+      <p><b>Tier is the one column that goes up.</b> It is not about what somebody sees,
+         it is about how much of your GPU and your API bill they may spend — and no fact
+         in the world answers that, so it is yours to decide rather than yours to look up.
+         Tier <b>0</b> is free and is where everybody starts; <b>9</b> is the house, always
+         the owner's and never metered. There is no 5 to 8 on purpose — the gap is room to
+         add a tier later without renumbering anybody.
+         ${access.tiersDiffer
+           ? 'Today it governs the daily <code>/campaign ask</code> allowance; transcription minutes and a token budget read the same setting when they arrive.'
+           : 'Right now every tier is worth the same, because <code>TIER_ASK_LIMITS</code> is not set in <code>pi-service/.env</code> — write it (say <code>0:5,1:20,2:60,3:200,4:0</code>, keyed by tier, 0 for unlimited) and the buttons start to mean something.'}</p>
+      <p><b>Admission is not a level.</b> Letting somebody in shows them nothing extra:
+         admitting the wrong person shows them an empty dashboard, not somebody else's
+         campaign.</p>
+      <p><b>Removing somebody signs them out as well.</b> The list is only consulted when
+         a session is made, so a name struck off with a session still open would keep
+         working for another month. Sign out on its own does the smaller thing: ends the
+         sessions, keeps the welcome.</p>
+      <p>The list is two halves. Rows added here live in the bot's database and can be
+         removed here. <code>DASHBOARD_ALLOWED_USERS</code> in <code>pi-service/.env</code>
+         is the other half, survives anything that happens to the database, and can only
+         be changed there. ${access.listInUse
+           ? 'Empty both and the door opens to any Discord account again.'
+           : 'Both are empty, which is why the door is open to any Discord account.'}</p>
+      <p>Actions ${access.actionsEnabled
+        ? 'are on — nginx adds the token on the way through, so it is never in this page.'
+        : '<b>are refused</b>: no STATUS_TOKEN is set, so nothing on this page will do anything.'}</p>
+    </div>`;
+}
+
+// ==========================================================================
+// Acting
+// ==========================================================================
+
+// Two clicks, no modal. The button says what the next press does and forgets
+// after five seconds. A dialog for "remove one row" is a dialog people learn to
+// dismiss without reading, which is the opposite of a confirmation.
+let armed = null;
+let armedTimer = null;
+
+function disarm() {
+  clearTimeout(armedTimer);
+  if (armed?.isConnected) {
+    armed.classList.remove('armed');
+    armed.textContent = armed.dataset.was ?? armed.textContent;
+    armed.removeAttribute('title');
+  }
+  armed = null;
+}
+
+document.addEventListener('click', async (e) => {
+  const chip = e.target.closest('[data-only]');
+  if (chip) {
+    disarm();
+    only = chip.dataset.only;
+    paint();
+    return;
+  }
+
+  const step = e.target.closest('[data-tier]');
+  if (step) {
+    disarm();
+    await send('access/tier', { userId: step.dataset.user, tier: Number(step.dataset.tier) });
+    return;
+  }
+
+  const btn = e.target.closest('[data-do]');
+  if (!btn) { disarm(); return; }
+
+  const asks = btn.dataset.said;
+  if (asks && armed !== btn) {
+    disarm();
+    armed = btn;
+    btn.dataset.was = btn.textContent.trim();
+    btn.textContent = 'Sure?';
+    btn.classList.add('armed');
+    btn.title = asks;
+    armedTimer = setTimeout(disarm, 5000);
+    return;
+  }
+
+  disarm();
+  btn.disabled = true;
+  await send(btn.dataset.do, { userId: btn.dataset.user, username: btn.dataset.name || undefined });
+});
+
+// Redrawing the rows alone is now an economy rather than a necessity: morph()
+// would leave the search box alone either way. Kept because filtering a list
+// has no reason to touch the door above it.
+document.addEventListener('input', (e) => {
+  if (e.target?.id !== 'q') return;
+  query = e.target.value ?? '';
+  fill();
+});
+
+// A level is one control, so it is one change and no Save button. Nothing on
+// this page is a draft — every other act here happens on the press too.
+document.addEventListener('change', async (e) => {
+  const sel = e.target;
+  if (!sel?.dataset?.level) return;
+  sel.disabled = true;
+  await send('access/level', { userId: sel.dataset.level, level: sel.value });
+});
+
+document.addEventListener('submit', async (e) => {
+  const form = e.target.closest('#admit');
+  if (!form) return;
+  e.preventDefault();
+
+  const input = form.querySelector('#newid');
+  const id = input.value.trim();
+  if (!/^\d{5,25}$/.test(id)) {
+    toast('That is not a Discord user id — they are 17 or 18 digits, nothing else.', false);
+    input.focus();
+    return;
+  }
+
+  const btn = form.querySelector('button');
+  btn.disabled = true;
+  const sent = await send('access/invite', { userId: id });
+  if (sent?.ok) input.value = '';
+});
+
+// Escape disarms a half-pressed button, the same as clicking away.
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') disarm(); });
+
+load();
+</script>
+</body>
+</html>

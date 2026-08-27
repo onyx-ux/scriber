@@ -1,6 +1,8 @@
 import { createServer } from 'node:http';
 
 import { buildStatus } from './status.js';
+import { accessRoster } from './access.js';
+import { allowanceFor } from '../access/tiers.js';
 import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
 import { buildTranscriptView } from './transcript-view.js';
@@ -143,6 +145,13 @@ export function startStatusServer({
     // Every Discord the bot is in, so an action can check a chosen server
     // against reality rather than against what the browser claimed.
     guilds: () => [...(client?.guilds?.cache?.values?.() ?? [])].map((g) => ({ id: g.id, name: g.name ?? g.id })),
+    // Which Discords a given account owns. The one part of somebody's level
+    // that cannot be worked out from the database, so an action that has to
+    // know what a person's level WOULD be has to come through here.
+    guildsOwnedBy: (userId) =>
+      [...(client?.guilds?.cache?.values?.() ?? [])]
+        .filter((g) => g.ownerId === userId)
+        .map((g) => g.id),
     // Started, not awaited. A DM that fails costs somebody knowing promptly,
     // never the request itself.
     notifyRestore: (requestId) => {
@@ -312,6 +321,10 @@ export function startStatusServer({
         can: viewer.can,
         campaigns: viewer.campaignIds.length,
         loginRequired: Boolean(cfg.dashboardRequireLogin),
+        // Their own tier and what it buys. Sent to everybody rather than held
+        // back: "you have four questions left today" is a thing a person needs
+        // before they run out, not after.
+        ...allowanceFor(db, cfg, viewer.userId),
         // Whether signing in is even possible on this install, so the page can
         // say "not configured" rather than sending somebody to Discord to be
         // told off by a screen that mentions none of this bot's settings.
@@ -407,6 +420,27 @@ export function startStatusServer({
           'Content-Disposition': `attachment; filename="${sessionLabel(meeting)}.txt"`,
         })
         .end(text || '(no transcript yet)');
+      return;
+    }
+
+    // Who can sign in to this bot, for the page at /gatehouse/.
+    //
+    // Its own route rather than a section of /status, because the two are read
+    // on completely different rhythms: /status twelve times a minute by
+    // everyone at the table, this a few times a month by one person. Building
+    // a level for every person the bot has ever seen is the most expensive
+    // question this server answers, and it should be asked when somebody wants
+    // the answer.
+    //
+    // 403 rather than a quiet empty roster: "you may not have this" and
+    // "nobody has ever signed in" look identical in an empty array, and only
+    // one of them is worth telling somebody.
+    if (url.pathname === '/access') {
+      if (!viewer.can?.everything) {
+        send(res, 403, { ok: false, message: 'Only the bot owner can see who has access.' });
+        return;
+      }
+      send(res, 200, accessRoster({ db, cfg, client }));
       return;
     }
 

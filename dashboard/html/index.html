@@ -543,7 +543,11 @@
     .pair-arrow { display: none; }
   }
   .corr .hd, .corr .tr { grid-template-columns: 1fr 1fr 130px 100px; }
-  .access .hd, .access .tr { grid-template-columns: 1.5fr 92px 1.5fr 150px 104px; }
+  .sheet-link { display: flex; align-items: baseline; gap: 10px; margin: 14px 14px 0;
+                padding: 10px 12px; border-radius: 7px; border: 1px solid var(--line-2);
+                color: var(--text); text-decoration: none; font-size: 14px; }
+  .sheet-link:hover { background: var(--raise); }
+  .sheet-link .quiet { margin-left: auto; font-size: 12px; }
   .set-row { display: flex; justify-content: space-between; align-items: center; gap: 20px;
              padding: 16px 0; border-bottom: 1px solid var(--rule); }
   .set-row .what { font-size: 15px; }
@@ -1153,6 +1157,11 @@
 <div id="modal"></div>
 <div class="toast" id="toast"></div>
 
+<!-- Patches a panel instead of replacing it, so a poll that lands while
+     somebody is typing does not take their caret. Ordinary script, absolute
+     path, no build step: nginx's catch-all `location /` serves it under the
+     same gate as the page, and the test harness reads it off disk. -->
+<script src="/dash/morph.js"></script>
 <script>
 // Same origin by default: nginx proxies /api to the Pi and adds the status
 // token on the way through, so the token never reaches the browser and the
@@ -1170,7 +1179,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':
 // the poll every few seconds, so state kept in the markup would be thrown away
 // mid-click.
 const view = {
-  screen: 'campaigns',  // campaigns | campaign | transcript | servers | models | access
+  screen: 'campaigns',  // campaigns | campaign | transcript | servers | models
   signingIn: false,     // asked for the sign-in card while it was optional
   campaignId: null,
   tab: 'notes',         // notes | table | corrections | compendium | settings
@@ -1524,7 +1533,7 @@ function chronicle(c) {
   ].filter(Boolean).join('');
 
   return `
-    <button type="button" class="chron" data-campaign="${c.id}">
+    <button type="button" class="chron" data-campaign="${c.id}" data-key="camp-${c.id}">
       <div class="chron-top">
         ${tally(c)}
         ${st ? `<span class="chron-state ${st.key}">
@@ -1596,11 +1605,11 @@ function indexMore() {
 function renderSheet() {
   const el = $('sheet');
   if (view.sheet !== 'account' || document.body.classList.contains('gate-open')) {
-    el.innerHTML = '';
+    morph(el, '');
     return;
   }
-  el.innerHTML = `<div class="sheet-scrim" data-close-sheet></div>
-    <div class="sheet" role="dialog" aria-label="Account">${accountSheet()}</div>`;
+  morph(el, `<div class="sheet-scrim" data-close-sheet></div>
+    <div class="sheet" role="dialog" aria-label="Account">${accountSheet()}</div>`);
 }
 
 // Who the bot thinks you are, and the way out. Shown even when sign-in is not
@@ -1626,6 +1635,11 @@ function accountSheet() {
         </div>`
       : `<div class="quiet">signed in as the operator</div>`}
     </div>
+    ${me?.can?.everything ? `
+      <a class="sheet-link" href="/gatehouse/">
+        <span>Gatehouse</span>
+        <span class="quiet">who can sign in</span>
+      </a>` : ''}
     <div class="sheet-foot">
       ${b ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}` : 'connecting…'}
     </div>`;
@@ -1641,10 +1655,6 @@ const glyph = {
   models: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
     <path d="M12 3.5 13.9 9l5.6.6-4.2 3.8 1.2 5.5-4.5-2.9-4.5 2.9 1.2-5.5L4.5 9.6 10.1 9z"
           stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
-  access: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <circle cx="8.5" cy="9" r="4.2" stroke="currentColor" stroke-width="1.3"/>
-    <path d="M11.6 11.9 20 20.3M17.2 17.9l1.9-1.9M14.6 15.3l1.5-1.5"
-          stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`,
 };
 
 function navMarks() {
@@ -1658,8 +1668,6 @@ function navMarks() {
     ${cap('models') ? `
       <button type="button" class="navmark${view.screen === 'models' ? ' on' : ''}"
               data-screen="models" aria-label="Models">${glyph.models}</button>` : ''}
-    <button type="button" class="navmark${view.screen === 'access' ? ' on' : ''}"
-            data-screen="access" aria-label="Access">${glyph.access}</button>
     <button type="button" class="navmark${view.sheet === 'account' ? ' on' : ''}"
             data-sheet="account" aria-expanded="${view.sheet === 'account'}"
             aria-label="${me?.signedIn ? `Signed in as ${esc(me.username)}` : 'Account'}">
@@ -1687,7 +1695,7 @@ function renderTop() {
   const h = status?.health ?? {};
 
   if (view.screen === 'transcript') {
-    $('top').innerHTML = `
+    morph($('top'), `
       ${homeMark}
       <span class="crumb">${esc(script?.campaign || '')}</span>
       <span class="crumb-sep">/</span>
@@ -1704,7 +1712,7 @@ function renderTop() {
             : ''}` : ''}
         ${themeSwitch()}
         <button class="btn ghost" data-screen="campaign">Close</button>
-      </div>`;
+      </div>`);
     return;
   }
 
@@ -1716,7 +1724,6 @@ function renderTop() {
     home ? 'Quill'
     : view.screen === 'servers' ? 'Servers'
     : view.screen === 'models' ? 'Models'
-    : view.screen === 'access' ? 'Access'
     : campaign()?.name || campaign()?.channel || (status?.campaigns?.length ? 'Quill' : 'Setup');
 
   // Below dev the health line names nothing. Which transcriber, which model
@@ -1749,13 +1756,13 @@ function renderTop() {
          ${h.summarisePaused ? 'Resume summarising' : 'Pause summarising'}</button>`
     : '';
 
-  $('top').innerHTML = `
+  morph($('top'), `
     ${homeMark}
     ${home ? '' : `<button type="button" class="crumb crumb-back" data-screen="campaigns">Campaigns</button>
                         <span class="crumb-sep">/</span>`}
     <h2>${esc(title)}</h2>
     <div class="health">${health}</div>
-    <div class="right">${buttons}${themeSwitch()}${navMarks()}</div>`;
+    <div class="right">${buttons}${themeSwitch()}${navMarks()}</div>`);
 }
 
 // ==========================================================================
@@ -1767,13 +1774,13 @@ function renderBanner() {
   // The degraded banner is a machine problem with a machine fix, and every
   // control on it belongs to whoever owns the machine.
   if (!status || !cap('machinery') || h.whisperServer !== false || view.screen === 'transcript') {
-    $('banner').innerHTML = '';
+    morph($('banner'), '');
     return;
   }
 
   const held = (status.queue?.queuedTranscribe?.length ?? 0) + (status.working?.transcribing?.length ?? 0);
 
-  $('banner').innerHTML = `
+  morph($('banner'), `
     <div class="banner">
       <span class="dot bad" style="width:10px;height:10px;flex:0 0 10px"></span>
       <div style="flex:1">
@@ -1789,7 +1796,7 @@ function renderBanner() {
         <button class="btn ghost" data-diagnose>${view.diagnosing ? 'Hide the detail' : 'What is held'}</button>
       </div>
     </div>
-    ${view.diagnosing ? diagnosis() : ''}`;
+    ${view.diagnosing ? diagnosis() : ''}`);
 }
 
 function diagnosis() {
@@ -1966,7 +1973,7 @@ function renderScreen() {
 
   if (gateOpen) {
     el.className = '';
-    el.innerHTML = signInScreen();
+    morph(el, signInScreen());
     return;
   }
 
@@ -1974,19 +1981,18 @@ function renderScreen() {
   // the page starts and where every other screen goes back to.
   if (view.screen === 'campaigns' && status?.campaigns?.length) {
     el.className = arriving;
-    el.innerHTML = campaignsScreen();
+    morph(el, campaignsScreen());
     return;
   }
 
-  if (view.screen === 'transcript') { el.className = 'split'; el.innerHTML = transcriptScreen(); return; }
-  if (view.screen === 'servers')    { el.className = arriving; el.innerHTML = serversScreen(); return; }
-  if (view.screen === 'models')     { el.className = arriving; el.innerHTML = modelsScreen(); return; }
-  if (view.screen === 'access')     { el.className = arriving; el.innerHTML = accessScreen(); return; }
+  if (view.screen === 'transcript') { el.className = 'split'; morph(el, transcriptScreen()); return; }
+  if (view.screen === 'servers')    { el.className = arriving; morph(el, serversScreen()); return; }
+  if (view.screen === 'models')     { el.className = arriving; morph(el, modelsScreen()); return; }
 
-  if (status && !status.campaigns?.length) { el.className = ''; el.innerHTML = firstRun(); return; }
+  if (status && !status.campaigns?.length) { el.className = ''; morph(el, firstRun()); return; }
 
   el.className = `split ${arriving}`.trim();
-  el.innerHTML = `
+  morph(el, `
     <div class="sessions">
       <div class="shelf-slider ${view.shelfPicking ? 'picking' : 'picked'}">
         <div class="shelf-page chooser" ${view.shelfPicking ? '' : 'aria-hidden="true"'}>
@@ -2008,7 +2014,7 @@ function renderScreen() {
         ${paneBody()}
       </div>
       ${view.tab === 'notes' && view.shelf === 'sessions' ? factsRail() : ''}
-    </div>`;
+    </div>`);
 }
 
 // --- the first run ---------------------------------------------------------
@@ -2181,6 +2187,7 @@ function columnList() {
 
   return `<div class="sess-list">${list.map((e) => `
     <button class="sess${view.entry === `${view.shelf}:${e.key}` ? ' on' : ''}"
+            data-key="entry-${esc(String(e.key))}"
             data-entry="${view.shelf}:${esc(e.key)}">
       <div class="l1"><span class="ref">${esc(e.name)}</span>
         <span class="when">${esc(e.first.ref || `Session ${e.first.sessionNumber}`)}</span></div>
@@ -2310,7 +2317,7 @@ function sessionCard(s) {
   ].filter(Boolean).join(' ');
 
   return `
-    <button class="sess ${flags}" data-session="${s.meetingId}">
+    <button class="sess ${flags}" data-session="${s.meetingId}" data-key="sess-${s.meetingId}">
       <div class="l1">
         <span class="ref">${esc(s.ref || `#${s.meetingId}`)}</span>
         <span class="when">${esc(when)}</span>
@@ -2998,7 +3005,7 @@ function correctionsTab() {
             <div class="r">In transcripts</div><div></div>
           </div>
           ${list.map((c) => `
-            <div class="tr">
+            <div class="tr" data-key="fix-${esc(c.wrong)}">
               <div class="mono" style="font-size:14px;color:var(--text-2)">“${esc(c.wrong)}”</div>
               <div style="font-size:15px;font-weight:500">${esc(c.right)}</div>
               <div class="r mono" style="font-size:13px;color:var(--dim)">${c.lines == null ? '—' : `${n(c.lines)} lines`}</div>
@@ -3197,7 +3204,7 @@ function transcriptScreen() {
         </div>
         <div class="lines">
           ${lines.length ? lines.map((l) => `
-            <div class="line">
+            <div class="line" data-key="line-${l.ms}-${l.userId}">
               <span class="t">${esc(clock(l.ms))}</span>
               <span class="who ${script.speakers.find((s) => s.userId === l.userId)?.manager ? 'owner' : ''}">${esc(l.speaker)}</span>
               <span class="said">${highlight(l.text, term)}</span>
@@ -3492,124 +3499,6 @@ function backupCard() {
     </div>`;
 }
 
-const LEVEL_TONE = { dev: 'agreed', owner: 'agreed', creator: 'waiting', player: '', none: 'never' };
-
-// Who can get into this bot.
-//
-// This page used to describe the security model -- token set, audio local,
-// nginx password. All true, and none of it answered the question you open an
-// access page to ask, which is who can see your campaigns and at what level.
-// So the posture is now three lines at the bottom, and the page is a roster.
-function accessScreen() {
-  const a = status?.access;
-
-  // The roster only reaches dev, so anybody else asking gets told why rather
-  // than shown an empty table and left to wonder whether that means nobody.
-  if (!a) {
-    return `
-      <div class="pane-main pane-wide">
-        <div class="kicker">Access</div>
-        <h1 class="display" style="margin-top:14px">This one is the bot owner's.</h1>
-        <div class="say-2">
-          A list of everyone who can reach this bot, and what each of them can see, is not a list
-          to hand around. You can see your own level under your initial, at the end of the top bar.
-        </div>
-      </div>`;
-  }
-
-  const open = !a.requireLogin;
-  const nobody = a.people.length === 0;
-
-  const rows = a.people.map((p) => {
-    const name = p.name || `user ${p.userId.slice(0, 4)}…${p.userId.slice(-4)}`;
-    const seen = p.signedIn
-      ? `<span class="agreed">signed in</span>`
-      : p.lastSeen
-        ? `<span class="muted">${esc(since(Date.parse(p.lastSeen + 'Z')))}</span>`
-        : '<span class="muted">never signed in</span>';
-
-    // What they reach, in the terms that matter for that level: a server owner
-    // thinks in servers, everybody below them thinks in tables.
-    const reach = p.level === 'dev'
-      ? 'everything on this bot'
-      : p.guilds.length
-        ? esc(p.guilds.join(', '))
-        : p.campaigns
-          ? `${p.campaigns} campaign${p.campaigns === 1 ? '' : 's'}${p.manages ? `, runs ${p.manages}` : ''}`
-          : 'nothing yet';
-
-    return `
-      <div class="tr">
-        <div>${esc(name)}<div class="quiet mono" style="font-size:11px">${esc(p.userId)}</div></div>
-        <div class="as-val ${LEVEL_TONE[p.level] ?? ''}">${esc(p.level)}</div>
-        <div class="quiet">${reach}</div>
-        <div class="r as-val">${seen}</div>
-        <div class="r">${
-          p.sessions
-            ? `<button type="button" class="btn sm" data-act="access/revoke" data-user="${esc(p.userId)}"
-                 data-confirm="Sign ${name.replace(/"/g, '')} out of every session? They can sign back in with a new code.">Sign out</button>`
-            : ''
-        }</div>
-      </div>`;
-  }).join('');
-
-  return `
-    <div class="pane-main pane-wide">
-      <div class="kicker ${open ? 'broken' : 'done'}">${open ? 'Sign-in is off' : 'Sign-in required'}</div>
-      <h1 class="display" style="margin-top:14px">
-        ${open
-          ? 'Anyone who opens this page is treated as you.'
-          : `${a.total} ${a.total === 1 ? 'person' : 'people'} can reach this bot.`}
-      </h1>
-      <div class="say-2">
-        ${open
-          ? `DASHBOARD_REQUIRE_LOGIN is not set, so the levels below are not being enforced — they are what
-             each person <em>would</em> see once it is. Sign in yourself first, then turn it on, or you lock
-             yourself out of your own bot.`
-          : `${a.signedIn} signed in right now. Everyone here can ask the bot for a code and get in at the
-             level shown; ending a session does not remove anyone from a table.`}
-      </div>
-
-      <div class="grid access" style="margin-top:30px">
-        <div class="hd">
-          <div>Person</div><div>Level</div><div>Reaches</div>
-          <div class="r">Session</div><div class="r"></div>
-        </div>
-        ${nobody
-          ? '<div class="tr"><div class="quiet" style="grid-column:1/-1">Nobody has spoken or signed in yet.</div></div>'
-          : rows}
-      </div>
-
-      <div class="steps" style="margin-top:34px">
-        <div>
-          <span class="mark ${a.actionsEnabled ? 'done' : ''}">${a.actionsEnabled ? '✓' : '!'}</span>
-          <div style="flex:1"><div class="what">Actions ${a.actionsEnabled ? 'are on' : 'are refused'}</div>
-            <div class="sub" style="font-family:var(--sans);font-size:13px">
-              ${a.actionsEnabled
-                ? 'A token is set on the bot and nginx adds it on the way through, so it is never in this page.'
-                : 'No STATUS_TOKEN is set, so every action fails closed rather than being treated as open.'}
-            </div></div>
-        </div>
-        <div>
-          <span class="mark done">✓</span>
-          <div style="flex:1"><div class="what">Audio never leaves your network</div>
-            <div class="sub" style="font-family:var(--sans);font-size:13px">
-              Recording, storage and transcription all run on hardware you own. Only finished transcript
-              text is sent to a summariser, and only when you release it.
-            </div></div>
-        </div>
-        <div>
-          <span class="mark done">✓</span>
-          <div style="flex:1"><div class="what">The page is behind a password</div>
-            <div class="sub" style="font-family:var(--sans);font-size:13px">
-              nginx allows the LAN outright and asks everyone else for the htpasswd credential.
-              Both live in <code>dashboard/config/</code> on the Pi.
-            </div></div>
-        </div>
-      </div>
-    </div>`;
-}
-
 // ==========================================================================
 // The import dialog
 // ==========================================================================
@@ -3786,35 +3675,35 @@ function renderModal() {
   if (wanted === modalShowing) return;
   modalShowing = wanted;
 
-  if (!wanted) { $('modal').innerHTML = ''; return; }
+  if (!wanted) { morph($('modal'), ''); return; }
 
   if (view.deleting) {
-    $('modal').innerHTML = deleteDialog();
+    morph($('modal'), deleteDialog());
     $('del-name')?.focus();
     return;
   }
 
   if (view.askingRestore) {
-    $('modal').innerHTML = askRestoreDialog();
+    morph($('modal'), askRestoreDialog());
     $('ask-reason')?.focus();
     return;
   }
 
   if (view.reviewing) {
-    $('modal').innerHTML = reviewDialog();
+    morph($('modal'), reviewDialog());
     return;
   }
 
   if (view.creating) {
-    $('modal').innerHTML = createDialog();
+    morph($('modal'), createDialog());
     $('new-name')?.focus();
     return;
   }
 
-  if (!detail) { $('modal').innerHTML = ''; return; }
+  if (!detail) { morph($('modal'), ''); return; }
   const busy = (status?.recording ?? []).some((r) => r.guildId === detail.guildId);
 
-  $('modal').innerHTML = `
+  morph($('modal'), `
     <div class="backdrop" data-backdrop>
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Import a recording">
         <div class="kicker">${esc(detail.label || detail.name)}</div>
@@ -3854,7 +3743,7 @@ function renderModal() {
           </div>
         </form>
       </div>
-    </div>`;
+    </div>`);
 
   $('imp-url')?.focus();
 }
@@ -4041,8 +3930,6 @@ let landed = false;
 const countAwaiting = () =>
   (detail?.sessions ?? []).filter((s) => s.job?.status === 'awaiting_approval').length;
 
-const typing = () => ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
-
 async function tick() {
   try {
     // Who the bot thinks is asking, before anything else — it decides both
@@ -4084,11 +3971,6 @@ async function tick() {
       if (view.screen === 'campaign') await syncNotes();
     }
 
-    // Somebody is mid-sentence in a correction, a character name or the
-    // transcript search. Rebuilding the pane under them would throw the text
-    // away and move the caret, which is worse than a five-second-old panel —
-    // so the poll updates only the parts with nothing to type in.
-    if (typing()) { renderTop(); renderBanner(); return; }
     paint();
   } catch (err) {
     // The bot being unreachable is itself information. The page dims as well as
@@ -4483,15 +4365,13 @@ async function confirmBlastRadius(action, body, payload) {
   return true;
 }
 
-// Searching re-renders in place rather than on submit, and keeps the caret
-// where it was — the list under it is the answer as you type.
+// Searching re-renders in place rather than on submit — the list under it is
+// the answer as you type. The box keeps the caret because morph() leaves the
+// focused field alone; it used to be saved and put back by hand here.
 document.addEventListener('input', (event) => {
   if (event.target.id !== 'tsearch') return;
   view.search = event.target.value;
-  const caret = event.target.selectionStart;
   renderScreen();
-  const box = $('tsearch');
-  if (box) { box.focus(); box.setSelectionRange(caret, caret); }
 });
 
 document.addEventListener('keydown', (event) => {

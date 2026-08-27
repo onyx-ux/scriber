@@ -13,9 +13,14 @@ import { buildViewer, OPERATOR } from '../src/web/viewer.js';
 //
 // viewer-scope.test.js asks what LEAVES the Pi. This asks what is BUILT in the
 // first place, which used to be "all of it, for everybody". The page polls
-// every five seconds, and the access roster alone resolves a level for every
-// person the bot has ever seen — two full campaign scans each — before
-// scopeStatus dropped it for anyone below dev.
+// every five seconds, and the queue and the model bill are both real work to
+// assemble before scopeStatus dropped them for anyone below dev.
+//
+// The access roster used to be the worst of them — a level resolved for every
+// person the bot has ever seen, twice a campaign each — and it is no longer
+// here at all. It moved to its own route when the page that reads it stopped
+// being a tab on the dashboard, so nobody's poll pays for it now, the operator
+// included. The test below holds that line.
 //
 // The two halves now read the same declaration, so the tests here are mostly
 // about them being unable to disagree.
@@ -110,7 +115,6 @@ test('a player\'s poll does not pay to build the machinery it will not be sent',
   snapshot(proxy, cfg, viewer(PLAYER));
 
   assert.equal(calls.listPipeline ?? 0, 0, 'the queue was not read');
-  assert.equal(calls.listKnownPeople ?? 0, 0, 'the access roster was not built');
   assert.equal(calls.modelUsageToday ?? 0, 0, 'the model bill was not totted up');
   assert.ok((calls.campaignOverview ?? 0) > 0, 'but the campaigns still were — that is the dashboard');
 });
@@ -122,8 +126,23 @@ test('the operator console still pays for all of it, because it reads all of it'
   const status = snapshot(proxy, cfg, OPERATOR);
 
   assert.ok((calls.listPipeline ?? 0) > 0);
-  assert.ok((calls.listKnownPeople ?? 0) > 0);
   for (const name of Object.keys(SECTIONS)) assert.ok(name in status, `${name} is missing for the operator`);
+});
+
+// The roster is the most expensive question this server answers and the least
+// often asked. It left /status when the gatehouse became its own page; nobody
+// polling twelve times a minute should be rebuilding it, the owner least of
+// all, because the owner is the one whose poll used to.
+test("nobody's poll builds the access roster any more, not even the owner's", async (t) => {
+  const { db, cfg, viewer } = await world(t);
+
+  for (const who of [OPERATOR, viewer(DEV), viewer(PLAYER)]) {
+    const { proxy, calls } = counting(db);
+    const status = snapshot(proxy, cfg, who);
+
+    assert.equal(calls.listKnownPeople ?? 0, 0, 'the roster was assembled by a poll');
+    assert.ok(!('access' in status), 'the roster rode out on /status');
+  }
 });
 
 // A caller with no viewer is the bot asking itself what is going on — a test,

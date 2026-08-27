@@ -18,8 +18,10 @@
 //
 // The owner is always allowed. There has to be someone who can unstick a
 // campaign whose manager has left the server.
+import { isOperator } from '../access/operators.js';
+
 export function isOwner(userId, cfg) {
-  return Boolean(cfg.ownerUserId) && userId === cfg.ownerUserId;
+  return isOperator(cfg, userId);
 }
 
 export function isManager(userId, db, campaignId, cfg) {

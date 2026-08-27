@@ -23,6 +23,8 @@
 // last week's recap has no business knowing whether Gemini or Claude wrote it,
 // and no way to spend anything.
 
+import { isOperator } from '../access/operators.js';
+
 export const LEVELS = ['none', 'player', 'creator', 'owner', 'dev'];
 
 const rank = (level) => LEVELS.indexOf(level);
@@ -98,35 +100,81 @@ const CAPABILITIES = {
 // being added to a roster is something somebody else did, and it is the same
 // membership test the user-installed read commands already use.
 export function buildViewer({ db, cfg, userId, username = null, guildsOwned = [] }) {
-  if (!userId) return { level: 'none', userId: null, username: null, guildIds: [], campaignIds: [], can: CAPABILITIES.none };
+  if (!userId) {
+    return {
+      level: 'none', derivedLevel: 'none', cap: null,
+      userId: null, username: null, guildIds: [], campaignIds: [],
+      manageableCampaignIds: [], can: CAPABILITIES.none,
+    };
+  }
 
-  const isDev = Boolean(cfg?.ownerUserId) && userId === cfg.ownerUserId;
+  const isDev = isOperator(cfg, userId);
   const owned = new Set(guildsOwned);
 
   const managed = db.listCampaigns().filter((c) => c.manager_user_id === userId);
   const played = db.listCampaignsForUser(userId);
   const inOwnedGuild = owned.size ? db.listCampaigns().filter((c) => owned.has(c.guild_id)) : [];
 
-  const level =
+  // What is TRUE of them, before anybody has an opinion about it.
+  const derivedLevel =
     isDev ? 'dev'
     : owned.size ? 'owner'
     : managed.length ? 'creator'
     : played.length ? 'player'
     : 'none';
 
-  const campaignIds = [...new Set([...inOwnedGuild, ...managed, ...played].map((c) => c.id))];
+  // And the one opinion the operator is allowed to hold: a ceiling.
+  //
+  // Only ever downward. Reading it as "set their level" and letting it raise
+  // would make every level below dev a thing somebody was awarded, and the
+  // whole point of this file is that none of them is. Lowering breaks nothing:
+  // it says "show this person less than they have earned", which is an opinion
+  // the owner of the hardware is entitled to.
+  //
+  // Never applied to the operator themselves. A ceiling on OWNER_USER_ID is
+  // reachable in one careless click and unreachable afterwards except over
+  // SSH, which is the same trap maySignIn refuses to set in authority.js.
+  const cap = isDev ? null : capOf(db, userId);
+  const level = cap && rank(cap) < rank(derivedLevel) ? cap : derivedLevel;
+
+  // A cap is not a blindfold over a level they still hold — it decides which
+  // of their claims count at all. Capped to `player`, a server owner sees the
+  // tables they actually sat at and not the rest of their own Discord;
+  // otherwise "capped" would mean the same rows with fewer buttons.
+  const claims = [
+    ...(rank(level) >= rank('owner') ? inOwnedGuild : []),
+    ...(rank(level) >= rank('creator') ? managed : []),
+    ...(rank(level) >= rank('player') ? played : []),
+  ];
+  const manageable = [
+    ...(rank(level) >= rank('owner') ? inOwnedGuild : []),
+    ...(rank(level) >= rank('creator') ? managed : []),
+  ];
 
   return {
     level,
+    // Both halves are reported, because "owner, held down to player" and
+    // "player" are different facts and the gatehouse has to draw them
+    // differently — one of them has a ceiling somebody can lift.
+    derivedLevel,
+    cap: level === derivedLevel ? null : cap,
     userId,
     username,
-    guildIds: [...owned],
-    campaignIds,
+    guildIds: rank(level) >= rank('owner') ? [...owned] : [],
+    campaignIds: [...new Set(claims.map((c) => c.id))],
     // Which campaigns they may act ON, as opposed to merely read. Playing at a
     // table does not make its roster yours to edit.
-    manageableCampaignIds: [...new Set([...inOwnedGuild, ...managed].map((c) => c.id))],
+    manageableCampaignIds: [...new Set(manageable.map((c) => c.id))],
     can: CAPABILITIES[level],
   };
+}
+
+// A cap the store has never heard of is not a cap. Anything unrecognised is
+// ignored rather than guessed at — a typo in that column must not silently
+// become "none" and lock somebody out of a dashboard they earned.
+function capOf(db, userId) {
+  const cap = db?.capFor?.(userId) ?? null;
+  return cap && LEVELS.includes(cap) ? cap : null;
 }
 
 // The one the operator's own console gets: everything, no Discord account
@@ -135,6 +183,8 @@ export function buildViewer({ db, cfg, userId, username = null, guildsOwned = []
 // outage would be a worse failure than any it prevents.
 export const OPERATOR = {
   level: 'dev',
+  derivedLevel: 'dev',
+  cap: null,
   userId: null,
   username: 'operator',
   guildIds: [],
@@ -149,6 +199,18 @@ export const maySee = (viewer, campaignId) =>
 export const mayManage = (viewer, campaignId) =>
   Boolean(viewer?.can?.everything) ||
   (Boolean(viewer?.can?.manage) && (viewer?.manageableCampaignIds ?? []).includes(campaignId));
+
+// What each rung actually rests on, for the answer to "make them an owner".
+//
+// Not one of these is a row this bot could write. That is the design and not a
+// missing feature, so the refusal names the real act rather than apologising.
+export const HOW_TO_RAISE = {
+  dev: "dev is whoever OWNER_USER_ID names in pi-service/.env — one person, because it is one person’s GPU and API bill.",
+  owner: 'owner means Discord says they own a server this bot is in. Only Discord can change that.',
+  creator: "creator means running a campaign. Hand them one from that campaign’s settings and they will resolve to creator on their own.",
+  player: 'player means having spoken at a table while the bot was recording. It is a thing that happened, not a thing to grant.',
+  none: 'none is what somebody with no claim on this bot already resolves to.',
+};
 
 // How a viewer is described to themselves, in the dashboard's own words.
 export const LEVEL_WORDS = {

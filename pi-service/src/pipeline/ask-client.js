@@ -1,5 +1,6 @@
 import { DND_ASK_PROMPT, buildAskUserMessage } from '../prompts/ask-prompt.js';
 import { callModel as defaultCallModel, contextTokens } from './model-client.js';
+import { allowanceFor } from '../access/tiers.js';
 
 const CHARS_PER_TOKEN = 3.5;
 const RESERVE_OUTPUT_TOKENS = 800;
@@ -108,17 +109,24 @@ export async function askCampaign({
 // owner can spend the owner's API budget. It had no ceiling at all, which was
 // fine for one table of friends and is not a property worth keeping.
 //
+// The ceiling is the asker's TIER now rather than one number for everybody.
+// With TIER_ASK_LIMITS unset every tier is worth ASK_DAILY_LIMIT, so this is
+// the same twenty questions it always was until somebody decides otherwise.
+// See access/tiers.js.
+//
 // Counted before the call rather than after, so a question that fails still
 // costs a slot — otherwise a failing model is an unlimited one.
 export function askAllowance(db, cfg, userId) {
-  const limit = Number(cfg?.askDailyLimit ?? 0);
-  if (!limit || limit <= 0) return { allowed: true, limit: 0, used: 0, left: Infinity };
+  const { tier, askLimit } = allowanceFor(db, cfg, userId);
+  const limit = Number(askLimit) || 0;
+  if (!limit || limit <= 0) return { allowed: true, tier, limit: 0, used: 0, left: Infinity };
 
   const used = db?.countAsksToday?.(userId) ?? 0;
   const left = Math.max(0, limit - used);
 
   return {
     allowed: left > 0,
+    tier,
     limit,
     used,
     left,
