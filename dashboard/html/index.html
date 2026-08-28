@@ -913,12 +913,21 @@
   }
   /* Quill, speaking. The one line on this screen that is a voice rather than
      a label, and it is set apart from the labels by weight and width rather
-     than by another typeface — Fraunces is variable, and a 300 at 46px next
-     to a 400 at 26px is a different register of the same hand. */
+     than by another typeface. Set exactly as .gate h1 is — same clamp, same
+     weight, same tracking — because the landing page's hero and this one are
+     the same object seen from either side of the door.
+
+     It is NOT weight 300, and it carries no 'opsz' of its own. Both were
+     tried, and both made Fraunces render as a lighter, higher-contrast cut
+     sitting directly above four headings in the ordinary one; at this size
+     that reads as a second typeface rather than as emphasis. Everything in
+     this product that is set in the display face is 400 with 'SOFT' 0 and
+     'WONK' 1 and nothing else. */
   .desk-say {
     font-family: var(--display);
-    font-variation-settings: 'SOFT' 0, 'WONK' 1, 'opsz' 120;
-    font-size: 46px; font-weight: 300; line-height: 1.06; letter-spacing: -.021em;
+    font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: clamp(30px, 5vw, 42px); font-weight: 400;
+    line-height: 1.06; letter-spacing: -.022em;
     margin-top: 15px; max-width: 19ch; color: var(--text);
     /* The verdict is two sentences as often as it is one, and left to itself
        the second line came out a stub — "Nothing to listen to. Go on," then
@@ -1064,7 +1073,9 @@
     letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
   }
   .backlink {
-    font-family: var(--serif); font-size: 16px; line-height: 1.3; color: var(--text-2);
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 17px; font-weight: 400; line-height: 1.3; color: var(--text-2);
+    letter-spacing: -.005em;
     background: transparent; border: 0; padding: 0; cursor: pointer;
     display: inline-flex; align-items: baseline; gap: 8px;
     transition: color .16s;
@@ -1088,7 +1099,7 @@
 
   @media (max-width: 900px) {
     .desk { padding: 32px 20px 68px; }
-    .desk-say { font-size: 31px; max-width: 22ch; letter-spacing: -.017em; }
+    .desk-say { max-width: 22ch; }
     .band { grid-template-columns: minmax(0, 1fr); padding: 17px 17px 18px; }
     .band-name { font-size: 24px; }
     .band-end { text-align: left; }
