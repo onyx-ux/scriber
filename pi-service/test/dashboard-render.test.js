@@ -518,10 +518,43 @@ test('a player is offered no machinery on the desk', async (t) => {
   assert.doesNotMatch(markup, /data-screen="models"/);
   assert.doesNotMatch(markup, /data-screen="servers"/);
   assert.doesNotMatch(markup, /gatehouse/);
-  // scope.js zeroes `awaiting` for anybody who may not act on it, so the desk
-  // must not tell them the queue is clear on the strength of a figure they
-  // were never sent.
-  assert.doesNotMatch(markup, /Everything is written up/);
+});
+
+const saidOnTheDesk = (markup) => {
+  const said = /class="desk-say">([^<]*)</.exec(markup);
+  assert.ok(said, 'the desk wrote a verdict');
+  return said[1].trim();
+};
+
+// The quiet night reads the same to everyone, and that is what makes it safe.
+//
+// scope.js zeroes `awaiting` for anybody who may not act on it, so a head that
+// said "everything is written up" would be Quill vouching to a player for a
+// queue it had never shown them. The line points at the evening instead, which
+// is true for whoever is looking — so if these two ever diverge, a claim has
+// crept back in that only one of them can check.
+test('the quiet night says the same thing to the operator and to a player', async (t) => {
+  const { db, cfg, base } = await world(t);
+
+  const dev = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const player = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+
+  const said = saidOnTheDesk(dev.body());
+  assert.equal(said, saidOnTheDesk(player.body()));
+  assert.ok(said.length > 0);
+  assert.doesNotMatch(said, /written up/i, 'and it claims nothing about the queue');
+});
+
+// The desk repaints on every five-second poll. A line chosen at random would
+// change under the reader between one poll and the next, so it is fixed to the
+// date instead — two renders a moment apart must agree.
+test('the quiet night does not change between two paints', async (t) => {
+  const { db, cfg, base } = await world(t);
+
+  const first = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const second = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+
+  assert.equal(saidOnTheDesk(first.body()), saidOnTheDesk(second.body()));
 });
 
 // --- wikilinks -------------------------------------------------------------

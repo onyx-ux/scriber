@@ -920,6 +920,12 @@
     font-variation-settings: 'SOFT' 0, 'WONK' 1, 'opsz' 120;
     font-size: 46px; font-weight: 300; line-height: 1.06; letter-spacing: -.021em;
     margin-top: 15px; max-width: 19ch; color: var(--text);
+    /* The verdict is two sentences as often as it is one, and left to itself
+       the second line came out a stub — "Nothing to listen to. Go on," then
+       "then." on a line of its own, 76px under 415. Balancing evens the two
+       without touching the ragged right. Ignored by browsers that do not have
+       it, which get the ordinary greedy break back. */
+    text-wrap: balance;
   }
   .desk-sum {
     margin-top: 17px; font-family: var(--mono); font-size: 11.5px;
@@ -2036,6 +2042,48 @@ const REMARKS = [
 ];
 const remark = (howMany) => REMARKS[howMany] ?? 'Quill has stopped counting and started worrying.';
 
+// A night with nothing on it, which is most of them.
+//
+// The head used to read "Everything is written up." — true, and a statement
+// about an absence, which is the one thing this screen had decided not to
+// make. The waiting band is drawn when something is waiting; its absence is
+// already the answer. So the line does the other job instead, and points at
+// the evening rather than at the empty queue.
+//
+// Written in the language of the table rather than the language of fantasy:
+// plot hooks, cold dice, kicked doors, a party arguing. Nothing here
+// exclaims, because Quill does not — see REMARKS above for the register.
+//
+// None of them claims the writing is finished. scope.js zeroes `awaiting`
+// for anybody who may not see the queue, so a line that said "all written up"
+// would be Quill vouching to a player for something it had never shown them.
+// These are true for everyone who can reach this screen, which is why the
+// operator and a player get the same one.
+const QUIET = [
+  'Quiet. The plot will keep — it always does.',
+  'Nothing is running. The dice are getting cold.',
+  'Quill is idle. Somewhere a tavern is filling up.',
+  'Nothing on the go. The next night is yours to ruin.',
+  'All quiet. Somebody go and kick a door.',
+  'Nothing to listen to. Go on, then.',
+  'Between nights. Nothing has gone off the rails yet.',
+  'Quill is waiting. The party is presumably arguing.',
+];
+
+// Which of them today gets. Fixed to the date and not to chance: the desk
+// re-renders on every five-second poll, so a line picked at random would
+// change while somebody was still reading it. A day book has one line per
+// day, and one a day is also about the right amount of variety for a screen
+// nobody reads twice in an hour.
+//
+// Counted in local days rather than UTC ones, so it turns over at the reader's
+// midnight rather than in the middle of somebody's session.
+const quietly = () => {
+  const d = new Date();
+  const day = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+  return QUIET[day % QUIET.length];
+};
+
 // ==========================================================================
 // The desk — the front door, and the answer before the question
 // ==========================================================================
@@ -2125,18 +2173,14 @@ function deskScreen() {
   const hours = camps.reduce((sum, c) => sum + (c.hours || 0), 0);
 
   // What Quill has to report — at most one thing, and the most urgent one.
-  //
-  // "Everything is written up" is a claim about the approval queue, and
-  // scope.js zeroes `awaiting` for anybody who may not see it. Saying it to a
-  // player would be Quill vouching for something it had not shown them, so
-  // they get the plainer fact instead.
+  // A table on the air beats a queue; a queue beats a quiet night; and a
+  // desk with nothing recorded on it yet is not owed a joke.
   const verdict = sessions
     ? (sessions === 1 ? 'Quill is at the table.' : `Quill is at ${count(sessions).toLowerCase()} tables.`)
     : held
       ? `${count(waiting)} night${waiting === 1 ? ' is' : 's are'} waiting to be written up.`
-      : !nights ? 'Nothing on file yet.'
-      : can() ? 'Everything is written up.'
-      : 'Nothing is recording.';
+      : nights ? quietly()
+      : 'Nothing on file yet.';
 
   // What the book has come to. Never about tonight, always true.
   //
