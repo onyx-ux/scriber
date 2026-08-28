@@ -43,7 +43,7 @@ function freePort() {
   });
 }
 
-async function world(t) {
+async function world(t, { activeSessions = new Map() } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'quill-render-'));
   const db = openDb(join(dir, 'db.sqlite'));
 
@@ -97,7 +97,7 @@ async function world(t) {
   };
 
   const { server, close } = startStatusServer({
-    db, cfg, activeSessions: new Map(),
+    db, cfg, activeSessions,
     client: {
       user: { tag: 'Quill#0233' },
       guilds: { cache: new Map([['guild-1', { id: 'guild-1', name: 'The Cellar', ownerId: OWNER }]]) },
@@ -438,35 +438,90 @@ test('the Models screen shows spend and never claims a remaining balance', async
 // --- the desk --------------------------------------------------------------
 
 // The first screen after signing in. What is under test is not the layout —
-// there is none here — but which doors it draws, because a square is a
-// promise that a place exists and can be got to.
+// there is none here — but which doors it draws, because a door is a promise
+// that a place exists and can be got to.
 test('the desk is the first screen, and holds a door per place', async (t) => {
   const { db, cfg, base } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
   const markup = page.body();
 
   assert.ok(balanced(markup).ok);
-  assert.match(markup, /Where would you like to start\?/);
-  assert.match(markup, /class="leaf/, 'the squares are drawn');
-  assert.match(markup, /Cipher/, 'the table you last played has its own square');
-  assert.match(markup, /data-screen="campaigns"/, 'and the whole ledger is one of them');
+  assert.match(markup, /class="door/, 'the index is drawn');
+  assert.match(markup, /data-screen="campaigns"/, 'the whole ledger is one of them');
+  assert.match(markup, /data-screen="servers"/);
   assert.match(markup, /href="\/gatehouse\/"/, 'the operator can get to the guest list');
+  assert.match(markup, /Cipher/, 'the table you last played is one click away');
   assert.doesNotMatch(markup, /data-import/, 'the campaign column is not on this screen');
 });
 
-// Every square is a door somebody may walk through, so a viewer must not be
-// drawn one that would refuse them.
+// The fault this screen was rebuilt to fix: every door was headed with a
+// COUNT — "Three servers", "Four tables" — so the display face was spent on a
+// number and the place itself went unnamed. A count belongs in the figure
+// column. Nothing in the index may be named one again.
+test('a door is headed with its name, never with a count', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const markup = page.body();
+
+  const named = [...markup.matchAll(/class="door-name">([^<]+)</g)].map((m) => m[1].trim());
+  assert.ok(named.length >= 2, 'there are doors to check');
+  for (const name of named) {
+    assert.doesNotMatch(
+      name,
+      /^(\d|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|no)\b/i,
+      `"${name}" is a count where a place should be named`,
+    );
+  }
+  assert.match(markup, /class="door-fig">[^<]*\d/, 'and the counts are in the figure column');
+});
+
+// The head reports, it does not ask. "Where would you like to start?" was the
+// page putting the question back to the person who had just opened it.
+test('the desk says what is true rather than asking where to go', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const markup = page.body();
+
+  assert.doesNotMatch(markup, /Where would you like to start/);
+  assert.match(markup, /class="desk-say">[^<]*\w/, 'the verdict is written');
+});
+
+// A campaign is flagged recording when its DISCORD has a session open, and a
+// Discord may hold several tables. Counting the flags rather than the guilds
+// had Quill reporting two sessions off one /join.
+test('one session in a Discord with two tables is one session', async (t) => {
+  const live = new Map([['guild-1', {
+    startedAtMs: Date.now() - 60_000, channelName: 'The Cellar', capturedUtterances: [],
+  }]]);
+  const { db, cfg, base } = await world(t, { activeSessions: live });
+  db.createCampaign('guild-1', 'The second table', CREATOR);
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const markup = page.body();
+
+  assert.match(markup, /Quill is at the table\./);
+  assert.doesNotMatch(markup, /Quill is at two tables/);
+  assert.match(markup, /class="band live"/, 'and the live band is drawn once');
+  assert.equal(markup.match(/class="band live"/g).length, 1);
+});
+
+// Every door is one somebody may walk through, so a viewer must not be drawn
+// one that would refuse them.
 test('a player is offered no machinery on the desk', async (t) => {
   const { db, cfg, base } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
   const markup = page.body();
 
   assert.ok(balanced(markup).ok);
-  assert.match(markup, /class="leaf/);
+  assert.match(markup, /class="door/);
   assert.match(markup, /Cipher/, 'their own table is still theirs to open');
   assert.doesNotMatch(markup, /data-screen="models"/);
   assert.doesNotMatch(markup, /data-screen="servers"/);
   assert.doesNotMatch(markup, /gatehouse/);
+  // scope.js zeroes `awaiting` for anybody who may not act on it, so the desk
+  // must not tell them the queue is clear on the strength of a figure they
+  // were never sent.
+  assert.doesNotMatch(markup, /Everything is written up/);
 });
 
 // --- wikilinks -------------------------------------------------------------

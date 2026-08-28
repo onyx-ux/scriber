@@ -883,150 +883,223 @@
   }
 
   /* ----------------------------------------------------------------------
-     The desk — the first screen, and the answer to "where do I start".
+     The desk — the front door, and the answer before the question.
 
-     Deliberately not a grid of cards. One sheet of ledger paper, ruled into
-     squares by a hairline that runs the whole width of the page: the cells
-     share their borders instead of floating apart with gaps between them, so
-     what is read is a page divided up rather than six objects arranged on a
-     background.
+     What was here was a grid of equal squares, each headed with a count:
+     "Three servers", "Four tables". Two faults, which were the same fault
+     twice. The NUMBER took the display face and the PLACE went unnamed, so
+     the page could not be scanned — you read six squares to learn what four
+     of them were. And equal squares claim every door matters equally, which
+     on this product is never true: on any given evening one thing is urgent
+     and the rest is furniture.
 
-     Each square is written at the FOOT, the way a clerk fills a column from
-     the bottom line upward, and the ruling shows in the space above the
-     writing. A square with little on it is mostly rule; a square with a lot
-     on it has almost none. That is the whole idea of this screen, and it is
-     why nothing else on it is decorated.  */
+     So the page is a day book's opening instead. Its date, what Quill has to
+     report, the running total the book has reached — and then the book's own
+     index.
 
-  .desk { max-width: 1160px; margin: 0 auto; padding: 54px 40px 80px; }
+     Tonight gets full-width bands, and only when there is a tonight: a live
+     recording, or nights recorded and not yet written up. Everything else is
+     the index below: the name in the display face at the left margin, a
+     leader ruled across to a figure column at the right, the way a contents
+     page carries the eye to a page number. The figure is where a number
+     belongs. The name is where the name belongs.  */
 
-  /* The date, in the hand a day book is headed in. It is the one thing on the
-     page that is about today rather than about the campaign, and it is what
-     stops the question below it reading as a menu title. */
+  .desk { max-width: 1080px; margin: 0 auto; padding: 54px 40px 96px; }
+
+  /* The head of the page: the date, the report, the running total. */
   .desk-day {
     font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
     text-transform: uppercase; color: var(--dim);
   }
-  .desk-head h1 {
-    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
-    font-size: 38px; font-weight: 400; line-height: 1.14; letter-spacing: -.015em;
-    margin-top: 15px; max-width: 24ch;
+  /* Quill, speaking. The one line on this screen that is a voice rather than
+     a label, and it is set apart from the labels by weight and width rather
+     than by another typeface — Fraunces is variable, and a 300 at 46px next
+     to a 400 at 26px is a different register of the same hand. */
+  .desk-say {
+    font-family: var(--display);
+    font-variation-settings: 'SOFT' 0, 'WONK' 1, 'opsz' 120;
+    font-size: 46px; font-weight: 300; line-height: 1.06; letter-spacing: -.021em;
+    margin-top: 15px; max-width: 19ch; color: var(--text);
+  }
+  .desk-sum {
+    margin-top: 17px; font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: .05em; color: var(--dim);
   }
 
-  /* Four columns, then two, then one — and never three.
-
-     auto-fit was picking the count from the width, which meant nothing in this
-     file knew it, and a tile count that did not divide by it left the last row
-     part-drawn: one square with its own edges and then bare page where the
-     ruling and the borders should have carried on. A sheet of ledger paper
-     with a page edge that stops halfway is not a style, it reads as a fault.
-
-     Fixing the counts lets deskScreen() pad the last row out with blank ruled
-     squares, and keeping every count a power of two means a run padded to a
-     multiple of four completes the rows at two and at one as well. */
-  .desk-grid {
-    margin-top: 34px;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    border-top: 1px solid var(--line);
-    border-left: 1px solid var(--line);
+  /* ---- Tonight ----------------------------------------------------------
+     Full width, because there is at most one of each and they are the only
+     things on this page that will not still be true tomorrow. The coloured
+     edge is the whole of their decoration: red is live, the highlighter is
+     something Quill kept that needs a hand, and those two meanings are the
+     only ones either colour carries anywhere in this product. */
+  .band {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end; gap: 16px 30px;
+    width: 100%; text-align: left; color: inherit; text-decoration: none;
+    margin-top: 18px; padding: 19px 22px 20px;
+    background: var(--card);
+    border: 1px solid var(--line); border-left: 3px solid var(--edge);
+    cursor: pointer; transition: background .16s, border-color .16s;
   }
-  /* The rest of the last row. Ruled like the others and edged like the others,
-     so the sheet ends on a straight line, but it is not a door: nothing to
-     hover, nothing to tab to, and nothing said to a screen reader. */
-  .leaf.blank { cursor: default; pointer-events: none; }
-  .leaf.blank::after { content: none; }
+  .band:hover { background: var(--hover); }
+  .band:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; }
+  .band.live { border-left-color: var(--red); }
+  /* The highlighter, in the version of itself that survives a pale ground:
+     #E1EC97 on light stock is a wash rather than a mark. The edge, the label
+     and the figure are then all one colour, which is the point of it. */
+  .band.wait { border-left-color: var(--mark-cap); }
+  .band-main, .band-end { display: block; min-width: 0; }
+  .band-end { text-align: right; }
 
-  .leaf {
-    position: relative; aspect-ratio: 1 / 1;
-    display: flex; flex-direction: column; justify-content: flex-end;
-    text-align: left; cursor: pointer; color: inherit;
-    background: transparent; border: 0;
-    border-right: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-    padding: 22px 22px 21px;
-    overflow: hidden; text-decoration: none;
-    transition: background .16s;
-  }
-  .leaf:hover { background: var(--hover); }
-
-  /* The ruling. Only in the empty part of the square, and fading out as it
-     nears the writing — a ruled page stops being ruled where somebody has
-     written on it. */
-  .leaf::before {
-    content: ''; position: absolute; left: 0; right: 0; top: 0; height: 66%;
-    background: repeating-linear-gradient(to bottom,
-                  transparent 0 25px, var(--rule) 25px 26px);
-    -webkit-mask-image: linear-gradient(to bottom, #000 0 58%, transparent 100%);
-            mask-image: linear-gradient(to bottom, #000 0 58%, transparent 100%);
-    pointer-events: none;
-  }
-
-  /* The pen goes under the square you are about to open, drawn from the left.
-     One move, and it is the only motion on this screen: six permanent
-     underlines would be a pattern, one drawn line is an answer. */
-  .leaf::after {
-    content: ''; position: absolute; left: 0; bottom: -1px; height: 2px; width: 100%;
-    background: var(--pen); transform: scaleX(0); transform-origin: left;
-    transition: transform .22s cubic-bezier(.22,.72,.2,1);
-  }
-  .leaf:hover::after, .leaf:focus-visible::after { transform: scaleX(1); }
-  .leaf:focus-visible { outline: 2px solid var(--pen); outline-offset: -3px; }
-
-  /* What is true about this square right now, said immediately above the
-     name it is about. Only ever one line, and only when there is something
-     to say — there is no "not recording" square and no "nothing waiting"
-     mark, because a page of absences answers nothing. */
-  .leaf-mark {
-    margin-bottom: 11px;
-    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
-    letter-spacing: .13em; text-transform: uppercase; color: var(--dim);
+  .band-mark {
     display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
   }
-  .leaf.live .leaf-mark { color: var(--red-lit); }
-  .leaf.wait .leaf-mark { color: var(--pen); }
+  .band.live .band-mark { color: var(--red-lit); }
+  .band.wait .band-mark { color: var(--mark-cap); }
 
-  /* The two squares that are about tonight keep their rule drawn. The pen is
-     otherwise the answer to a hover, so a line already on the page is the
-     page saying it before it was asked. */
-  .leaf.wait::after { transform: scaleX(1); }
-  .leaf.live::after { transform: scaleX(1); background: var(--red); }
-
-  .leaf-name {
+  .band-name {
+    display: block; margin-top: 9px;
     font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
-    font-size: 26px; font-weight: 400; line-height: 1.12; letter-spacing: -.012em;
+    font-size: 30px; font-weight: 400; line-height: 1.1; letter-spacing: -.016em;
     color: var(--text); overflow-wrap: anywhere;
-    /* A campaign can be called anything. Three lines is as much of a name as
-       a square this size can hold and still have room for what is under it. */
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
-    overflow: hidden;
-    transition: transform .18s cubic-bezier(.22,.72,.2,1);
   }
-  /* The same lean as an entry in the ledger, so the two screens agree about
-     what a door looks like. */
-  .leaf:hover .leaf-name { transform: translateX(6px); }
-  .leaf-say {
-    margin-top: 10px; font-family: var(--mono); font-size: 11.5px;
-    letter-spacing: .03em; line-height: 1.5; color: var(--dim);
+  .band-say {
+    display: block; margin-top: 9px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em;
+    line-height: 1.5; color: var(--dim);
   }
+
+  /* The figure, and what the band does. On the live band the figure is a
+     clock that is actually running: the one thing on this screen that moves,
+     and the only one with a reason to. */
+  .band-fig {
+    display: block; font-family: var(--mono);
+    font-size: 27px; font-weight: 500; line-height: 1; letter-spacing: -.01em;
+    font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap;
+  }
+  .band.live .band-fig { color: var(--red-lit); }
+  .band.wait .band-fig { color: var(--mark-cap); }
+  .band-go {
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    margin-top: 10px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+    color: var(--pen); white-space: nowrap;
+  }
+  .band-go svg { transition: transform .2s cubic-bezier(.22,.72,.2,1); }
+  .band:hover .band-go svg { transform: translateX(4px); }
+
+  /* ---- The index --------------------------------------------------------
+     A contents page, not a table. No rules between the rows: the leader does
+     that job, and two lines doing one job is one line too many. One hairline
+     above and below to bracket the block as a single thing. */
+  .index-rank {
+    margin-top: 44px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .door {
+    display: grid;
+    grid-template-columns: auto minmax(20px, 1fr) 12ch 22px;
+    grid-template-rows: auto auto;
+    align-items: baseline; gap: 0 14px;
+    width: 100%; padding: 19px 12px 20px; margin: 0;
+    text-align: left; color: inherit; text-decoration: none;
+    background: transparent; border: 0;
+    cursor: pointer; transition: background .16s;
+  }
+  .door:hover { background: var(--hover); }
+  .door:focus-visible { outline: 2px solid var(--pen); outline-offset: -2px; }
+
+  .door-name {
+    grid-column: 1; grid-row: 1;
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 26px; font-weight: 400; line-height: 1.1; letter-spacing: -.014em;
+    color: var(--text);
+  }
+  /* The leader. Ruled from the name across to its figure. Under the cursor it
+     is drawn in the pen, which is the page saying which line you are on
+     without moving anything. */
+  .door-lead {
+    grid-column: 2; grid-row: 1; align-self: end;
+    height: 0; margin-bottom: 7px;
+    border-bottom: 1px dotted var(--edge);
+    transition: border-color .18s;
+  }
+  .door:hover .door-lead, .door:focus-visible .door-lead { border-bottom-color: var(--pen); }
+  .door-fig {
+    grid-column: 3; grid-row: 1; text-align: right;
+    font-family: var(--mono); font-size: 13px; font-weight: 500;
+    letter-spacing: .03em; font-variant-numeric: tabular-nums;
+    color: var(--text-2); white-space: nowrap;
+  }
+  .door-arw {
+    grid-column: 4; grid-row: 1; justify-self: end; color: var(--dim);
+    transition: transform .2s cubic-bezier(.22,.72,.2,1), color .18s;
+  }
+  .door:hover .door-arw, .door:focus-visible .door-arw { color: var(--pen); transform: translateX(4px); }
+  .door-say {
+    grid-column: 1 / -1; grid-row: 2; margin-top: 6px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em;
+    line-height: 1.5; color: var(--dim);
+  }
+
+  /* ---- Where you were ---------------------------------------------------
+     The old sheet spent a whole square on this, the same size as the servers
+     page. It is worth a line: the ledger it links into is one row above it,
+     and this is only the shortcut. */
+  .desk-back {
+    margin-top: 30px; padding: 0 12px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 11px 20px;
+  }
+  .desk-back-cap {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+  }
+  .backlink {
+    font-family: var(--serif); font-size: 16px; line-height: 1.3; color: var(--text-2);
+    background: transparent; border: 0; padding: 0; cursor: pointer;
+    display: inline-flex; align-items: baseline; gap: 8px;
+    transition: color .16s;
+  }
+  .backlink .nm {
+    border-bottom: 1px solid var(--line-2);
+    padding-bottom: 2px; transition: border-color .16s;
+  }
+  .backlink .when {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--dim);
+  }
+  .backlink:hover { color: var(--text); }
+  .backlink:hover .nm { border-bottom-color: var(--pen); }
+  .backlink:focus-visible { outline: 2px solid var(--pen); outline-offset: 3px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .leaf-name, .leaf::after { transition: none; }
+    .door-arw, .door-lead, .band-go svg { transition: none; }
+    .door:hover .door-arw, .door:focus-visible .door-arw,
+    .band:hover .band-go svg { transform: none; }
   }
 
-  @media (max-width: 820px) {
-    .desk { padding: 30px 20px 60px; }
-    .desk-head h1 { font-size: 28px; }
-    .desk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .leaf { padding: 16px 16px 15px; }
-    .leaf-name { font-size: 20px; }
+  @media (max-width: 900px) {
+    .desk { padding: 32px 20px 68px; }
+    .desk-say { font-size: 31px; max-width: 22ch; letter-spacing: -.017em; }
+    .band { grid-template-columns: minmax(0, 1fr); padding: 17px 17px 18px; }
+    .band-name { font-size: 24px; }
+    .band-end { text-align: left; }
+    .band-fig { font-size: 25px; }
+    .band-go { justify-content: flex-start; margin-top: 9px; }
+    .door { padding: 18px 8px 19px; }
+    .door-name { font-size: 22px; }
+    .door-lead { margin-bottom: 6px; }
   }
-  @media (max-width: 520px) {
-    .desk-grid { grid-template-columns: minmax(0, 1fr); }
-    /* One square per row on a phone is a square as wide as the phone, and four
-       of those is a long scroll past very little. The squares become bands,
-       and the blanks that were completing a row have nothing left to complete. */
-    .leaf { aspect-ratio: auto; min-height: 132px; }
-    .leaf.blank { display: none; }
+  @media (max-width: 560px) {
+    /* A leader needs a run to be a leader. Below this the figure drops under
+       the name and the row is two lines and an arrow. */
+    .door { grid-template-columns: minmax(0, 1fr) 22px; grid-template-rows: auto auto auto; }
+    .door-lead { display: none; }
+    .door-arw { grid-column: 2; grid-row: 1; }
+    .door-fig { grid-column: 1; grid-row: 2; text-align: left; margin-top: 8px; }
+    .door-say { grid-column: 1 / -1; grid-row: 3; }
   }
 
   /* ----------------------------------------------------------------------
@@ -1964,20 +2037,26 @@ const REMARKS = [
 const remark = (howMany) => REMARKS[howMany] ?? 'Quill has stopped counting and started worrying.';
 
 // ==========================================================================
-// The desk — the first screen, and the one question it asks
+// The desk — the front door, and the answer before the question
 // ==========================================================================
 //
 // Signing in used to land on the ledger of campaigns, which answers "which
-// table" and nothing else. It is the wrong first question for the person who
-// runs the bot: on any given evening the thing they came for is as likely to
-// be the night waiting to be released, the machine that has stopped
-// answering, or the name at the gate as it is a campaign.
+// table" and nothing else. Then it landed on a sheet of squares headed
+// "Where would you like to start?", which asked the question instead of
+// answering it and headed four of its squares with a count rather than a
+// name — "Three servers", "Four tables" — so there was nothing on the page
+// to scan.
 //
-// So the first screen is every place there is to go, laid out as one sheet
-// ruled into squares. Nothing on it is a summary of anything — each square is
-// a door, and what is written on it is what is behind it. Squares for things
-// that are not happening are not drawn: there is no "nothing is recording"
-// square, because a page of absences is a worse answer than a shorter page.
+// This screen answers first. The head reports the one thing that is true
+// right now, in Quill's own voice. Under it, tonight: a live recording and
+// nights waiting to be written up, full width, drawn only when they exist —
+// there is no "nothing is recording" band, because a page of absences is a
+// worse answer than a shorter page. Under THAT, the index: every standing
+// place there is to go, named, with its figure ruled across to the right.
+//
+// The rule the whole screen is built on: prose gets words ("Two nights are
+// waiting"), the figure column gets digits ("2 nights"). A count never takes
+// the display face, and a place is never nameless.
 
 // A day book is headed with its date, and this is the only place on the page
 // where today is the subject.
@@ -1990,116 +2069,193 @@ const today = () => {
   }
 };
 
-// A count, said. On a square the number IS the line, and a display face
-// setting "6 servers" reads like a receipt — the same argument the campaigns
-// index already makes for its own headline, and the same word list.
-const counted = (howMany, word) => {
-  const said = count(howMany);
-  return `${said[0].toUpperCase()}${said.slice(1)} ${word}${howMany === 1 ? '' : 's'}`;
-};
+// The mark that means "this goes somewhere". One glyph on every band and
+// every door, so the affordance is a single sign rather than four.
+const ARW = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M4.5 12h14m-6-5.5L18.5 12 12.5 17.5" stroke="currentColor" stroke-width="1.5"
+        stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-// One square. The name is what you would call the place; the line under it is
-// what is there. The mark at the head is drawn only when something is true
-// right now.
-const leaf = (attrs, { tone = '', mark = '', name, say }) => `
-  <button type="button" class="leaf${tone ? ` ${tone}` : ''}" ${attrs}>
-    ${mark ? `<span class="leaf-mark">${mark}</span>` : ''}
-    <span class="leaf-name">${esc(name)}</span>
-    <span class="leaf-say">${esc(say)}</span>
+// One entry in the index. Name at the left margin, leader ruled across to the
+// figure, arrow past it, and what is behind the door on the line below.
+//
+// `fig` is allowed to be empty: the gatehouse is a page about people rather
+// than a page of things to count, and a leader that runs all the way to the
+// arrow says that more honestly than an invented number would.
+const door = (attrs, { name, say, fig = '' }) => `
+  <button type="button" class="door" ${attrs}>
+    <span class="door-name">${esc(name)}</span>
+    <span class="door-lead" aria-hidden="true"></span>
+    <span class="door-fig">${esc(fig)}</span>
+    <span class="door-arw">${ARW}</span>
+    <span class="door-say">${esc(say)}</span>
+  </button>`;
+
+// One band. `mark` carries markup — the live dot is part of the label, not a
+// decoration beside it — so it is the one field here that is not escaped.
+const band = (attrs, { tone, mark, name, say, fig, figAttrs = '', go }) => `
+  <button type="button" class="band ${tone}" ${attrs}>
+    <span class="band-main">
+      <span class="band-mark">${mark}</span>
+      <span class="band-name">${esc(name)}</span>
+      <span class="band-say">${esc(say)}</span>
+    </span>
+    <span class="band-end">
+      <span class="band-fig" ${figAttrs}>${esc(fig)}</span>
+      <span class="band-go">${esc(go)}${ARW}</span>
+    </span>
   </button>`;
 
 function deskScreen() {
   const camps = status?.campaigns ?? [];
-  const rec = camps.find((c) => c.recording);
+  const rec = camps.find((c) => c.recording) ?? null;
+  // One session can flag several campaigns — the flag is "this Discord is
+  // recording", and a Discord may hold more than one table — so the number of
+  // sessions is the number of distinct guilds, not the number of flags.
+  const sessions = new Set(camps.filter((c) => c.recording).map((c) => c.guildId)).size;
+  // The live session behind the recording campaign, which is where the clock
+  // and the clip count come from. Matched on the guild: a campaign is marked
+  // recording precisely when its guild has a session open.
+  const onAir = rec ? (status?.recording ?? []).find((r) => r.guildId === rec.guildId) : null;
+
   const waiting = camps.reduce((sum, c) => sum + (c.awaiting || 0), 0);
   const needy = camps.filter((c) => c.awaiting).sort((a, b) => b.awaiting - a.awaiting)[0];
+  const held = Boolean(waiting && needy && can());
 
-  // The table you were last at, which is very nearly always the one you came
-  // for. Not simply the first in the list: that order is whatever the
-  // database returned, and on the operator's dashboard it is somebody else's
-  // campaign about half the time.
-  const last = camps
-    .filter((c) => c.lastSessionAt)
-    .sort((a, b) => String(b.lastSessionAt).localeCompare(String(a.lastSessionAt)))[0]
-    ?? camps[0] ?? null;
+  const nights = camps.reduce((sum, c) => sum + (c.sessions || 0), 0);
+  const hours = camps.reduce((sum, c) => sum + (c.hours || 0), 0);
 
-  const squares = [];
+  // What Quill has to report — at most one thing, and the most urgent one.
+  //
+  // "Everything is written up" is a claim about the approval queue, and
+  // scope.js zeroes `awaiting` for anybody who may not see it. Saying it to a
+  // player would be Quill vouching for something it had not shown them, so
+  // they get the plainer fact instead.
+  const verdict = sessions
+    ? (sessions === 1 ? 'Quill is at the table.' : `Quill is at ${count(sessions).toLowerCase()} tables.`)
+    : held
+      ? `${count(waiting)} night${waiting === 1 ? ' is' : 's are'} waiting to be written up.`
+      : !nights ? 'Nothing on file yet.'
+      : can() ? 'Everything is written up.'
+      : 'Nothing is recording.';
+
+  // What the book has come to. Never about tonight, always true.
+  //
+  // Not the number of tables: the Campaigns door carries that figure three
+  // inches below, and the same count said twice on one screen only makes the
+  // reader check whether they are two different numbers. This line is the
+  // VOLUME of what Quill has kept, which nothing else on the desk says.
+  const onFile = nights
+    ? [plural(nights, 'night'), hours >= 1 ? `${Math.round(hours)} hours recorded` : '']
+        .filter(Boolean).join('  ·  ')
+    : '';
+
+  const bands = [];
 
   if (rec) {
-    squares.push(leaf(`data-campaign="${rec.id}"`, {
+    bands.push(band(`data-campaign="${rec.id}"`, {
       tone: 'live',
       mark: '<span class="dot live"></span>Recording',
       name: rec.name || rec.channel || 'A table',
-      say: `in ${rec.channel || 'a voice channel'} — go and watch it arrive`,
+      say: [
+        (onAir?.channel || rec.channel) ? `#${onAir?.channel || rec.channel}` : '',
+        rec.guildName || '',
+        onAir?.speakers ? plural(onAir.speakers, 'speaker') : '',
+      ].filter(Boolean).join('  ·  '),
+      fig: hhmmss(onAir?.recordingForMs),
+      // Read by the second-hand timer at the foot of this file, the same one
+      // that keeps the session pane's clock counting between polls.
+      figAttrs: `id="desk-timer" data-guild="${esc(rec.guildId ?? '')}"`,
+      go: 'Watch it arrive',
     }));
   }
 
-  if (waiting && needy && can()) {
-    squares.push(leaf(`data-campaign="${needy.id}"`, {
+  if (held) {
+    const here = needy.awaiting || 0;
+    bands.push(band(`data-campaign="${needy.id}"`, {
       tone: 'wait',
       mark: 'Waiting on you',
-      name: counted(waiting, 'night'),
-      say: `recorded and not written up${waiting > (needy.awaiting || 0)
-        ? `, ${needy.awaiting} of them at ${needy.name || needy.channel || 'one table'}` : ''}`,
+      name: needy.name || needy.channel || 'One table',
+      say: waiting > here
+        ? `${here} here, ${waiting - here} at other tables — recorded, not written up`
+        : 'recorded, not written up',
+      fig: plural(waiting, 'night'),
+      go: waiting === 1 ? 'Write it up' : 'Write them up',
     }));
   }
 
-  if (last && !(rec && rec.id === last.id)) {
-    squares.push(leaf(`data-campaign="${last.id}"`, {
-      name: last.name || last.channel || 'unnamed',
-      say: `${lastPlayed(last.lastSessionAt)} · ${plural(last.sessions ?? 0, 'night')} on file`,
-    }));
-  }
+  // The index. Every standing place there is to go, in the order somebody
+  // arrives at them: their own tables, then the rooms only the operator has.
+  const doors = [];
 
-  squares.push(leaf('data-screen="campaigns"', {
-    name: camps.length ? counted(camps.length, 'table') : 'No tables yet',
-    say: camps.length ? 'every campaign, night by night'
-                      : 'make one and Quill starts keeping it',
+  doors.push(door('data-screen="campaigns"', {
+    name: 'Campaigns',
+    say: 'every table, night by night',
+    fig: plural(camps.length, 'table'),
   }));
 
   if (cap('servers')) {
-    squares.push(leaf('data-screen="servers"', {
-      name: counted(status?.servers?.length ?? 0, 'server'),
+    doors.push(door('data-screen="servers"', {
+      name: 'Servers',
       say: 'where Quill is, and what it may hear there',
+      fig: plural(status?.servers?.length ?? 0, 'server'),
     }));
   }
 
   if (cap('models')) {
-    squares.push(leaf('data-screen="models"', {
+    const spent = status?.models?.today;
+    doors.push(door('data-screen="models"', {
       name: 'The bill',
       say: 'what today cost, counted as it was spent',
+      fig: spent?.calls ? plural(spent.calls, 'call') : 'nothing yet',
     }));
   }
 
-  // The gatehouse is a page of its own rather than a screen of this one, so
-  // its square is a link and goes there the way any link does.
+  // A page of its own rather than a screen of this one, so its entry is a
+  // link and goes there the way any link does.
   if (cap('everything')) {
-    squares.push(`
-      <a class="leaf" href="/gatehouse/">
-        <span class="leaf-name">The gatehouse</span>
-        <span class="leaf-say">who may sign in, and what they may spend</span>
+    doors.push(`
+      <a class="door" href="/gatehouse/">
+        <span class="door-name">The gatehouse</span>
+        <span class="door-lead" aria-hidden="true"></span>
+        <span class="door-fig"></span>
+        <span class="door-arw">${ARW}</span>
+        <span class="door-say">who may sign in, and what they may spend</span>
       </a>`);
   }
 
-  // The rest of the last row, so the sheet ends on a straight edge.
+  // The three tables you were at most recently, so the common case — "put me
+  // back where I was" — is one click and not two. Ordered by when they last
+  // played rather than by whatever the database returned: on the operator's
+  // dashboard the first row is somebody else's campaign about half the time.
   //
-  // How many squares there are depends on who is looking and how many tables
-  // they sit at — four for a player, seven for the operator mid-session — and
-  // the grid is four wide, then two, then one. Padded to a multiple of four,
-  // every one of those counts comes out even. See .desk-grid for why the
-  // column counts are fixed rather than left to auto-fit.
-  const blanks = (4 - (squares.length % 4)) % 4;
-  for (let i = 0; i < blanks; i += 1) {
-    squares.push('<div class="leaf blank" aria-hidden="true"></div>');
-  }
+  // The table that is recording is already the first thing on the page, so it
+  // is not offered again three inches below itself.
+  const recent = camps
+    .filter((c) => c.lastSessionAt && c.id !== rec?.id)
+    .sort((a, b) => String(b.lastSessionAt).localeCompare(String(a.lastSessionAt)))
+    .slice(0, 3);
 
   return `
     <div class="desk">
       <div class="desk-head">
         <div class="desk-day">${esc(today())}</div>
-        <h1>Where would you like to start?</h1>
+        <h1 class="desk-say">${esc(verdict)}</h1>
+        ${onFile ? `<div class="desk-sum">${esc(onFile)}</div>` : ''}
       </div>
-      <div class="desk-grid">${squares.join('')}</div>
+
+      ${bands.join('')}
+
+      <div class="index-rank">${doors.join('')}</div>
+
+      ${recent.length ? `
+        <div class="desk-back">
+          <span class="desk-back-cap">Last at</span>
+          ${recent.map((c) => `
+            <button type="button" class="backlink" data-campaign="${c.id}">
+              <span class="nm">${esc(c.name || c.channel || 'unnamed')}</span>
+              <span class="when">${esc(lastPlayed(c.lastSessionAt).replace(/^played /, ''))}</span>
+            </button>`).join('')}
+        </div>` : ''}
     </div>`;
 }
 
@@ -5425,12 +5581,26 @@ document.addEventListener('keydown', (event) => {
 // taken again. Nothing here re-renders; it only re-measures.
 window.addEventListener('resize', measureChrome);
 
-// The recording timer ticks on its own second, so it keeps counting between
+// The recording timers tick on their own second, so they keep counting between
 // polls rather than jumping every five.
+//
+// Two of them now: the big one in the session pane, and the desk's, which is
+// the only moving thing on the front door. Both read the same payload and both
+// add the time since it arrived, so they always agree. morph() rewrites the
+// text from the fresh figure on every poll and lands on the same second this
+// does, which is why the two do not fight.
 setInterval(() => {
-  const el = $('timer');
-  const live = (status?.recording ?? []).find((r) => r.meetingId === view.meetingId);
-  if (el && live && lastSeen) el.textContent = hhmmss(live.recordingForMs + (Date.now() - lastSeen));
+  if (!lastSeen) return;
+  const since = Date.now() - lastSeen;
+  const running = status?.recording ?? [];
+
+  const pane = $('timer');
+  const mine = running.find((r) => r.meetingId === view.meetingId);
+  if (pane && mine) pane.textContent = hhmmss(mine.recordingForMs + since);
+
+  const desk = $('desk-timer');
+  const there = desk && running.find((r) => r.guildId === desk.dataset.guild);
+  if (desk && there) desk.textContent = hhmmss(there.recordingForMs + since);
 }, 1000);
 
 // Arriving at the card, from either side of it.
