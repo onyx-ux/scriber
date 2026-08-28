@@ -2042,46 +2042,61 @@ const REMARKS = [
 ];
 const remark = (howMany) => REMARKS[howMany] ?? 'Quill has stopped counting and started worrying.';
 
-// A night with nothing on it, which is most of them.
+// The send-off, on a night with nothing running — which is most of them.
 //
-// The head used to read "Everything is written up." — true, and a statement
-// about an absence, which is the one thing this screen had decided not to
-// make. The waiting band is drawn when something is waiting; its absence is
-// already the answer. So the line does the other job instead, and points at
-// the evening rather than at the empty queue.
+// This line is the first thing anybody sees, and it is standing in the doorway
+// of an evening of D&D. Two earlier attempts got that wrong in the same way.
+// "Everything is written up." was a status. So was every line that replaced
+// it, because each one opened by saying what Quill was doing — "Nothing is
+// running", "Quill is idle", "Between nights" — and spent the good half of the
+// sentence on the machine rather than on the game.
 //
-// Written in the language of the table rather than the language of fantasy:
-// plot hooks, cold dice, kicked doors, a party arguing. Nothing here
-// exclaims, because Quill does not — see REMARKS above for the register.
+// Nobody signs in to find out how the bot is feeling. The state is already
+// drawn: a live table gets a band, a queue gets a band, and their absence is
+// the answer on its own. So the head is not a status at all now. It is a quip
+// to send somebody off with, and it is the only place in this product allowed
+// to be purely for fun.
 //
-// None of them claims the writing is finished. scope.js zeroes `awaiting`
-// for anybody who may not see the queue, so a line that said "all written up"
-// would be Quill vouching to a player for something it had never shown them.
-// These are true for everyone who can reach this screen, which is why the
-// operator and a player get the same one.
-const QUIET = [
-  'Quiet. The plot will keep — it always does.',
-  'Nothing is running. The dice are getting cold.',
-  'Quill is idle. Somewhere a tavern is filling up.',
-  'Nothing on the go. The next night is yours to ruin.',
-  'All quiet. Somebody go and kick a door.',
-  'Nothing to listen to. Go on, then.',
-  'Between nights. Nothing has gone off the rails yet.',
-  'Quill is waiting. The party is presumably arguing.',
+// Table talk, not fantasy diction: split parties, hoards, plot hooks nobody
+// pulls, a plan that lasts one round. Mock-heroic and dry rather than loud —
+// the joke carries the energy, so none of them needs an exclamation mark.
+//
+// Two constraints hold, and both are load-bearing rather than stylistic:
+//
+//   - None may claim the writing is finished. scope.js zeroes `awaiting` for
+//     anybody who may not see the queue, so "all written up" would be Quill
+//     vouching to a player for something it had never shown them. Because
+//     these say nothing about Quill at all, the operator and a player can be
+//     given the same line — and a test holds the two equal, so if they ever
+//     diverge a claim has crept back in.
+//   - None may need an apostrophe. These are single-quoted literals in a file
+//     patched by exact string match, and a stray escape is a silent corruption
+//     rather than a syntax error.
+const ONWARD = [
+  'Fortune favours the party that splits up.',
+  'Somewhere a goblin is having a normal day.',
+  'The map has edges. Go past them.',
+  'The hoard will not loot itself.',
+  'Every legend started with a bad idea.',
+  'May your plans survive the first round.',
+  'Roll badly. It makes a better story.',
+  'Go forth and ignore the plot hook.',
+  'Trust the dice. They have never let anyone down.',
+  'Go and make something worth writing down.',
 ];
 
 // Which of them today gets. Fixed to the date and not to chance: the desk
 // re-renders on every five-second poll, so a line picked at random would
 // change while somebody was still reading it. A day book has one line per
-// day, and one a day is also about the right amount of variety for a screen
-// nobody reads twice in an hour.
+// day, and ten of them is enough that the one you get feels like today's
+// rather than like a rotation you have learned.
 //
 // Counted in local days rather than UTC ones, so it turns over at the reader's
 // midnight rather than in the middle of somebody's session.
-const quietly = () => {
+const onward = () => {
   const d = new Date();
   const day = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
-  return QUIET[day % QUIET.length];
+  return ONWARD[day % ONWARD.length];
 };
 
 // ==========================================================================
@@ -2179,7 +2194,7 @@ function deskScreen() {
     ? (sessions === 1 ? 'Quill is at the table.' : `Quill is at ${count(sessions).toLowerCase()} tables.`)
     : held
       ? `${count(waiting)} night${waiting === 1 ? ' is' : 's are'} waiting to be written up.`
-      : nights ? quietly()
+      : nights ? onward()
       : 'Nothing on file yet.';
 
   // What the book has come to. Never about tonight, always true.
