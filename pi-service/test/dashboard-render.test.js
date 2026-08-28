@@ -637,6 +637,104 @@ test('the tabs read first and settings belongs to whoever runs the campaign', as
     'a player would only be shown values they cannot change');
 });
 
+// --- the margin -----------------------------------------------------------
+
+// A session whose scenes name some of its people and not others, so the
+// margin has something to anchor to and something to fail to anchor.
+// Dated after the fixture's own two, because opening a campaign lands on its
+// newest night.
+function nightWithScenes(db, campaignId) {
+  const m = db.createMeeting({
+    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'The Cellar',
+    startedAt: '2026-08-09T19:00:00Z', audioDir: '/tmp',
+  });
+  db.finalizeTranscription(m, [
+    { userId: PLAYER, displayName: 'saf', startMs: 0, endMs: 1, text: 'We go down.' },
+  ]);
+  db.endMeeting(m, '2026-08-09T22:00:00Z');
+  db.setSummary(m, {
+    tldr: 'A short night.',
+    scenes: [
+      { title: 'Upstairs', points: ['Nothing much happened in the gallery.'] },
+      { title: 'Downstairs', points: ['Sable Quorn was waiting in the strongroom.'] },
+    ],
+    npcsIntroduced: [
+      'Sable Quorn: keeper of the strongroom',
+      'Ferrety Nim: a runner no scene ever gets round to',
+    ],
+    locationsVisited: [], partyDecisions: [],
+    lootAndRewards: [], unresolvedThreads: [], followUps: [], funnyMoments: [],
+  });
+  db.setMeetingStatus(m, 'done');
+  return m;
+}
+
+// The whole point of the margin: the note is not a list at the side of the
+// page, it stands level with the sentence that introduces the name. In the
+// markup that means it is emitted inside its own scene — after everything the
+// scene before it said, and before the scene it belongs to says anything.
+test('a name in the margin stands beside the scene that introduces it', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  nightWithScenes(db, campaignId);
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /Downstairs/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+
+  // Substrings with no name in them, so a wikilink wrapping "Sable Quorn"
+  // cannot break the search.
+  const before = markup.indexOf('Nothing much happened in the gallery');
+  const after = markup.indexOf('was waiting in the strongroom');
+  const note = markup.indexOf('sidenote-name">Sable Quorn<');
+
+  assert.ok(before > 0 && after > 0 && note > 0, 'both scenes and the note are drawn');
+  assert.ok(note > before, 'the note is not hoisted above the scene before it');
+  assert.ok(note < after, 'and it heads the scene that names them');
+});
+
+// A name the scenes never get to still has to appear. Dropping it would make
+// the margin quieter and the write-up less complete, which is the wrong trade.
+test('a name no scene mentions falls to the foot of the margin', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  nightWithScenes(db, campaignId);
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /Downstairs/.test(m));
+  const markup = page.body();
+
+  const lastScene = markup.indexOf('was waiting in the strongroom');
+  const stray = markup.indexOf('sidenote-name">Ferrety Nim<');
+
+  assert.ok(stray > 0, 'it is still written');
+  assert.ok(stray > lastScene, 'after everything the scenes had to say');
+});
+
+// Each entry is claimed once, and the rail gives up exactly the two sections
+// the margin took over. Both are always in the markup — CSS draws one — so a
+// second copy here would be a section a screen reader hears twice.
+test('the margin claims each name once, and the rail gives up those sections', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  const markup = page.body();
+
+  // The fixture introduces one NPC and visits one place.
+  assert.equal((markup.match(/class="sidenote"/g) ?? []).length, 2);
+  assert.equal((markup.match(/sidenote-name">Wren Halloway</g) ?? []).length, 1);
+  assert.equal((markup.match(/sidenote-name">The Ashen Vaults</g) ?? []).length, 1);
+
+  // Which sections the rail gives up. recapSections() is rendered TWICE on
+  // purpose — once into the rail and once under the prose, with CSS drawing
+  // one — so counting the marks would only count that. What matters is WHICH
+  // sections carry it: the two the margin took over, and no others.
+  const marked = [...markup.matchAll(/class="rail-anchored"><div class="cap"[^>]*>([^<]+)</g)]
+    .map((m) => m[1].trim());
+  assert.ok(marked.length > 0, 'the rail marks what it gives up');
+  assert.deepEqual([...new Set(marked)].sort(), ['Locations', 'NPCs introduced']);
+});
+
 // Corrections are about the name, not about which program mishears it — the
 // user's own rule, and the same one the health line already follows.
 test('the corrections tab names no transcriber', async (t) => {

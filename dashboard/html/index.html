@@ -1306,6 +1306,73 @@
     .recap-extras .stack .big { font-size: 15.5px; line-height: 1.6; }
   }
 
+  /* ----------------------------------------------------------------------
+     The margin.
+
+     A wide window used to spend everything past the reading measure on
+     nothing: the prose stopped at about 990px and the rest of the pane —
+     900px of it on a 2560 screen — was blank, with the NPCs and the places
+     listed in a rail on the far side of the hole.
+
+     Those are notes ABOUT the narrative, so they belong beside the part of it
+     they are about, and that is the shape the leftover space already had. So
+     past 1900px the prose narrows to a reading measure and what it gives up
+     becomes a margin with the names written in it, each one beside the scene
+     that introduces it.
+
+     Floated rather than positioned, and that is the whole trick: `clear:
+     right` makes the browser stack them so no two ever overlap, and a float
+     needs nothing recalculated when the five-second poll repaints the pane.
+     A JS-positioned margin would have to be measured again on every morph.
+
+     Three widths now, and exactly one of the three is drawn:
+       up to 1300   the five sections under the prose (.recap-extras)
+       1301–1899    the five sections in the rail (.facts.optional)
+       1900 and up  who and where in the margin; the rail keeps the rest
+
+     1900 is not a taste; it is the width the margin first fits in. The rail
+     stays on this screen, so the sum is 326 for the session list + 320 for
+     the rail + 112 of pane padding + 720 of measure + 58 of gutter + 340 of
+     note = 1876, and the first attempt at 1560 ran the notes 120px UNDER the
+     rail, where its background quietly ate them. Change any of those six
+     numbers and this one moves with them.  */
+
+  .sidenote { display: none; }
+
+  @media (min-width: 1900px) {
+    /* Capped and centred, so what is left over after the margin is a page
+       margin either side rather than a hole against the right rail. */
+    .pane-main { max-width: 1240px; margin: 0 auto; }
+    .pane-main .measure,
+    .pane-main > h1.display { max-width: 720px; }
+
+    .sidenote {
+      display: block;
+      float: right; clear: right;
+      width: 340px; margin-right: -398px; margin-bottom: 26px;
+      padding-left: 18px; border-left: 1px solid var(--line);
+    }
+    .sidenote-kind {
+      display: block; font-family: var(--mono); font-size: 10px; font-weight: 600;
+      letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+    }
+    .sidenote-name {
+      display: block; margin-top: 7px;
+      font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+      font-size: 17px; font-weight: 400; line-height: 1.25;
+      letter-spacing: -.005em; color: var(--text);
+    }
+    .sidenote-what {
+      display: block; margin-top: 5px;
+      font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--dim);
+    }
+
+    /* The rail keeps only what has nowhere in the text to be. A person and a
+       place are introduced by a sentence; a loose thread belongs to the whole
+       session, and so does the line worth reading out. */
+    .facts .rail-anchored { display: none; }
+  }
+
   .theme { margin-left: 4px; }
   .theme button { padding: 5px 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 
@@ -3488,6 +3555,43 @@ function notesPane(s) {
       <button class="btn sm ghost" data-copy-notes>Copy for Obsidian</button>
     </div>`;
 
+  // Who and where, for the margin — see .sidenote.
+  //
+  // Each entry is claimed by the first scene that names it, using the same
+  // word-boundary rule the wikilinker uses, so a note stands beside the very
+  // sentence its name is underlined in. Matched case-insensitively, unlike
+  // the wikilinker: a summary lists a place as "The Ashen Vaults" and the
+  // prose then writes "the stair into the Ashen Vaults", and an article that
+  // lost its capital is not a different place. Anything the scenes never name — a
+  // person mentioned only in the summary above, or one the summariser listed
+  // without writing about — falls to the foot of the margin rather than being
+  // dropped.
+  const marginalia = [
+    ...notes.npcsIntroduced.map((e) => ({ ...splitEntry(e), kind: 'Who' })),
+    ...notes.locationsVisited.map((e) => ({ ...splitEntry(e), kind: 'Where' })),
+  ].filter((m) => m.name);
+
+  const unclaimed = new Set(marginalia.map((m) => m.name));
+
+  const sidenote = (m) => `
+    <aside class="sidenote">
+      <span class="sidenote-kind">${esc(m.kind)}</span>
+      <span class="sidenote-name">${esc(m.name)}</span>
+      ${m.rest ? `<span class="sidenote-what">${wiki(m.rest)}</span>` : ''}
+    </aside>`;
+
+  const marginFor = (passage) => marginalia
+    .filter((m) => unclaimed.has(m.name) && new RegExp(
+      `(^|[^A-Za-z0-9'\u2019])${escapeRe(m.name).replace(/\s+/g, '\\s+')}(?![A-Za-z0-9])`,
+      'i',
+    ).test(passage))
+    .map((m) => { unclaimed.delete(m.name); return sidenote(m); })
+    .join('');
+
+  // Called after the scenes have had their pick, so the set is final.
+  const marginRest = () =>
+    marginalia.filter((m) => unclaimed.has(m.name)).map(sidenote).join('');
+
   return `
     ${sessionKicker(s, 'done', doings)}
     <h1 class="display" style="margin-top:14px">${esc(heading)}</h1>
@@ -3501,9 +3605,11 @@ function notesPane(s) {
       <div class="measure">
         ${notes.scenes.map((scene, i) => `
           <div class="scene">
+            ${marginFor([scene.title, ...scene.points].join(' '))}
             ${i === 0 && scene.title === heading ? '' : `<h4>${esc(scene.title)}</h4>`}
             <p>${scene.points.map((p) => wiki(p)).join(' ')}</p>
           </div>`).join('')}
+        ${marginRest()}
       </div>` : ''}
 
     ${notes.partyDecisions.length ? `
@@ -3754,12 +3860,14 @@ function transcriptPeek(s) {
 // "also in the notes body". They were not. Below 1300px — an ordinary laptop
 // window — five of a write-up's nine sections simply were not on the page.
 function recapSections(notes) {
-  const block = (title, lines) =>
-    lines?.length ? `<div><div class="cap" style="margin-bottom:12px">${title}</div>
+  // `anchored` marks a section the margin takes over past 1560px — see
+  // .facts .rail-anchored. Both are always rendered; CSS draws one.
+  const block = (title, lines, anchored = false) =>
+    lines?.length ? `<div${anchored ? ' class="rail-anchored"' : ''}><div class="cap" style="margin-bottom:12px">${title}</div>
       <div class="plainlist">${lines.map((line) => wiki(line)).join('<br>')}</div></div>` : '';
 
-  const named = (title, lines) =>
-    lines?.length ? `<div><div class="cap" style="margin-bottom:12px">${title}</div>
+  const named = (title, lines, anchored = false) =>
+    lines?.length ? `<div${anchored ? ' class="rail-anchored"' : ''}><div class="cap" style="margin-bottom:12px">${title}</div>
       <div class="stack">${lines.map((entry) => {
         const { name, rest } = splitEntry(entry);
         return `<div><div class="who">${wiki(name)}</div>${rest ? `<div class="what">${wiki(rest)}</div>` : ''}</div>`;
@@ -3770,8 +3878,8 @@ function recapSections(notes) {
       ? `<div><div class="cap" style="margin-bottom:12px">Still unresolved</div>
            <div class="stack">${notes.unresolvedThreads.map((t) => `<div class="big">${wiki(t)}</div>`).join('')}</div></div>`
       : '',
-    named('NPCs introduced', notes.npcsIntroduced),
-    block('Locations', notes.locationsVisited),
+    named('NPCs introduced', notes.npcsIntroduced, true),
+    block('Locations', notes.locationsVisited, true),
     block('Loot and rewards', notes.lootAndRewards),
     // The highlighter's one job on this page: the line somebody will want to
     // read out loud. It is the only thing here Quill kept rather than counted.
