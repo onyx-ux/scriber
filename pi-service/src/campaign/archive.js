@@ -13,7 +13,7 @@
 // bottom about what does NOT happen on day thirty.
 
 import { campaignLabel } from './resolve.js';
-import { isOperator } from '../access/operators.js';
+import { runsThisBot } from '../access/operators.js';
 
 // Long enough to outlast the mood that caused it, and to survive somebody being
 // away for a few weeks and coming back to find their table gone.
@@ -31,9 +31,9 @@ export function daysLeftToRestore(archivedAt, now = Date.now()) {
 // Who may delete a campaign: the person who runs it, and the person whose
 // hardware it all sits on. Nobody else -- not a player at the table, not
 // another DM in the same Discord, not whoever happens to own the server.
-export function mayDelete({ campaign, userId, cfg }) {
+export function mayDelete({ campaign, userId, cfg, db = null }) {
   if (!campaign || !userId) return false;
-  return campaign.manager_user_id === userId || isOperator(cfg, userId);
+  return campaign.manager_user_id === userId || runsThisBot(db, cfg, userId);
 }
 
 // Typing the name is the confirmation.
@@ -51,7 +51,7 @@ export function archiveCampaign({ db, cfg, campaignId, userId, typedName, now = 
   const campaign = db.getCampaign(campaignId);
   if (!campaign) return { ok: false, reason: 'missing', message: '⚠️ No such campaign.' };
 
-  if (!mayDelete({ campaign, userId, cfg })) {
+  if (!mayDelete({ campaign, userId, cfg, db })) {
     return {
       ok: false,
       reason: 'not-yours',
@@ -124,7 +124,7 @@ export function restoreArchivedCampaign({ db, cfg, campaignId, userId, now = Dat
 
 // What somebody may currently bring back.
 export function restorableBy({ db, cfg, userId, now = Date.now() }) {
-  const mine = isOperator(cfg, userId)
+  const mine = runsThisBot(db, cfg, userId)
     ? db.listArchivedCampaigns()
     : db.listArchivedCampaigns({ userId });
 

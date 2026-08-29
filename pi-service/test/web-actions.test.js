@@ -84,6 +84,7 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'access/uninvite',
       'campaign/create',
       'campaign/delete',
+      'campaign/manager',
       'campaign/output',
       'campaign/restore',
       'campaign/restore-review',
@@ -382,15 +383,127 @@ test('the destination can be moved to a DM and back', async (t) => {
   assert.equal(db.getCampaign(campaignId).output_mode, null, 'null is what the delivery code reads as "where we played"');
 });
 
-// 'channel' needs a channel id and a list of channels the bot may post in.
-// Only Discord can answer that, so the dashboard must not pretend it can.
-test('choosing a specific channel is refused here and pointed at Discord', async (t) => {
+// 'channel' needs a channel id AND Discord's own list of where this bot may
+// speak. The id is never taken on trust: every test below is about what happens
+// when the two disagree.
+
+// One bridge, answering whatever this test wants it to answer.
+const listing = (channels) => ({
+  discord: {
+    listChannels: async () =>
+      channels === null ? { ok: false, message: 'no' } : { ok: true, channels },
+  },
+});
+
+test('a channel on the list is chosen, and named back in the bot’s own words', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
-  const res = runAction({ pathname: '/actions/campaign/output', body: { campaignId, mode: 'channel' }, db, cfg });
+  const ctx = listing([{ id: '900000000000000001', name: 'session-notes', category: 'Text Channels' }]);
+
+  const res = await runAction({
+    pathname: '/actions/campaign/output',
+    body: { campaignId, mode: 'channel', channelId: '900000000000000001' },
+    db, cfg, ctx,
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.match(res.payload.message, /#session-notes/, 'named, not left as an eighteen-digit id');
+
+  const saved = db.getCampaign(campaignId);
+  assert.equal(saved.output_mode, 'channel');
+  assert.equal(saved.output_channel_id, '900000000000000001');
+});
+
+test('a channel Discord did not list is refused, however well formed', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const ctx = listing([{ id: '900000000000000001', name: 'session-notes', category: null }]);
+
+  const res = await runAction({
+    pathname: '/actions/campaign/output',
+    // A perfectly plausible snowflake that is simply not one of ours.
+    body: { campaignId, mode: 'channel', channelId: '900000000000000009' },
+    db, cfg, ctx,
+  });
 
   assert.equal(res.payload.ok, false);
-  assert.match(res.payload.message, /campaign output/);
+  assert.match(res.payload.message, /cannot post in that channel/i);
   assert.equal(db.getCampaign(campaignId).output_mode, null, 'and nothing was changed');
+});
+
+// The distinction the whole guard rests on: "Discord said you may not post
+// there" and "nobody managed to ask Discord" are different answers, and only
+// the second one means the setting should be left exactly as it was.
+test('an unreachable Discord changes nothing rather than trusting the browser', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+
+  const res = await runAction({
+    pathname: '/actions/campaign/output',
+    body: { campaignId, mode: 'channel', channelId: '900000000000000001' },
+    db, cfg, ctx: listing(null),
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /could not ask Discord/i);
+  assert.equal(db.getCampaign(campaignId).output_mode, null);
+});
+
+test('a bot with no Discord bridge at all refuses the same way', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = await runAction({
+    pathname: '/actions/campaign/output',
+    body: { campaignId, mode: 'channel', channelId: '900000000000000001' },
+    db, cfg,
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /could not ask Discord/i);
+});
+
+test('choosing "a channel" without saying which is refused', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const ctx = listing([{ id: '900000000000000001', name: 'session-notes', category: null }]);
+
+  const res = await runAction({
+    pathname: '/actions/campaign/output', body: { campaignId, mode: 'channel' }, db, cfg, ctx,
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /Which channel/i);
+});
+
+// A stale id is not harmless: switching back to 'channel' from Discord would
+// otherwise silently resume posting somewhere nobody has looked at in months.
+test('moving off a channel clears the channel, rather than leaving it behind', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const ctx = listing([{ id: '900000000000000001', name: 'session-notes', category: null }]);
+
+  await runAction({
+    pathname: '/actions/campaign/output',
+    body: { campaignId, mode: 'channel', channelId: '900000000000000001' },
+    db, cfg, ctx,
+  });
+  assert.equal(db.getCampaign(campaignId).output_channel_id, '900000000000000001');
+
+  runAction({ pathname: '/actions/campaign/output', body: { campaignId, mode: 'dm' }, db, cfg });
+  assert.equal(db.getCampaign(campaignId).output_channel_id, null);
+});
+
+// Discord is asked for exactly one thing here, and only when the answer could
+// change what gets written. Making the write-ups private must not depend on the
+// gateway being up.
+test('only a channel destination goes to Discord at all', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  let asked = 0;
+  const ctx = { discord: { listChannels: async () => { asked += 1; return { ok: true, channels: [] }; } } };
+
+  runAction({ pathname: '/actions/campaign/output', body: { campaignId, mode: 'dm' }, db, cfg, ctx });
+  runAction({ pathname: '/actions/campaign/output', body: { campaignId, mode: 'default' }, db, cfg, ctx });
+  assert.equal(asked, 0);
+
+  await runAction({
+    pathname: '/actions/campaign/output',
+    body: { campaignId, mode: 'channel', channelId: '900000000000000001' }, db, cfg, ctx,
+  });
+  assert.equal(asked, 1);
 });
 
 test('a DM destination is refused when nobody manages the campaign', async (t) => {

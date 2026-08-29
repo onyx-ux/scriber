@@ -107,6 +107,17 @@ async function world(t, { activeSessions = new Map() } = {}) {
       sendCode: async () => ({ ok: true }),
       findPeople: async () => ({ ok: true, people: [] }),
       invite: async () => ({ ok: true, message: 'asked' }),
+      // What the destination switch's channel picker is drawn from. One
+      // uncategorised and two under a heading, so the grouping has something
+      // to group.
+      listChannels: async () => ({
+        ok: true,
+        channels: [
+          { id: '900000000000000001', name: 'rules', category: null },
+          { id: '900000000000000002', name: 'session-notes', category: 'Campaign' },
+          { id: '900000000000000003', name: 'lore', category: 'Campaign' },
+        ],
+      }),
     },
   });
   await new Promise((resolve) => server.once('listening', resolve));
@@ -635,6 +646,54 @@ test('the tabs read first and settings belongs to whoever runs the campaign', as
   await enter(player, campaignId);
   assert.doesNotMatch(player.body(), /data-tab="settings"/,
     'a player would only be shown values they cannot change');
+});
+
+// --- where the notes go ---------------------------------------------------
+
+// "A chosen channel" was drawn disabled from the day the switch existed,
+// pointing at a slash command, because the page had never been told which
+// channels the bot may post in. It has been now.
+test('a channel is chosen from the list Discord gave, never typed', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'settings' }, (html) => html.includes('data-pick-channel'));
+
+  const settings = page.body();
+  assert.doesNotMatch(settings, /data-pick-channel[^>]*disabled/,
+    'the middle option is live once the channels are known');
+  assert.doesNotMatch(settings, /campaign output/,
+    'and no longer sends anybody to Discord to do it');
+
+  // Opening the list is its own step: choosing a channel is two answers — that
+  // it is a channel, and which one — and the segment can only give the first.
+  await page.click(['button[data-pick-channel]'], {}, (html) => html.includes('data-set-channel'));
+  const picking = page.body();
+
+  assert.match(picking, /<select[^>]*data-set-channel/, 'a list');
+  assert.doesNotMatch(picking, /<input[^>]*channel/i, 'and never a box to type an id into');
+  assert.match(picking, /<option value="900000000000000002"[^>]*>#session-notes</);
+  assert.match(picking, /<optgroup label="Campaign">/, 'grouped the way Discord draws them');
+  assert.match(picking, /<option value="" disabled selected>/, 'nothing is pre-chosen');
+});
+
+// The delivery code already falls back to the channel the session was recorded
+// in when the chosen one has gone. Nobody was ever told, which is how this goes
+// unnoticed for a month.
+test('a destination pointing at a channel that has gone says so', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  db.setCampaignOutput(campaignId, 'channel', '900000000000000404');
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'settings' }, (html) => html.includes('data-set-channel'));
+
+  const settings = page.body();
+  assert.match(settings, /has gone, or I can no longer post in it/);
+  assert.match(settings, /posted back in the channel the session was recorded in/,
+    'and what is happening in the meantime');
+  assert.match(settings, /<option value="" disabled selected>/, 'the stray id is not offered as a choice');
 });
 
 // --- the margin -----------------------------------------------------------

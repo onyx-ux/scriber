@@ -43,6 +43,12 @@
 //   an SSH session and a restart, and it should survive anything that happens
 //   to the database — which is the same argument DASHBOARD_ALLOWED_USERS makes
 //   for the half of the guest list that lives in a file.
+//
+//   THE HOUSE TIER IS THE ONE EXCEPTION, added because the gatehouse offered
+//   tier 9 as "the house" and it did nothing. It is a third way in and it is
+//   deliberately not symmetrical with the two above: it can be handed out and
+//   taken back from the page, but only BY somebody the file names. See
+//   runsThisBot and mayGrantHouseTier at the bottom, and docs/adr/0003.
 
 // Everybody who runs this install, primary first. Strings, always: an id read
 // from JSON is a string and an id read from a config file is a string, but an
@@ -81,6 +87,52 @@ export function isPrimaryOperator(cfg, userId) {
   if (!userId) return false;
   return Boolean(cfg?.ownerUserId) && String(userId) === String(cfg.ownerUserId);
 }
+
+// --- the third way in ---
+
+// The house tier. Defined here rather than in access/tiers.js, which is the
+// file that owns the rest of the tier vocabulary and imports this one — so the
+// number lives on the far side of that arrow and there is still exactly one of
+// it. tiers.js re-exports it as TOP_TIER, which is the name the rest of the
+// bot already knows it by.
+export const HOUSE_TIER = 9;
+
+// Whether this person runs the install, INCLUDING by being put on the house
+// tier from the gatehouse.
+//
+// The gatehouse has always offered tier 9 as "the house" and it has never made
+// anybody an operator, which read as a bug and was a decision: access/tiers.js
+// argues that a level answers "what may they see" and is derived from facts,
+// while a tier answers "how much of my money may they spend" and is granted.
+// Deriving a level from a tier would have meant inventing the fact.
+//
+// So tier 9 is not made into a level. It is made into a fourth way of BEING an
+// operator, alongside OWNER_USER_ID and OPERATOR_USER_IDS — which is the same
+// answer those two give, and the level then derives from it honestly.
+//
+// What stops somebody promoting themselves is the question the other two
+// answer with an SSH session, and this one has to answer too. It does, twice
+// over: only `dev` may set any tier at all (ACTION_NEEDS gates access/tier on
+// `everything`), and — the part that closes the loop — only an operator NAMED
+// IN THE FILE may hand out or take back the house tier. A tier-9 operator gets
+// the machinery and cannot mint another one. See docs/adr/0003.
+//
+// Reads the stored column rather than going through tierOf(), deliberately:
+// tierOf answers 9 for every file-named operator already, so asking it here
+// would be a question answering itself.
+export function runsThisBot(db, cfg, userId) {
+  if (isOperator(cfg, userId)) return true;
+  if (!userId) return false;
+  return Number(db?.tierOf?.(String(userId))) === HOUSE_TIER;
+}
+
+// Whether this person may put somebody ON the house tier, or take them off it.
+//
+// Only the file. An operator appointed from the dashboard who could appoint
+// more would be a role that grows without anybody's hand on it, and the whole
+// reason OWNER_USER_ID lives in a text file is that appointing somebody who
+// can spend your GPU and your API bill should cost an SSH session.
+export const mayGrantHouseTier = (cfg, userId) => isOperator(cfg, userId);
 
 // How many people can spend this install's money. The gatehouse says it out
 // loud, because "there are two of you" is worth seeing on the page that

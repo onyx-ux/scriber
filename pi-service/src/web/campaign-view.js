@@ -108,6 +108,10 @@ export function buildCampaignView({ db, campaignId }) {
     guildId: campaign.guild_id,
     channel: campaign.channel_name,
     claimed: Boolean(campaign.manager_user_id),
+    // Who runs it. The roster already carries ids, so this reveals nothing new
+    // to whoever may read it — and the handover picker has to be able to leave
+    // the current manager out of its own list.
+    managerUserId: campaign.manager_user_id ?? null,
     output: campaign.output_mode ?? 'default',
     outputChannelId: campaign.output_channel_id ?? null,
 

@@ -893,6 +893,10 @@ function row(p) {
     isMe ? '<span class="tag you">you</span>'
     : p.admission === 'owner' ? '<span class="tag">operator</span>'
     : p.admission === 'op' ? '<span class="tag">operator</span>'
+    // The one operator this page made, and the one it can unmake. Said in the
+    // tag rather than left to the reader to infer from a lit 9, because
+    // "operator" is the fact and the tier is only how they got there.
+    : p.admission === 'house' ? '<span class="tag">operator · the house</span>'
     : p.admission === 'env' ? '<span class="tag">in .env</span>'
     : '';
 
@@ -954,11 +958,23 @@ function row(p) {
 // `player` means they actually spoke at a table. None of those becomes true
 // because a row was written here. Showing somebody LESS than they have earned
 // needs no fact at all, which is why that half works.
+// What a rung ABOVE somebody's own level would actually buy them.
+//
+// These used to be the reason each one was refused, back when the column only
+// went down. It goes both ways now, so they are the caveat instead — every one
+// of them says "controls, not campaigns" in its own words, because the shape
+// of the mistake is always the same: reading a raise as a claim on something.
+//
+// Kept to three words or so, and not because of taste. A <select> shows the
+// SELECTED option's text when closed, so a long hint on a rung somebody has
+// actually been raised to gets cut off mid-word in the closed control —
+// "creator · the con". The full sentence lives in the caption underneath,
+// which has the room for it.
 const SHORT = {
-  dev: 'in .env',
-  owner: "Discord's",
-  creator: 'give them a campaign',
-  player: 'they must speak',
+  dev: 'via Tier',
+  owner: 'not a server',
+  creator: 'not a campaign',
+  player: 'nothing new',
   none: '',
 };
 
@@ -970,29 +986,50 @@ function levelPicker(p, isMe) {
   // except over SSH, which is the same trap maySignIn refuses to set -- and a
   // cap on a dev is ignored anyway, so the click would report success and do
   // nothing. The control is shown, disabled, saying which file decides instead.
-  if (p.admission === 'owner' || p.admission === 'op') {
-    const file = p.admission === 'owner' ? 'OWNER_USER_ID' : 'OPERATOR_USER_IDS';
+  if (p.admission === 'owner' || p.admission === 'op' || p.admission === 'house') {
+    // Three ways of being an operator, and the caption has to say which —
+    // because two of them are only changeable over SSH and the third has its
+    // switch on this very row.
+    const why =
+      p.admission === 'house'
+        ? 'on the house tier — move them off it to take this back'
+        : `${isMe ? 'you' : 'an operator'} — ${p.admission === 'owner' ? 'OWNER_USER_ID' : 'OPERATOR_USER_IDS'} in .env`;
     return `
       <select class="lvl" disabled aria-label="Level for ${esc(p.name ?? p.userId)}">
         <option>dev</option>
       </select>
-      <div class="why">${isMe ? 'you' : 'an operator'} — ${file} in .env</div>`;
+      <div class="why">${why}</div>`;
   }
 
+  // Every rung is pickable except dev, which is the Tier column's to give —
+  // one way to appoint an operator rather than two, and one thing to remember
+  // to take away. A rung above their own carries the caveat with it, so the
+  // choice is made with it in view rather than read afterwards in a toast.
   const options = [...order].reverse().map((l) => {
     const above = order.indexOf(l) > order.indexOf(derived);
-    const note = above && SHORT[l] ? ` · ${SHORT[l]}` : '';
+    // Never on the option that is currently selected. A <select> renders the
+    // selected option's text in the closed control, which is narrow — the hint
+    // there gets cut off mid-word ("creator · the con") and the caption
+    // underneath is already saying the same thing with room to finish it. The
+    // hint's job is to inform the CHOICE, so it belongs on the rungs being
+    // offered rather than on the one already taken.
+    const note = above && SHORT[l] && l !== p.level ? ` · ${SHORT[l]}` : '';
     return `<option value="${l}"${l === p.level ? ' selected' : ''}${
-      above ? ' disabled' : ''}>${l}${note}</option>`;
+      l === 'dev' ? ' disabled' : ''}>${l}${note}</option>`;
   }).join('');
 
   // No caption on a row sitting at its own level: "owner — from their account"
   // under a select reading "owner" is the same word twice, and a line under
-  // every row would stop the two that matter from standing out.
+  // every row would stop the ones that matter from standing out.
+  const why =
+    p.cap ? `<div class="why held">held down from ${esc(derived)}</div>`
+    : p.granted ? `<div class="why">raised from ${esc(derived)} — controls, not campaigns</div>`
+    : '';
+
   return `
     <select class="lvl${p.cap ? ' held' : ''}" data-level="${esc(p.userId)}"
             aria-label="Level for ${esc(p.name ?? p.userId)}">${options}</select>
-    ${p.cap ? `<div class="why held">held down from ${esc(derived)}</div>` : ''}`;
+    ${why}`;
 }
 
 // The tier control.
@@ -1002,17 +1039,30 @@ function levelPicker(p, isMe) {
 // A tier answers "how much of the owner's GPU and API bill may they spend",
 // which no fact answers -- it is the person paying deciding what they will pay.
 // See access/tiers.js, which is where the argument lives in full.
+//
+// The house tier is the exception to all of that and this control is where the
+// exception is enforced: tier 9 makes an operator, so only somebody .env names
+// may press it -- in either direction, on a row that is already on it or a row
+// that is about to be. An operator appointed from this page cannot appoint
+// another, which is the whole reason the rule exists.
 function tierPicker(p) {
   const tiers = access.tiers ?? [0, 1, 2, 3, 4, 9];
-  // An operator is always on the top tier. A bot that can rate-limit the people
-  // who run it out of their own API key is a bot with a trap in it.
+  // An operator named in the file is always on the top tier. A bot that can
+  // rate-limit the people who run it out of their own API key is a bot with a
+  // trap in it.
   const fixed = p.admission === 'owner' || p.admission === 'op';
-
   const top = tiers[tiers.length - 1];
+  // Whoever is looking may not touch the house. Locking the WHOLE row when
+  // they are already on it, because moving a house-tier operator down to 2 is
+  // the same act as taking the machinery off them.
+  const houseLocked = access.mayGrantHouse === false;
+  const barred = (t) => fixed || (houseLocked && (t === top || p.tier === top));
+
   const buttons = tiers.map((t) => `
     <button type="button" class="t${t === p.tier ? ' on' : ''}${t === top ? ' house' : ''}"${
-      fixed ? ' disabled' : ''}
-            ${fixed ? '' : `data-tier="${t}" data-user="${esc(p.userId)}"`}
+      barred(t) ? ' disabled' : ''}
+            ${barred(t) ? '' : `data-tier="${t}" data-user="${esc(p.userId)}"`}
+            ${barred(t) && !fixed ? 'title="Only OWNER_USER_ID or OPERATOR_USER_IDS can hand out the house tier"' : ''}
             aria-pressed="${t === p.tier}">${t}</button>`).join('');
 
   // Only shown once somebody has actually spent something. A "0/20" under every
@@ -1047,18 +1097,31 @@ function footing() {
     <div class="foot">
       <details class="foot-more">
       <summary>How levels, tiers and admission work</summary>
-      <p><b>The Level column only goes down.</b> Every level is derived from something
-         real — Discord says they own that server, a campaign names them as its manager,
-         they actually spoke at that table — and none of it becomes true because this
-         page wrote a row. So the rungs above somebody are disabled and say what would
-         raise them instead. Picking a lower one sets a ceiling, and picking their own
-         level back lifts it.</p>
+      <p><b>The Level column goes both ways, and moves controls rather than campaigns.</b>
+         Every level is derived from something real — Discord says they own that server, a
+         campaign names them as its manager, they actually spoke at that table. Picking a
+         lower rung holds somebody below what they have earned; picking a higher one shows
+         them more of the machinery. What it never does is add a campaign: which tables
+         somebody can see stays the list of tables they have a claim on, so raising a
+         player to <b>creator</b> gives them a creator's controls over the campaigns they
+         already run, which may be none. To make somebody actually run one, hand it to them
+         from that campaign's settings — they resolve to creator on their own. Picking
+         their own level back clears the opinion either way.</p>
+      <p><b>dev is not on that menu.</b> It is the Tier column's to give, so that
+         appointing an operator is one act rather than two.</p>
       <p><b>Tier is the one column that goes up.</b> It is not about what somebody sees,
          it is about how much of your GPU and your API bill they may spend — and no fact
          in the world answers that, so it is yours to decide rather than yours to look up.
-         Tier <b>0</b> is free and is where everybody starts; <b>9</b> is the house, always
-         the owner's and never metered. There is no 5 to 8 on purpose — the gap is room to
-         add a tier later without renumbering anybody.
+         Tier <b>0</b> is free and is where everybody starts. There is no 5 to 8 on
+         purpose — the gap is room to add a tier later without renumbering anybody.</p>
+      <p><b>Tier 9 is not a spending ceiling — it hands over the bot.</b> The house is
+         always the owner's and never metered, and putting somebody else on it makes them
+         an <b>operator</b>: the queue, the models, every campaign on this bot, and this
+         page. It is the one way of appointing an operator that does not need an SSH
+         session, and taking them back off it takes it all away again. Which is why only
+         somebody named in <code>pi-service/.env</code> can press it — an operator
+         appointed from this page cannot appoint another.</p>
+      <p>
          ${access.tiersDiffer
            ? 'Today it governs the daily <code>/campaign ask</code> allowance; transcription minutes and a token budget read the same setting when they arrive.'
            : 'Right now every tier is worth the same, because <code>TIER_ASK_LIMITS</code> is not set in <code>pi-service/.env</code> — write it (say <code>0:5,1:20,2:60,3:200,4:0</code>, keyed by tier, 0 for unlimited) and the buttons start to mean something.'}</p>

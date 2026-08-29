@@ -264,31 +264,94 @@ test('a ceiling lowers the level and narrows the scope with it', async (t) => {
   assert.deepEqual(held.guildIds, []);
 });
 
-test('a ceiling above what they resolve to is refused, with the thing that would raise them', async (t) => {
+// The Level column used to refuse every rung above what somebody had earned,
+// on the grounds that a level somebody could be awarded is a level somebody
+// could be awarded by mistake. It goes both ways now — and the argument it was
+// protecting survives, because a grant moves the CONTROLS and never the SCOPE.
+
+test('a level above what they resolve to is a grant, not a refusal', async (t) => {
   const { db, cfg } = await world(t);
 
   const res = await run(db, cfg, 'access/level', { userId: FRIEND, level: 'owner' });
 
-  assert.equal(res.status, 400);
-  assert.match(res.payload.message, /Only Discord can change that/);
-  assert.equal(db.capFor(FRIEND), null, 'a refused level still wrote a row');
-  assert.equal(buildViewer({ db, cfg, userId: FRIEND }).level, 'none');
+  assert.equal(res.status, 200);
+  assert.equal(res.payload.ok, true);
+  assert.equal(db.grantFor(FRIEND), 'owner');
+  assert.equal(db.capFor(FRIEND), null);
+
+  const now = buildViewer({ db, cfg, userId: FRIEND });
+  assert.equal(now.level, 'owner');
+  assert.equal(now.derivedLevel, 'none', 'nothing became true about them');
+  assert.equal(now.granted, 'owner');
+  assert.equal(now.can.servers, true, 'the controls an owner gets');
 });
 
-test('every rung names its own way up rather than just saying no', async (t) => {
+// The property the whole design rests on. Granting a level hands somebody more
+// machinery over the campaigns they already have a claim on — and they may have
+// none, in which case they have been given a fuller view of nothing.
+test('a grant adds controls and never a single campaign', async (t) => {
   const { db, cfg } = await world(t);
   db.createCampaign('guild-1', 'Cipher', 'somebody-else');
 
-  for (const [level, wants] of Object.entries({
-    dev: /OWNER_USER_ID/,
-    owner: /Discord/,
-    creator: /campaign/,
-    player: /spoken/,
-  })) {
-    const res = await run(db, cfg, 'access/level', { userId: FRIEND, level });
-    assert.equal(res.status, 400, level);
-    assert.match(res.payload.message, wants, level);
-  }
+  await run(db, cfg, 'access/level', { userId: FRIEND, level: 'creator' });
+
+  const now = buildViewer({ db, cfg, userId: FRIEND });
+  assert.equal(now.level, 'creator');
+  assert.equal(now.can.manage, true, 'a creator’s controls');
+  assert.deepEqual(now.campaignIds, [], 'over nothing at all');
+  assert.deepEqual(now.manageableCampaignIds, []);
+});
+
+// Said in the message rather than left to a help panel, because "raised to
+// creator" reads like "given a campaign" and is not.
+test('the grant says out loud that it is not a campaign', async (t) => {
+  const { db, cfg } = await world(t);
+  const res = await run(db, cfg, 'access/level', { userId: FRIEND, level: 'creator' });
+
+  assert.match(res.payload.message, /controls, not campaigns/);
+  assert.match(res.payload.message, /hand it to them/i, 'and names the act that would');
+});
+
+// One way to appoint an operator, not two. The house tier next door does it.
+test('dev is still not on this column’s menu', async (t) => {
+  const { db, cfg } = await world(t);
+  const res = await run(db, cfg, 'access/level', { userId: FRIEND, level: 'dev' });
+
+  assert.equal(res.status, 400);
+  assert.match(res.payload.message, /Tier column/);
+  assert.equal(buildViewer({ db, cfg, userId: FRIEND }).level, 'none');
+});
+
+// A floor of creator under a ceiling of player is two instructions that cannot
+// both be obeyed. The store makes the state unreachable rather than leaving
+// buildViewer to pick one while the page draws the other.
+test('a person can never hold a grant and a cap at once', async (t) => {
+  const { db, cfg } = await world(t);
+  db.createCampaign('guild-1', 'Cipher', FRIEND);
+
+  await run(db, cfg, 'access/level', { userId: FRIEND, level: 'owner' });
+  assert.equal(db.grantFor(FRIEND), 'owner');
+
+  await run(db, cfg, 'access/level', { userId: FRIEND, level: 'player' });
+  assert.equal(db.capFor(FRIEND), 'player');
+  assert.equal(db.grantFor(FRIEND), null, 'the raise was cleared, not stacked under the ceiling');
+  assert.equal(buildViewer({ db, cfg, userId: FRIEND }).level, 'player');
+});
+
+// The rule for when the world catches up: the grant stops doing anything, and
+// the row stays. Deleting it would take the operator's decision away for good
+// the moment it was briefly redundant — and the fact can go away again.
+test('a grant the derived level has overtaken goes quiet without being lost', async (t) => {
+  const { db, cfg } = await world(t);
+
+  await run(db, cfg, 'access/level', { userId: FRIEND, level: 'creator' });
+  assert.equal(buildViewer({ db, cfg, userId: FRIEND }).granted, 'creator');
+
+  // They go and actually run a campaign, which is a higher rung than the grant.
+  const guildOwner = buildViewer({ db, cfg, userId: FRIEND, guildsOwned: ['guild-1'] });
+  assert.equal(guildOwner.level, 'owner', 'the fact wins');
+  assert.equal(guildOwner.granted, null, 'and the grant stops claiming credit');
+  assert.equal(db.grantFor(FRIEND), 'creator', 'but the row is still there for when it stops being true');
 });
 
 test('picking their own level back lifts the ceiling', async (t) => {

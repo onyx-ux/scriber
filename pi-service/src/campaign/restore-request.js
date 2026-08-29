@@ -16,7 +16,7 @@
 
 import { campaignLabel } from './resolve.js';
 import { daysLeftToRestore } from './archive.js';
-import { isOperator } from '../access/operators.js';
+import { runsThisBot } from '../access/operators.js';
 
 export const QUESTIONS = {
   reason: 'What is the reason for requesting the restore?',
@@ -123,7 +123,7 @@ export function requestRestore({
 // thing: there is no path where a ticket is filed and the campaign comes back
 // without somebody having read it.
 export function decideRestoreRequest({ db, cfg, requestId, decidedBy, approve, note = null }) {
-  if (!isOperator(cfg, decidedBy)) {
+  if (!runsThisBot(db, cfg, decidedBy)) {
     return { ok: false, reason: 'not-yours', message: '⚠️ Only the bot owner decides these.' };
   }
 

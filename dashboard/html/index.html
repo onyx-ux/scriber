@@ -298,6 +298,10 @@
   .btn.wide { width: 100%; padding: 8px 16px; }
   .btn.big { font-size: 14px; padding: 10px 20px; border-radius: 8px; }
   .row-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  /* A settings row's right-hand cell is narrow, so a picker and the button that
+     acts on it wrap onto two lines. Ending them both at the same right edge
+     keeps the column reading as a column rather than as two stray controls. */
+  .set-row .row-btns { justify-content: flex-end; }
 
   .in { padding: 9px 12px; border-radius: 7px; border: 1px solid var(--line-2);
         background: var(--sunk); color: var(--text); font-size: 14px; width: 100%; }
@@ -311,7 +315,11 @@
   .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--sunk);
          border: 1px solid var(--line-2); border-radius: 8px; }
   .seg button { font-size: 12.5px; padding: 6px 14px; border-radius: 5px; border: 0;
-                background: transparent; color: var(--dim); cursor: pointer; }
+                background: transparent; color: var(--dim); cursor: pointer;
+                /* A segment is a row of alternatives read side by side. Let one
+                   wrap and it stops being one choice among three and starts
+                   looking like two lines of something else. */
+                white-space: nowrap; }
   .seg button:hover:not(.on):not(:disabled) { color: var(--text-2); }
   /* Selected, not primary.
 
@@ -634,6 +642,10 @@
              padding: 16px 0; border-bottom: 1px solid var(--rule); }
   .set-row .what { font-size: 15px; }
   .set-row .sub { font-size: 13px; color: var(--dim); margin-top: 3px; }
+  /* .in is full-width for the forms it was written for; in a settings row the
+     right-hand cell shrinks to its content, so the width has to be stated. */
+  .set-row select.chan { width: auto; min-width: 230px; max-width: 320px; }
+  .set-row select.heir { width: auto; min-width: 210px; max-width: 300px; }
 
   .share { display: inline-flex; align-items: center; gap: 10px; justify-content: flex-end; }
   .share i { width: 62px; height: 5px; border-radius: 3px; background: var(--line);
@@ -1683,6 +1695,8 @@ const view = {
   meetingId: null,
   editing: null,        // the user id whose character name is being typed
   fixing: false,        // the correction form is open on the notes being read
+  outputPicking: false, // the channel picker is open under the destination switch
+  heir: null,           // who the handover picker is pointed at, before the press
   importing: false,
   creating: false,
   deleting: false,
@@ -1964,6 +1978,12 @@ const can = () => status?.actionsEnabled !== false && cap('approvals');
 // campaign's own creator may edit its roster without being able to pause a
 // queue that belongs to somebody else's hardware.
 const canManage = () => status?.actionsEnabled !== false && (detail?.viewerCan?.manage ?? cap('manage'));
+
+// Handing a campaign to somebody else. Narrower than managing it: who runs a
+// campaign is a question about who somebody IS on this bot, and assigning that
+// sits with the Level and Tier columns rather than inside one campaign's own
+// settings. A manager keeps everything else on this screen.
+const canHandOver = () => status?.actionsEnabled !== false && cap('everything');
 
 // Where this campaign's notes end up, in words.
 //
@@ -4368,6 +4388,41 @@ function correctionsTab() {
 // Settings
 // ==========================================================================
 
+// What to call somebody on the roster.
+//
+// The display name is what the table calls them and is the right answer when
+// there is one — but listRoster leaves it null for anybody the bot has never
+// actually heard, which is exactly the person a DM enrolled last week and is
+// about to hand the campaign to. Their character name is the next best thing
+// they have been called, and the id is what is left.
+const personName = (p) => p?.displayName || p?.characterName || p?.userId || '';
+
+// The channels, grouped under their categories the way Discord's own sidebar
+// draws them.
+//
+// The list arrives already in that order, so consecutive runs are the groups —
+// no sorting here, and no second opinion about the order to disagree with the
+// bot's. Uncategorised channels sit at the top with no heading, which is again
+// what Discord does.
+function channelOptions(channels, selectedId) {
+  const groups = [];
+  for (const c of channels ?? []) {
+    const key = c.category ?? '';
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) last.items.push(c);
+    else groups.push({ key, items: [c] });
+  }
+
+  return groups
+    .map((g) => {
+      const opts = g.items
+        .map((c) => `<option value="${esc(c.id)}"${c.id === selectedId ? ' selected' : ''}>#${esc(c.name)}</option>`)
+        .join('');
+      return g.key ? `<optgroup label="${esc(g.key)}">${opts}</optgroup>` : opts;
+    })
+    .join('');
+}
+
 function settingsTab() {
   const s = status?.schedule ?? {};
   const roster = detail.roster;
@@ -4376,6 +4431,28 @@ function settingsTab() {
   const never = roster.filter((p) => p.consent.state === 'unasked' || p.consent.state === 'declined').length;
   const providers = status?.providers ?? [];
   const mode = detail.output === 'dm' ? 'dm' : detail.output === 'channel' ? 'channel' : 'default';
+
+  // What Discord said this bot may post in, when it was asked. Absent is not
+  // empty: the list only rides along for somebody who may change the
+  // destination, and only when the bot could reach Discord to draw it up.
+  const channels = detail.postableChannels ?? null;
+  const canPick = canManage() && Array.isArray(channels) && channels.length > 0;
+  const chosenId = detail.outputChannelId ?? null;
+  const chosen = chosenId ? channels?.find((c) => c.id === chosenId) ?? null : null;
+  // Set to a channel that is not on the list any more. Said out loud rather
+  // than drawn as "no channel chosen", because the campaign IS still pointed at
+  // it — the delivery falls back to the channel you played in and nobody is
+  // ever told, which is exactly how this goes unnoticed for a month.
+  const strayChannel = mode === 'channel' && chosenId && Array.isArray(channels) && !chosen;
+  const picking = mode === 'channel' || view.outputPicking;
+
+  // Who runs this campaign, and who else at the table could. The manager is
+  // left out of the list of heirs deliberately: an option that hands it to the
+  // person who already has it is a no-op wearing a name.
+  const manager = detail.managerUserId ?? null;
+  const managerRow = manager ? roster.find((p) => p.userId === manager) : null;
+  const managerName = manager ? personName(managerRow) || manager : 'unclaimed';
+  const heirs = roster.filter((p) => p.userId && p.userId !== manager);
 
   const row = (what, sub, control) => `
     <div class="set-row">
@@ -4390,19 +4467,39 @@ function settingsTab() {
 
         <div class="cap" style="margin:28px 0 6px">Where the notes go</div>
         ${row('Destination', 'Everyone in the channel sees the write-up, or only you do',
-          // The middle option is shown but never settable from here: choosing a
-          // channel means listing the channels the bot may post in, which only
-          // Discord can answer. It is still a state a campaign can be IN, so it
-          // has to be visible — and leaving it out was a dead end, because a
-          // campaign posting to a chosen channel could then never be moved.
+          // The middle option opens the picker rather than sending anything.
+          // Choosing a channel is two facts — that it is a channel, and which
+          // one — and a button that could only ever state the first would have
+          // to guess the second.
           `<div class="seg" data-seg="output">
              <button type="button" class="${mode === 'default' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
                      data-mode="default" ${canManage() ? '' : 'disabled'}>Where we played</button>
-             <button class="${mode === 'channel' ? 'on' : ''}" disabled
-                     title="Set with /campaign output in Discord, where the channels can be listed">A chosen channel</button>
+             <button type="button" class="${mode === 'channel' ? 'on' : ''}" data-pick-channel
+                     ${canPick ? '' : 'disabled'}
+                     ${canPick ? '' : `title="${canManage()
+                       ? 'I could not ask Discord for this server’s channels just now'
+                       : 'Only whoever runs this campaign can move where its notes go'}"`}>A chosen channel</button>
              <button type="button" class="${mode === 'dm' ? 'on' : ''}" data-act="campaign/output" data-campaign="${detail.id}"
                      data-mode="dm" ${canManage() && detail.claimed ? '' : 'disabled'}>DM to me</button>
            </div>`)}
+        ${canPick && picking ? row('Which channel',
+          strayChannel
+            ? 'The one this was set to has gone, or I can no longer post in it'
+            : 'Only channels Quill can both see and speak in are listed',
+          // A list, never a box. A channel id is eighteen digits with no check
+          // digit, so anything typed is well-formed whether or not it is real,
+          // and the mistake shows up weeks later as a write-up nobody received.
+          // No data-campaign on it, deliberately: the click dispatcher reads
+          // that attribute as "open this campaign", so a dropdown wearing one
+          // would reload the page out from under the person using it.
+          `<select class="in chan" data-set-channel aria-label="Which channel the notes are posted in">
+             <option value="" disabled ${chosen ? '' : 'selected'}>Choose a channel…</option>
+             ${channelOptions(channels, chosen?.id ?? null)}
+           </select>`) : ''}
+        ${strayChannel ? `
+        <div class="quiet" style="margin-top:-6px;padding-bottom:14px;color:var(--amber)">
+          Until another is picked, these notes are posted back in the channel the session was recorded in.
+        </div>` : ''}
         ${row('Last recorded in', 'The voice channel Quill most recently joined for this campaign',
           `<span class="val">${esc(detail.channel || 'never recorded')}</span>`)}
         ${row('Who writes them',
@@ -4413,6 +4510,44 @@ function settingsTab() {
             ? `<div class="seg">${providers.map((p) => `
                  <button class="${p === status?.health?.summariserName ? 'on' : ''}" disabled>${esc(providerName(p))}</button>`).join('')}</div>`
             : '<span class="val">none configured</span>')}
+
+        ${canHandOver() ? `
+        <div class="cap" style="margin:32px 0 6px">Who runs it</div>
+        ${row('The campaign’s manager',
+          manager
+            ? 'They invite players, fix names, and decide where the notes go'
+            : 'Nobody has claimed this campaign yet',
+          `<span class="val${manager ? '' : ' unset'}">${esc(managerName)}</span>`)}
+        ${heirs.length ? row('Hand it on',
+          'Only somebody already at the table — invite them first if they are not',
+          // A dropdown and then a press, rather than the channel picker's
+          // choose-and-it-happens. Choosing where a recap is posted is undone
+          // by choosing again; handing the campaign over gives somebody else
+          // the say over this table's records, so it asks twice.
+          `<div class="row-btns">
+             <select class="in heir" data-heir aria-label="Who takes this campaign on">
+               <option value="" disabled ${view.heir ? '' : 'selected'}>Choose who takes it on…</option>
+               ${heirs.map((p) => `
+                 <option value="${esc(p.userId)}"${p.userId === view.heir ? ' selected' : ''}>${
+                   esc(personName(p))}${
+                   // Only when it is a SECOND name. listRoster leaves
+                   // displayName null for anybody the bot has never heard, so
+                   // appending the character name unconditionally rendered
+                   // "— Aurion" with nothing in front of the dash.
+                   p.displayName && p.characterName ? ` — ${esc(p.characterName)}` : ''}${
+                   p.lines ? '' : ' (never spoken)'}</option>`).join('')}
+             </select>
+             <button type="button" class="btn go" data-act="campaign/manager"
+                     data-campaign="${detail.id}" data-user="${esc(view.heir ?? '')}"
+                     ${view.heir ? '' : 'disabled'}
+                     data-confirm="Hand ${esc(detail.name || detail.label || 'this campaign')} to ${
+                       esc(heirs.find((p) => p.userId === view.heir)?.displayName ?? 'them')}? They run it from then on.">
+               Hand it over
+             </button>
+           </div>`) : row('Hand it on',
+          'A campaign can only be handed to somebody already on its roster',
+          '<span class="val unset">nobody else at this table yet</span>')}
+        ` : ''}
 
         <div class="cap" style="margin:32px 0 6px">Recording</div>
         ${row('Ask me before summarising', 'Nothing is posted until you release it',
@@ -4430,9 +4565,9 @@ function settingsTab() {
 
         <div class="quiet" style="margin-top:20px;max-width:70ch">
           The window, the timezone and the approval switch are set once in <code>pi-service/.env</code> on the
-          Pi, because they describe the machine rather than this campaign. Renaming, inviting a player, and
-          posting into a specific channel happen in Discord where the people they concern are —
-          <code>/campaign rename</code>, <code>/campaign invite</code>, <code>/campaign output</code>.
+          Pi, because they describe the machine rather than this campaign. Renaming a campaign and inviting a
+          player still happen in Discord, where the people they concern are —
+          <code>/campaign rename</code> and <code>/campaign invite</code>.
         </div>
       </div>
 
@@ -5161,6 +5296,11 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
   view.meetingId = null;
   view.editing = null;
   view.fixing = false;
+  // The channel list belongs to one server. Carried across it would offer the
+  // last campaign's channels for this one.
+  view.outputPicking = false;
+  // And an heir chosen for one table is not an heir for the next.
+  view.heir = null;
   notes = null;
   notesKey = null;
   script = null;
@@ -5591,6 +5731,16 @@ document.addEventListener('click', async (event) => {
   const dl = t.closest('button[data-download]');
   if (dl) return downloadTranscript(dl.dataset.download);
 
+  // "A chosen channel" opens the list rather than sending anything. It is the
+  // one destination that is two answers — that it is a channel, and which one —
+  // and there is no honest way for the segment to give the second.
+  const chanPick = t.closest('button[data-pick-channel]');
+  if (chanPick) {
+    if (chanPick.disabled) return;
+    view.outputPicking = true;
+    return paint();
+  }
+
   // A button inside a form is the submit handler's business -- handling the
   // click here too would fire the action twice. Asking for .type instead was
   // the bug: a <button> with no type attribute reports "submit", so this
@@ -5614,6 +5764,11 @@ document.addEventListener('click', async (event) => {
   if (d.request) body.requestId = Number(d.request);
   if (d.approve) body.approve = d.approve === 'true';
 
+  // Moving the destination anywhere else closes the channel list. Left open it
+  // would sit under a switch that no longer says "channel", offering to change
+  // something the person has just decided against.
+  if (d.act === 'campaign/output' && d.mode !== 'channel') view.outputPicking = false;
+
   const was = btn.textContent;
   btn.disabled = true; btn.textContent = '…';
   const said = await send(d.act, body);
@@ -5621,7 +5776,40 @@ document.addEventListener('click', async (event) => {
   // A decision made is a dialog finished. Left open it would keep offering
   // buttons for a request that is no longer waiting on anything.
   if (d.act === 'campaign/restore-review' && said?.ok) { view.reviewing = null; paint(); }
+
+  // The campaign has a new manager, so the picker's own selection is now the
+  // person it should be leaving out. Cleared rather than left armed, which
+  // would offer to hand it straight back.
+  if (d.act === 'campaign/manager' && said?.ok) { view.heir = null; paint(); }
   btn.disabled = false; btn.textContent = was;
+});
+
+// Picking a channel out of the list.
+//
+// A change rather than a click, because the control is a list: the choice IS
+// the event, and a dropdown with a Save button beside it invites somebody to
+// pick a channel, walk away, and be sure they set it.
+//
+// Both facts go in one request. Choosing a channel is choosing to post to a
+// channel, so making the mode a separate step would only create a state where
+// the destination is 'channel' and the channel is nothing.
+document.addEventListener('change', async (event) => {
+  const sel = event.target.closest?.('select[data-set-channel]');
+  if (!sel || sel.disabled || !sel.value) return;
+  await send('campaign/output', { campaignId: detail?.id, mode: 'channel', channelId: sel.value });
+});
+
+// Choosing who a campaign would go to.
+//
+// Unlike the channel picker above, this one only ARMS the button beside it. The
+// two acts are different sizes: pointing a recap at another channel is undone
+// by pointing it back, and handing the campaign over gives somebody else the
+// say over this table's records — including whether it is deleted.
+document.addEventListener('change', (event) => {
+  const sel = event.target.closest?.('select[data-heir]');
+  if (!sel) return;
+  view.heir = sel.value || null;
+  paint();
 });
 
 // Forms wherever there is something to type: Enter-to-submit and required-field

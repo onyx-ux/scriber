@@ -1,12 +1,14 @@
 // Who is looking, and what that entitles them to see.
 //
-// Four levels, and none of them is a role somebody was granted — every one is
-// derived from a fact about Discord that the bot can check for itself. Nobody
-// administers this, nobody can be promoted by mistake, and there is no table of
-// permissions to drift out of step with reality:
+// Four levels, and every one of them DERIVES from a fact about Discord that the
+// bot can check for itself. Nobody has to administer this and there is no table
+// of permissions to drift out of step with reality:
 //
-//   dev      you are OWNER_USER_ID. It is your hardware, your GPU and your API
-//            bill, so you see the machinery.
+//   dev      you run this bot — OWNER_USER_ID, OPERATOR_USER_IDS, or the house
+//            tier. It is your hardware, your GPU and your API bill, so you see
+//            the machinery. The house tier is the one route that can be handed
+//            out from the page rather than a file, and only by somebody the
+//            file already names; see access/operators.js and docs/adr/0003.
 //   owner    you own a Discord the bot is in. You see what is happening on
 //            your own server, and its numbers.
 //   creator  you made a campaign. You see that campaign wherever it lives,
@@ -18,12 +20,20 @@
 // owns one server and plays at a table on another sees both, because both are
 // true about them. The level only decides how much machinery is on screen.
 //
+// That last sentence is what lets the operator hold an opinion about a level
+// without the whole model coming apart. They may hold somebody DOWN from what
+// they have earned, and — since the Level column learned to go both ways — up
+// from it as well. Neither touches the scope. A granted `creator` gets a
+// creator's controls over exactly the campaigns they already had a claim on,
+// which may be none; making somebody actually run a campaign is a different
+// act with its own module, campaign/handover.js. Nothing here invents a fact.
+//
 // The rule for what gets stripped below `dev` is the user's own: anything that
 // spends the owner's money or reveals which model wrote what. A player reading
 // last week's recap has no business knowing whether Gemini or Claude wrote it,
 // and no way to spend anything.
 
-import { isOperator } from '../access/operators.js';
+import { runsThisBot } from '../access/operators.js';
 
 export const LEVELS = ['none', 'player', 'creator', 'owner', 'dev'];
 
@@ -102,13 +112,13 @@ const CAPABILITIES = {
 export function buildViewer({ db, cfg, userId, username = null, guildsOwned = [] }) {
   if (!userId) {
     return {
-      level: 'none', derivedLevel: 'none', cap: null,
+      level: 'none', derivedLevel: 'none', cap: null, granted: null,
       userId: null, username: null, guildIds: [], campaignIds: [],
       manageableCampaignIds: [], can: CAPABILITIES.none,
     };
   }
 
-  const isDev = isOperator(cfg, userId);
+  const isDev = runsThisBot(db, cfg, userId);
   const owned = new Set(guildsOwned);
 
   const managed = db.listCampaigns().filter((c) => c.manager_user_id === userId);
@@ -123,19 +133,38 @@ export function buildViewer({ db, cfg, userId, username = null, guildsOwned = []
     : played.length ? 'player'
     : 'none';
 
-  // And the one opinion the operator is allowed to hold: a ceiling.
+  // And the operator's opinion about it, which now goes both ways.
   //
-  // Only ever downward. Reading it as "set their level" and letting it raise
-  // would make every level below dev a thing somebody was awarded, and the
-  // whole point of this file is that none of them is. Lowering breaks nothing:
-  // it says "show this person less than they have earned", which is an opinion
-  // the owner of the hardware is entitled to.
+  // It used to go one way — a ceiling, never a raise — on the grounds that a
+  // level somebody could be awarded is a level somebody could be awarded by
+  // mistake. That argument is still right about SCOPE and has not been given
+  // up: read on.
   //
-  // Never applied to the operator themselves. A ceiling on OWNER_USER_ID is
-  // reachable in one careless click and unreachable afterwards except over
+  // What changed is the recognition that a level and a scope are two different
+  // things, and this file already said so ("the level only decides how much
+  // machinery is on screen"). Which campaigns somebody may see stays the union
+  // of three checkable claims, untouched below. A GRANT ONLY CHANGES HOW MUCH
+  // MACHINERY IS ON SCREEN FOR THE CLAIMS THEY ALREADY HAVE — granting
+  // `creator` to somebody who runs no campaign gives them a creator's controls
+  // over nothing at all, and the way to make them run one is to hand them one.
+  // See campaign/handover.js, which is the honest version of that act.
+  //
+  // A grant is a FLOOR and a cap is a CEILING, applied in that order. Only one
+  // is ever set — the store clears the other — so they cannot fight; the order
+  // is fixed anyway so that a future pair could only ever narrow, not widen.
+  //
+  // Neither is applied to the operator themselves. A ceiling on OWNER_USER_ID
+  // is reachable in one careless click and unreachable afterwards except over
   // SSH, which is the same trap maySignIn refuses to set in authority.js.
-  const cap = isDev ? null : capOf(db, userId);
-  const level = cap && rank(cap) < rank(derivedLevel) ? cap : derivedLevel;
+  const cap = isDev ? null : levelOf(db?.capFor, db, userId);
+  const granted = isDev ? null : levelOf(db?.grantFor, db, userId);
+
+  // A grant that the world has caught up with is a grant doing nothing. Left
+  // in place rather than deleted: the fact that raised them can go away again,
+  // and quietly dropping the operator's decision because it was briefly
+  // redundant would take it away for good.
+  const raised = granted && rank(granted) > rank(derivedLevel) ? granted : derivedLevel;
+  const level = cap && rank(cap) < rank(raised) ? cap : raised;
 
   // A cap is not a blindfold over a level they still hold — it decides which
   // of their claims count at all. Capped to `player`, a server owner sees the
@@ -158,6 +187,14 @@ export function buildViewer({ db, cfg, userId, username = null, guildsOwned = []
     // differently — one of them has a ceiling somebody can lift.
     derivedLevel,
     cap: level === derivedLevel ? null : cap,
+    // Reported the same way and for the same reason: "creator, because they
+    // run one" and "creator, because somebody said so" are different facts,
+    // and only one of them is a row the gatehouse can take back.
+    //
+    // Null once the derived level has caught up, so a spent grant does not
+    // draw a caption claiming credit for something that is now simply true —
+    // the row itself is kept, see above.
+    granted: granted && rank(granted) > rank(derivedLevel) ? granted : null,
     userId,
     username,
     guildIds: rank(level) >= rank('owner') ? [...owned] : [],
@@ -169,12 +206,17 @@ export function buildViewer({ db, cfg, userId, username = null, guildsOwned = []
   };
 }
 
-// A cap the store has never heard of is not a cap. Anything unrecognised is
-// ignored rather than guessed at — a typo in that column must not silently
-// become "none" and lock somebody out of a dashboard they earned.
-function capOf(db, userId) {
-  const cap = db?.capFor?.(userId) ?? null;
-  return cap && LEVELS.includes(cap) ? cap : null;
+// A level the store has never heard of is not a level. Anything unrecognised
+// is ignored rather than guessed at — a typo in either column must not silently
+// become "none" and lock somebody out of a dashboard they earned, nor become
+// "dev" and hand them one they never had.
+//
+// One function for both columns, taking the reader: the two are the same shape
+// and the same failure, and two copies of this would be two places for the
+// LEVELS check to be forgotten.
+function levelOf(read, db, userId) {
+  const level = read?.call(db, userId) ?? null;
+  return level && LEVELS.includes(level) ? level : null;
 }
 
 // The one the operator's own console gets: everything, no Discord account
@@ -185,6 +227,7 @@ export const OPERATOR = {
   level: 'dev',
   derivedLevel: 'dev',
   cap: null,
+  granted: null,
   userId: null,
   username: 'operator',
   guildIds: [],
@@ -200,15 +243,19 @@ export const mayManage = (viewer, campaignId) =>
   Boolean(viewer?.can?.everything) ||
   (Boolean(viewer?.can?.manage) && (viewer?.manageableCampaignIds ?? []).includes(campaignId));
 
-// What each rung actually rests on, for the answer to "make them an owner".
+// What each rung actually rests on, and what raising somebody to it does and
+// does not buy.
 //
-// Not one of these is a row this bot could write. That is the design and not a
-// missing feature, so the refusal names the real act rather than apologising.
+// This used to be a list of refusals — the Level column could only go down, so
+// each entry named the real-world act that would make the fact true instead. It
+// goes both ways now, so these are captions rather than apologies. The point
+// they all make is the same one: a grant changes the CONTROLS somebody is
+// shown, never the campaigns they can see.
 export const HOW_TO_RAISE = {
-  dev: "dev is whoever OWNER_USER_ID names in pi-service/.env — one person, because it is one person’s GPU and API bill.",
-  owner: 'owner means Discord says they own a server this bot is in. Only Discord can change that.',
-  creator: "creator means running a campaign. Hand them one from that campaign’s settings and they will resolve to creator on their own.",
-  player: 'player means having spoken at a table while the bot was recording. It is a thing that happened, not a thing to grant.',
+  dev: "dev is whoever runs this bot — OWNER_USER_ID or OPERATOR_USER_IDS in pi-service/.env, or the house tier in the Tier column beside this one. Not something the Level column hands out, so that there is one way to appoint an operator rather than two.",
+  owner: 'owner adds the servers list and the numbers. It does not add a server: which Discords they see is still the ones Discord says they own.',
+  creator: "creator adds a campaign's own controls — the roster, the corrections, the transcripts. It does not add a campaign. To make somebody actually run one, hand it to them from that campaign's settings, and they resolve to creator on their own.",
+  player: 'player is the floor for somebody who has spoken at a table. Granting it to somebody who never has shows them the same nothing, more politely.',
   none: 'none is what somebody with no claim on this bot already resolves to.',
 };
 

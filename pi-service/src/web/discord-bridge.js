@@ -10,17 +10,35 @@
 // when signing in became Discord's own job rather than this bot's imitation of
 // it. See web/discord-oauth.js.
 //
-// So this is the whole surface, deliberately two functions wide. It is passed
+// So this is the whole surface, and it stays short on purpose. It is passed
 // into runAction as part of `ctx` rather than imported by it, for the same
 // reason the rest of that context is: the list of what an action can reach
 // stays short and visible, and the action layer stays testable without a
 // logged-in bot.
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
+
 import { buildInviteDm, inviteExpiry } from '../campaign/consent.js';
 
 // Discord's member search is the one member lookup a bot can do without the
 // privileged GUILD_MEMBERS intent. It matches on username and server nickname,
 // which is exactly how somebody would type a name they know from the channel.
 const MAX_MATCHES = 8;
+
+// Where a write-up could be posted. Text and announcement channels, and
+// nothing else.
+//
+// Voice channels carry a text chat now and the bot could technically post into
+// one, but the voice channel is where the table PLAYS — a recap dropped into it
+// lands in the middle of next week's session. Forums and categories cannot take
+// a plain message at all. Threads are left out for a different reason: a thread
+// is archived by Discord after a few days of quiet, and a destination that
+// stops existing on its own is not a destination.
+const POSTABLE_TYPES = new Set([ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+
+// Both halves are needed and neither implies the other: a channel the bot can
+// see but not speak in reads as a perfectly good choice right up until the
+// first write-up is silently dropped.
+const MAY_POST = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages];
 
 export function createDiscordBridge({ client, db, cfg }) {
   return {
@@ -63,6 +81,57 @@ export function createDiscordBridge({ client, db, cfg }) {
       }
 
       return { ok: true, people: [...found.values()].filter((m) => !m.user.bot).map(describe) };
+    },
+
+    // Which channels in this server the bot could actually post a write-up in.
+    //
+    // The dashboard's destination switch had "A chosen channel" disabled from
+    // the day it was drawn, on the honest grounds that only Discord knows the
+    // answer and the page had never been given it. This is the page being given
+    // it. Nothing here is typed: a channel id is eighteen digits with no check
+    // digit, so a box to paste one into is a box to mistype one into, and the
+    // mistake surfaces weeks later as a recap that went nowhere.
+    //
+    // Read from the cache rather than fetched. The Guilds intent fills
+    // `channels.cache` at startup and the gateway keeps it current, so the
+    // cache IS the live answer — a REST round trip on every campaign open would
+    // buy nothing but latency. The fetch is kept as a fallback for the one case
+    // the cache cannot cover: a guild the bot has only just joined.
+    //
+    // Answering `ok: false` rather than an empty list matters. "I could not ask
+    // Discord" and "you have no channels I may post in" are different facts,
+    // and only one of them is worth changing a permission over.
+    async listChannels({ guildId }) {
+      const guild = await client?.guilds?.fetch?.(guildId).catch(() => null);
+      if (!guild) return { ok: false, message: '⚠️ I am not in that server any more.' };
+
+      // Every permission below is asked ABOUT this member. Without it there is
+      // no question to ask, and guessing yes would offer channels the first
+      // write-up then fails to reach.
+      const me = guild.members?.me ?? (await guild.members?.fetchMe?.().catch(() => null));
+      if (!me) return { ok: false, message: '⚠️ I could not work out my own permissions in that server.' };
+
+      let all = guild.channels?.cache;
+      if (!all?.size) all = await guild.channels?.fetch?.().catch(() => null);
+      if (!all) return { ok: false, message: '⚠️ Discord would not list that server’s channels.' };
+
+      const channels = [...all.values()]
+        .filter((c) => c && POSTABLE_TYPES.has(c.type))
+        .filter((c) => {
+          const perms = c.permissionsFor?.(me);
+          return Boolean(perms && MAY_POST.every((flag) => perms.has(flag)));
+        })
+        // Sorted the way Discord itself draws the sidebar — uncategorised
+        // channels first, then each category in its own order — so the person
+        // choosing is reading the list they already know rather than a
+        // re-sorted one they have to search.
+        .sort((a, b) =>
+          (a.parent?.rawPosition ?? -1) - (b.parent?.rawPosition ?? -1) ||
+          (a.rawPosition ?? 0) - (b.rawPosition ?? 0) ||
+          String(a.name).localeCompare(String(b.name)))
+        .map((c) => ({ id: c.id, name: c.name, category: c.parent?.name ?? null }));
+
+      return { ok: true, channels };
     },
 
     // Ask somebody whether they may be recorded.

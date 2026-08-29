@@ -352,27 +352,27 @@ export function forgetCharacter(db, { campaignId, userId } = {}) {
 
 // --- where a campaign's notes are delivered ---
 
-// Two of the three destinations, on purpose.
+// All three destinations now.
 //
-// 'channel' needs a channel id, and picking one means listing the server's
-// channels and knowing which ones the bot may post in — something only Discord
-// can answer, and something /campaign output already does properly with a
-// channel picker. What the dashboard can do without guessing is the choice
-// between "wherever we played" and "privately, to me", which is the switch
-// that actually gets flipped when a table has a guest.
+// 'channel' used to be missing from here, on the grounds that picking one means
+// listing the server's channels and knowing which the bot may post in, which
+// only Discord can answer. That was true of this function and never stopped
+// being true — what changed is that the caller now goes and asks. So the id is
+// still never taken on trust: `postable` is Discord's own answer to "where may
+// I speak", passed in, and a channel that is not on it is refused however well
+// formed it looks.
 export const OUTPUT_MODES = {
   default: 'the channel the campaign was set up in',
+  channel: 'a chosen channel',
   dm: "a direct message to the campaign's manager",
 };
 
-export function setOutput(db, { campaignId, mode } = {}) {
+export function setOutput(db, { campaignId, mode, channelId = null, postable = null } = {}) {
   const wanted = String(mode ?? '').trim();
   if (!Object.hasOwn(OUTPUT_MODES, wanted)) {
     return {
       ok: false,
-      message:
-        `⚠️ Unknown destination "${wanted}". From here it is ${Object.keys(OUTPUT_MODES).join(' or ')} — ` +
-        'to post into a specific channel, use `/campaign output` in Discord, where the channels can be listed.',
+      message: `⚠️ Unknown destination "${wanted}". It is ${Object.keys(OUTPUT_MODES).join(', ')}.`,
     };
   }
 
@@ -385,11 +385,44 @@ export function setOutput(db, { campaignId, mode } = {}) {
     };
   }
 
+  let chosen = null;
+  if (wanted === 'channel') {
+    // `postable === null` is "nobody asked Discord", which is not the same as
+    // "Discord said no" and must not be silently treated as an empty list. It
+    // is the state a caller reaches by being unable to reach Discord at all,
+    // and the honest answer is to change nothing and say why.
+    if (!Array.isArray(postable)) {
+      return {
+        ok: false,
+        message: '⚠️ I could not ask Discord which channels I may post in, so I have left the destination alone.',
+      };
+    }
+
+    const id = String(channelId ?? '').trim();
+    if (!id) return { ok: false, message: '⚠️ Which channel?' };
+
+    chosen = postable.find((c) => String(c?.id ?? c) === id) ?? null;
+    if (!chosen) {
+      return {
+        ok: false,
+        message:
+          '⚠️ I cannot post in that channel — it has been deleted, or my permissions there have changed ' +
+          'since the list was drawn. Reopen this campaign for the current list.',
+      };
+    }
+  }
+
   // null, not the string 'default': a null mode is what the delivery code
   // reads as "post where we played", and storing the word would make it fall
   // through to the unknown branch.
-  db.setCampaignOutput(campaignId, wanted === 'default' ? null : wanted, null);
-  return { ok: true, mode: wanted, message: `📮 Notes will go to ${OUTPUT_MODES[wanted]}.` };
+  //
+  // The channel id is cleared by every other mode rather than left behind. A
+  // stale id is not harmless: switching back to 'channel' from Discord would
+  // silently resume posting somewhere nobody has looked at in months.
+  db.setCampaignOutput(campaignId, wanted === 'default' ? null : wanted, chosen ? String(chosen.id ?? chosen) : null);
+
+  const where = chosen?.name ? `#${chosen.name}` : OUTPUT_MODES[wanted];
+  return { ok: true, mode: wanted, channelId: chosen ? String(chosen.id ?? chosen) : null, message: `📮 Notes will go to ${where}.` };
 }
 
 // --- throwing away a session that never had anything in it ---

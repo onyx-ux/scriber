@@ -6,7 +6,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { openDb } from '../src/store/db.js';
-import { operatorIds, isOperator, isPrimaryOperator, operatorCount } from '../src/access/operators.js';
+import {
+  operatorIds, isOperator, isPrimaryOperator, operatorCount, runsThisBot, mayGrantHouseTier,
+} from '../src/access/operators.js';
+import { mayDelete } from '../src/campaign/archive.js';
+import { isManager } from '../src/campaign/permissions.js';
 import { buildViewer, OPERATOR } from '../src/web/viewer.js';
 import { maySignIn, admissionOf } from '../src/web/authority.js';
 import { tierOf } from '../src/access/tiers.js';
@@ -24,6 +28,9 @@ import { accessRoster } from '../src/web/access.js';
 const OWNER = '20000000000000002';
 const SECOND = '70000000000000007';
 const STRANGER = '90000000000000009';
+// Somebody the config file does not name, who gets the house tier handed to
+// them. The whole point of the rules below is what this account may NOT do.
+const SECOND_HOUSE = '80000000000000008';
 
 async function world(t, extra = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'quill-ops-'));
@@ -267,4 +274,160 @@ test('the roster says how many people run this install', async (t) => {
 
   assert.deepEqual([...accessRoster(one).operators], [OWNER]);
   assert.deepEqual([...accessRoster(two).operators], [OWNER, SECOND]);
+});
+
+// ---------------------------------------------------------------------------
+// The house tier — the third way in
+// ---------------------------------------------------------------------------
+//
+// The gatehouse offered tier 9 as "the house" and it made nobody an operator,
+// which read as a bug and was a decision: a level is derived from a fact, and
+// deriving one from a number somebody typed would mean inventing the fact.
+//
+// So it goes the other way round. Tier 9 does not become a level — it becomes
+// a fourth way of BEING an operator, and the level derives from that honestly.
+// See docs/adr/0003.
+
+test('putting somebody on the house tier makes them an operator', async (t) => {
+  const { db, cfg } = await world(t);
+
+  assert.equal(runsThisBot(db, cfg, STRANGER), false);
+  assert.equal(viewer(db, cfg, STRANGER).level, 'none');
+
+  db.setTier(STRANGER, 9);
+
+  assert.equal(runsThisBot(db, cfg, STRANGER), true);
+  const v = viewer(db, cfg, STRANGER);
+  assert.equal(v.level, 'dev');
+  assert.equal(v.derivedLevel, 'dev', 'derived, not granted — the level still follows a fact');
+  assert.equal(v.can.everything, true);
+  assert.equal(v.can.machinery, true);
+});
+
+// The invariant the rest of the tiers rest on: 0 to 4 still answer only "how
+// much may they spend", and none of them touches a level.
+test('no other tier is a level', async (t) => {
+  const { db, cfg } = await world(t);
+
+  for (const tier of [0, 1, 2, 3, 4]) {
+    db.setTier(STRANGER, tier);
+    assert.equal(runsThisBot(db, cfg, STRANGER), false, `tier ${tier} must not run the bot`);
+    assert.equal(viewer(db, cfg, STRANGER).level, 'none', `tier ${tier} must not be a level`);
+  }
+});
+
+test('taking the house tier away takes the bot back', async (t) => {
+  const { db, cfg } = await world(t);
+
+  db.setTier(STRANGER, 9);
+  assert.equal(viewer(db, cfg, STRANGER).level, 'dev');
+
+  db.setTier(STRANGER, 2);
+  assert.equal(viewer(db, cfg, STRANGER).level, 'none', 'back to whatever is actually true of them');
+  assert.equal(runsThisBot(db, cfg, STRANGER), false);
+});
+
+// isOperator still means "which line of the config file names you", because
+// that is what the gatehouse's own captions are asking about. Only the
+// authority question moved.
+test('the file and the bot are different questions', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(STRANGER, 9);
+
+  assert.equal(isOperator(cfg, STRANGER), false, 'no line of .env names them');
+  assert.equal(runsThisBot(db, cfg, STRANGER), true, 'and they still run this bot');
+  assert.equal(admissionOf(cfg, STRANGER, db), 'house');
+  assert.equal(maySignIn(cfg, STRANGER, db), true, 'and cannot be locked out by a guest list');
+});
+
+// The question the other two routes answer with an SSH session, and the reason
+// this one is safe: an operator appointed from the page cannot appoint another.
+test('only the file may hand out the house tier', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(SECOND_HOUSE, 9);
+
+  const asHouse = { viewer: viewer(db, cfg, SECOND_HOUSE) };
+  const refused = runAction({
+    pathname: '/actions/access/tier',
+    body: { userId: STRANGER, tier: 9 },
+    db, cfg, ctx: asHouse,
+  });
+
+  assert.equal(refused.status, 403);
+  assert.match(refused.payload.message, /Only somebody named in/);
+  assert.equal(db.tierOf(STRANGER), null, 'and nothing was written');
+});
+
+test('nor may they take it back from each other', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(SECOND_HOUSE, 9);
+  db.setTier(STRANGER, 9);
+
+  const refused = runAction({
+    pathname: '/actions/access/tier',
+    body: { userId: STRANGER, tier: 0 },
+    db, cfg, ctx: { viewer: viewer(db, cfg, SECOND_HOUSE) },
+  });
+
+  assert.equal(refused.status, 403);
+  assert.equal(Number(db.tierOf(STRANGER)), 9, 'still an operator');
+});
+
+test('the owner may hand it out, and is told what they just did', async (t) => {
+  const { db, cfg } = await world(t);
+
+  const done = runAction({
+    pathname: '/actions/access/tier',
+    body: { userId: STRANGER, tier: 9 },
+    db, cfg, ctx: { viewer: viewer(db, cfg, OWNER) },
+  });
+
+  assert.equal(done.payload.ok, true);
+  assert.match(done.payload.message, /run this bot/i, 'a column of spending ceilings must not hand over the machinery quietly');
+  assert.equal(viewer(db, cfg, STRANGER).level, 'dev');
+});
+
+// A cap on a dev is ignored by buildViewer, so offering one would be a control
+// that reports success and changes nothing.
+test('an operator made by the house tier cannot be held down', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(STRANGER, 9);
+
+  const refused = runAction({
+    pathname: '/actions/access/level',
+    body: { userId: STRANGER, level: 'player' },
+    db, cfg, ctx: { viewer: viewer(db, cfg, OWNER) },
+  });
+
+  assert.equal(refused.payload.ok, false);
+  assert.match(refused.payload.message, /house/i);
+  assert.match(refused.payload.message, /Tier column/, 'and says where the real switch is');
+  assert.equal(viewer(db, cfg, STRANGER).level, 'dev');
+});
+
+// Being an operator has to mean the same thing wherever it is asked, or there
+// are two permission models growing quietly beside each other.
+test('the house tier reaches the authority checks, not just the level', async (t) => {
+  const { db, cfg } = await world(t);
+  const campaignId = db.createCampaign('guild-1', 'Cipher', OWNER);
+  const campaign = db.getCampaign(campaignId);
+
+  assert.equal(mayDelete({ campaign, userId: STRANGER, cfg, db }), false);
+
+  db.setTier(STRANGER, 9);
+  assert.equal(mayDelete({ campaign, userId: STRANGER, cfg, db }), true, 'somebody else’s campaign, because they run the bot');
+  assert.equal(isManager(STRANGER, db, campaignId, cfg), true, 'and the slash commands agree');
+});
+
+test('the gatehouse locks its own house column for an operator it appointed', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(SECOND_HOUSE, 9);
+
+  const asOwner = accessRoster({ db, cfg, viewer: viewer(db, cfg, OWNER) });
+  const asHouse = accessRoster({ db, cfg, viewer: viewer(db, cfg, SECOND_HOUSE) });
+
+  assert.equal(asOwner.mayGrantHouse, true);
+  assert.equal(asHouse.mayGrantHouse, false);
+  assert.equal(mayGrantHouseTier(cfg, SECOND_HOUSE), false);
+  assert.equal(mayGrantHouseTier(cfg, OWNER), true);
 });

@@ -266,6 +266,25 @@ test('the campaign creator gets the roster and the corrections', async (t) => {
   assert.ok(scoped.roster.every((p) => p.userId), 'ids, because managing a roster needs them');
 });
 
+// The destination, and which channel it is. Both are the manager's business
+// and neither is the table's: where a write-up is posted is not a fact about
+// the evening, and to a player the channel id is just a piece of the server
+// they were not shown.
+test('which channel the notes go to reaches the manager and nobody else', async (t) => {
+  const { db, cipher } = await world(t);
+  db.setCampaignOutput(cipher, 'channel', '900000000000000001');
+
+  const view = buildCampaignView({ db, campaignId: cipher });
+  const manager = scopeCampaign(view, viewerFor(db, CREATOR));
+  const player = scopeCampaign(view, viewerFor(db, PLAYER));
+
+  assert.equal(manager.output, 'channel');
+  assert.equal(manager.outputChannelId, '900000000000000001');
+
+  assert.equal(player.output, 'default');
+  assert.equal(player.outputChannelId, null, 'and not the id either');
+});
+
 test('sessions lose the job behind them below dev', async (t) => {
   const { db, cipher } = await world(t);
   const view = buildCampaignView({ db, campaignId: cipher });

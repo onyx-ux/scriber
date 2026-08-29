@@ -13,9 +13,9 @@
 // Through web/authority.js rather than straight at viewer.js: "what would this
 // person's level be" is an authority question, and there is one module that
 // answers those now.
-import { buildViewer, LEVEL_WORDS, LEVELS, HOW_TO_RAISE, admissionOf } from './authority.js';
+import { buildViewer, LEVEL_WORDS, LEVELS, HOW_TO_RAISE, admissionOf, actingUserId } from './authority.js';
 import { TIERS, tierOf, askLimitFor } from '../access/tiers.js';
-import { operatorIds } from '../access/operators.js';
+import { operatorIds, mayGrantHouseTier } from '../access/operators.js';
 
 const ORDER = { dev: 0, owner: 1, creator: 2, player: 3, none: 4 };
 
@@ -30,7 +30,7 @@ function guildsByOwner(client) {
   return owns;
 }
 
-export function accessRoster({ db, cfg, client = null }) {
+export function accessRoster({ db, cfg, client = null, viewer = null }) {
   const owns = guildsByOwner(client);
   const known = new Map(db.listKnownPeople().map((p) => [p.userId, p]));
   // Keyed by id so a row can carry when they were admitted and why, which is
@@ -67,6 +67,10 @@ export function accessRoster({ db, cfg, client = null }) {
         // one of them has a ceiling somebody can lift.
         derivedLevel: viewer.derivedLevel,
         cap: viewer.cap,
+        // The other half of the same opinion. Both are sent because the row has
+        // to be able to say WHICH — "held down from owner" and "raised to
+        // creator" are opposite decisions and read as different captions.
+        granted: viewer.granted,
         // What they may spend, what that currently buys, and what they have
         // spent of it today. All three, because a tier on its own is a number
         // with no units and tells the operator nothing they can act on.
@@ -113,7 +117,7 @@ export function accessRoster({ db, cfg, client = null }) {
     .filter(
       (p) =>
         p.level !== 'none' || p.lines > 0 || p.signedIn || p.waiting ||
-        p.admission === 'list' || p.admission === 'env' || p.cap
+        p.admission === 'list' || p.admission === 'env' || p.cap || p.granted
     )
     .sort(
       (a, b) =>
@@ -143,6 +147,14 @@ export function accessRoster({ db, cfg, client = null }) {
     // Who runs this install. The page says it out loud, because "there are two
     // of you" belongs on the screen that decides who gets in.
     operators: operatorIds(cfg),
+    // Whether the person LOOKING may hand out the house tier, which is the one
+    // tier that makes an operator. Only somebody pi-service/.env names can, so
+    // an operator who got here by being put on tier 9 sees that column locked.
+    //
+    // Sent rather than worked out on the page, for the same reason `levels` is:
+    // a control that offers what the action behind it refuses is worse than a
+    // control that is plainly disabled.
+    mayGrantHouse: mayGrantHouseTier(cfg, actingUserId(viewer, cfg)),
     // How many people are at the door right now. Its own number rather than
     // something to count out of `people`, because it is the one thing on this
     // page that is somebody else waiting on the operator.

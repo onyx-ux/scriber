@@ -15,6 +15,7 @@ import {
   mayAct,
   actingUserId,
   maySee,
+  mayManage,
   LEVEL_WORDS,
   scopeStatus,
   scopeCampaign,
@@ -362,8 +363,32 @@ export function startStatusServer({
           campaign: db.getCampaign(id),
           userId: actingUserId(viewer, cfg),
           cfg,
+          db,
         }),
       };
+
+      // Where the write-ups could be sent, which is a question only Discord
+      // answers. Attached AFTER scoping for the same reason canCreateIn is on
+      // /status: a field added here can only ever widen a payload that has
+      // already been cut to the viewer, never smuggle something past the cut.
+      //
+      // Only for somebody who may change the destination — to everybody else
+      // it is a list of the server's channels, which is not a thing a player
+      // asked about a campaign is owed.
+      //
+      // Fetched on open rather than on the poll. This changes when somebody
+      // makes a channel, which is not five-seconds-often, and hanging the
+      // campaign screen on Discord being reachable would be a poor trade for
+      // a list that is stale by a minute at worst. If it cannot be had, the
+      // page keeps the picker shut and says why — the same state the switch
+      // was permanently in before any of this existed.
+      if (mayManage(viewer, id)) {
+        const channels = await ctx.discord
+          ?.listChannels?.({ guildId: view.guildId })
+          .catch(() => null);
+        if (channels?.ok) scoped.postableChannels = channels.channels;
+      }
+
       send(res, 200, scoped);
       return;
     }
@@ -440,7 +465,7 @@ export function startStatusServer({
         send(res, 403, { ok: false, message: 'Only the bot owner can see who has access.' });
         return;
       }
-      send(res, 200, accessRoster({ db, cfg, client }));
+      send(res, 200, accessRoster({ db, cfg, client, viewer }));
       return;
     }
 

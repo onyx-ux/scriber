@@ -59,7 +59,7 @@ export function createCampaign({ db, cfg, guildId, userId, name }) {
     };
   }
 
-  if (!isOwner(userId, cfg)) {
+  if (!isOwner(userId, cfg, db)) {
     if (db.countCampaignsInGuild(guildId) >= MAX_CAMPAIGNS_PER_GUILD) {
       return {
         ok: false,
@@ -90,10 +90,11 @@ export function createCampaign({ db, cfg, guildId, userId, name }) {
 // Which servers this person may start a campaign in.
 //
 // Deliberately narrower than the slash command, which lets any member of a
-// Discord create there. The dashboard is optional — anybody the web page turns
-// away can still type `/campaign create` — so it can afford to offer only the
-// servers somebody already has standing in, rather than asking Discord to
-// confirm membership on every poll.
+// Discord create there. Claiming a table is an entryway act and stays one —
+// anybody this list turns away can still type `/campaign create` — so the web
+// page can afford to offer only the servers somebody already has standing in,
+// rather than asking Discord to confirm membership on every poll. See
+// docs/adr/0004 for which side of that line each act sits on.
 export function guildsCreatableBy({ db, viewer, guilds = [] }) {
   if (!viewer?.can?.manage) return [];
   if (viewer.can.everything) return guilds;

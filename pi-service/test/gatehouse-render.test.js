@@ -261,31 +261,32 @@ test('with no list at all the page says the door is open rather than saying noth
 
 // --- the level control ---------------------------------------------------
 
-test('the dropdown offers every rung down and disables every rung up', async (t) => {
+// The column goes both ways now. Every rung is pickable except dev, which
+// belongs to the Tier column so that appointing an operator is one act.
+test('the dropdown offers every rung in both directions, except dev', async (t) => {
   const { db, cfg, base } = await world(t);
   db.setInvited(FRIEND, { username: 'fenwick' });
 
   const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
 
-  // thistlewick has spoken at a table and nothing else, so player is the
-  // ceiling that is true of them.
-  assert.deepEqual(page.levelsFor(PLAYER), {
-    dev: false, owner: false, creator: false, player: true, none: true,
-  });
-
-  // fenwick has done nothing at all, so there is only down to nowhere.
-  assert.deepEqual(page.levelsFor(FRIEND), {
-    dev: false, owner: false, creator: false, player: false, none: true,
-  });
+  for (const who of [PLAYER, FRIEND]) {
+    assert.deepEqual(page.levelsFor(who), {
+      dev: false, owner: true, creator: true, player: true, none: true,
+    }, who);
+  }
 });
 
-test('a rung nobody can be raised to says what would raise them, in the dropdown', async (t) => {
+// The caveat rides on the option itself rather than arriving in a toast after
+// the click, because the mistake this prevents is made at the moment of
+// choosing: reading "creator" as a claim on a campaign.
+test('a rung above somebody says what it actually buys, in the dropdown', async (t) => {
   const { db, cfg, base } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
   const markup = page.body();
 
-  assert.match(markup, /<option value="owner" disabled>owner · Discord's<\/option>/);
-  assert.match(markup, /<option value="creator" disabled>creator · give them a campaign<\/option>/);
+  assert.match(markup, /<option value="owner">owner · not a server<\/option>/);
+  assert.match(markup, /<option value="creator">creator · not a campaign<\/option>/);
+  assert.match(markup, /<option value="dev" disabled>dev · via Tier<\/option>/);
 });
 
 test('the operator gets a control that is visibly nobody\'s to change', async (t) => {

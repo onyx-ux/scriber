@@ -21,7 +21,7 @@
 // noticed weeks later when the notes are wrong.
 import { refSlug } from './session-ref.js';
 import { campaignFolder } from '../export/naming.js';
-import { isOperator } from '../access/operators.js';
+import { runsThisBot } from '../access/operators.js';
 
 export function campaignLabel(campaign) {
   return campaign?.name || campaign?.channel_name || 'unnamed campaign';
@@ -179,7 +179,7 @@ export function resolveMemberCampaign(interaction, db) {
 // can unstick one whose manager has left the server.
 export function resolveManagedCampaign(interaction, db, cfg) {
   const asked = interaction.options?.getString?.('campaign') || null;
-  const owner = isOperator(cfg, interaction.user.id);
+  const owner = runsThisBot(db, cfg, interaction.user.id);
 
   const all = interaction.guildId ? db.listCampaignsInGuild(interaction.guildId) : db.listCampaigns();
   const mine = owner ? all : all.filter((c) => c.manager_user_id === interaction.user.id);

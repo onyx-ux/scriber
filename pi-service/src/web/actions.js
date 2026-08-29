@@ -29,6 +29,7 @@ import {
 import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
 import { createCampaign, guildsCreatableBy } from '../campaign/create.js';
 import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js';
+import { handOverCampaign } from '../campaign/handover.js';
 import { requestRestore, decideRestoreRequest } from '../campaign/restore-request.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { ROLES } from '../pipeline/model-choice.js';
@@ -40,7 +41,7 @@ import { TIERS, TOP_TIER, isTier, askLimitFor } from '../access/tiers.js';
 // Ending somebody's sessions goes through the module that owns credentials,
 // not straight at the store — see web/auth.js.
 import { revokeAllSessions } from './auth.js';
-import { isOperator, isPrimaryOperator } from '../access/operators.js';
+import { isOperator, isPrimaryOperator, runsThisBot, mayGrantHouseTier } from '../access/operators.js';
 
 // An id arriving over HTTP is a string from a JSON body written by a page that
 // could have been edited. "12abc" must not become 12.
@@ -306,45 +307,76 @@ export const ACTIONS = {
     // It would also be a control that lies. buildViewer ignores a cap on
     // anybody it calls dev, so the click would report success and change
     // nothing at all — worse than a refusal that says where the real switch is.
-    if (isOperator(cfg, id)) {
-      const which = isPrimaryOperator(cfg, id) ? 'OWNER_USER_ID' : 'OPERATOR_USER_IDS';
+    //
+    // Three routes in now, and the refusal has to name the right one. The
+    // house tier is the only one with a switch on this page, so that refusal
+    // points at the Tier column rather than at a text editor on the Pi.
+    if (runsThisBot(db, cfg, id)) {
+      const which = isOperator(cfg, id)
+        ? (isPrimaryOperator(cfg, id) ? 'OWNER_USER_ID' : 'OPERATOR_USER_IDS')
+        : null;
       return {
         status: 400,
         payload: {
           ok: false,
-          message:
-            `That account is an operator, named by ${which}. Holding an operator below ` +
-            'their own level is a click you could not undo from this page, and a cap on an ' +
-            `operator is ignored anyway — change ${which} in pi-service/.env if you mean it.`,
+          message: which
+            ? `That account is an operator, named by ${which}. Holding an operator below ` +
+              'their own level is a click you could not undo from this page, and a cap on an ' +
+              `operator is ignored anyway — change ${which} in pi-service/.env if you mean it.`
+            : `That account is on tier ${TOP_TIER}, the house, which makes it an operator — and a ` +
+              'cap on an operator is ignored. Move them off the house tier first, in the Tier ' +
+              'column, and their level will resolve to whatever is actually true of them.',
         },
       };
+    }
+
+    // `dev` is not on this column's menu, and refusing it here is what keeps
+    // that true of the API as well as of the dropdown. There is one way to
+    // appoint an operator — the house tier, next door — and a second way would
+    // be a second thing to remember to take away.
+    if (raw === 'dev') {
+      return { status: 400, payload: { ok: false, message: HOW_TO_RAISE.dev } };
     }
 
     const guildsOwned = ctx?.guildsOwnedBy?.(id) ?? [];
     const { derivedLevel } = buildViewer({ db, cfg, userId: id, guildsOwned });
 
-    if (raw && LEVELS.indexOf(raw) > LEVELS.indexOf(derivedLevel)) {
-      return {
-        status: 400,
-        payload: { ok: false, level: derivedLevel, message: HOW_TO_RAISE[raw] },
-      };
-    }
+    // One control, one answer, and which column it lands in follows from where
+    // the answer sits relative to what is actually true of them. Above is a
+    // floor, below is a ceiling, and their own level is neither — it clears
+    // whichever opinion was there.
+    //
+    // The store clears the other column on each write, so a person can never
+    // hold both. That matters more than it looks: a floor of creator under a
+    // ceiling of player is two instructions that cannot both be obeyed, and
+    // buildViewer would quietly pick one while the page drew the other.
+    const setBy = actingUserId(ctx?.viewer, cfg);
+    const wanted = raw || derivedLevel;
+    const direction =
+      LEVELS.indexOf(wanted) > LEVELS.indexOf(derivedLevel) ? 'up'
+      : LEVELS.indexOf(wanted) < LEVELS.indexOf(derivedLevel) ? 'down'
+      : 'level';
 
-    db.setCap(id, raw && raw !== derivedLevel ? raw : null, {
-      setBy: actingUserId(ctx?.viewer, cfg),
-    });
+    if (direction === 'up') db.setGrant(id, wanted, { setBy });
+    else if (direction === 'down') db.setCap(id, wanted, { setBy });
+    else db.setCap(id, null, { setBy });
 
-    const now = raw && raw !== derivedLevel ? raw : derivedLevel;
     return {
       status: 200,
       payload: {
         ok: true,
-        level: now,
+        level: wanted,
         derivedLevel,
         message:
-          now === derivedLevel
+          direction === 'level'
             ? `Back to ${derivedLevel} — whatever is true of their account is what they see.`
-            : `Held at ${now}: sees ${LEVEL_WORDS[now]}. They resolve to ${derivedLevel}, so this is a ceiling you can lift.`,
+            : direction === 'down'
+              ? `Held at ${wanted}: sees ${LEVEL_WORDS[wanted]}. They resolve to ${derivedLevel}, so this is a ceiling you can lift.`
+              // The caveat rides on the message rather than living only in a
+              // help panel, because "raised to creator" reads like "given a
+              // campaign" and is not.
+              : `Raised to ${wanted}: sees ${LEVEL_WORDS[wanted]}. This adds controls, not campaigns — ` +
+                `${HOW_TO_RAISE[wanted]}`,
       },
     };
   },
@@ -407,7 +439,31 @@ export const ACTIONS = {
       };
     }
 
-    db.setTier(id, tier, { setBy: actingUserId(ctx?.viewer, cfg) });
+    // The house tier is the one tier that is not only about money: being on it
+    // makes somebody an operator. So handing it out — or taking it back — is
+    // reserved to an operator the CONFIG FILE names, not merely to anybody
+    // currently holding the dev level.
+    //
+    // Both directions, deliberately. If a house-tier operator could not be
+    // appointed by another but could be removed by one, "who runs this bot"
+    // would still be a question the dashboard could answer on its own.
+    const acting = actingUserId(ctx?.viewer, cfg);
+    const alreadyHouse = Number(db.tierOf?.(id)) === TOP_TIER;
+    if ((tier === TOP_TIER || alreadyHouse) && !mayGrantHouseTier(cfg, acting)) {
+      return {
+        status: 403,
+        payload: {
+          ok: false,
+          message:
+            `Tier ${TOP_TIER} is the house, and it makes an operator. Only somebody named in ` +
+            'pi-service/.env — OWNER_USER_ID or OPERATOR_USER_IDS — can hand it out or take it ' +
+            'back. An operator appointed from this page who could appoint more would be a role ' +
+            'that grows with nobody’s hand on it.',
+        },
+      };
+    }
+
+    db.setTier(id, tier, { setBy: acting });
 
     const asks = askLimitFor(cfg, tier);
     return {
@@ -415,8 +471,18 @@ export const ACTIONS = {
       payload: {
         ok: true,
         tier,
+        // The house tier says the loud part first. It is the one tier whose
+        // effect is not a number, and somebody clicking down a column of
+        // spending ceilings should not discover afterwards that they handed
+        // over the machinery.
         message:
-          `Tier ${tier}. ` +
+          (tier === TOP_TIER
+            ? `Tier ${TOP_TIER} — the house. They now run this bot: the queue, the models, every ` +
+              'campaign, and the guest list. Move them off it to take that back. '
+            : alreadyHouse
+              ? `Tier ${tier}. They no longer run this bot — their level goes back to whatever is ` +
+                'actually true of them. '
+              : `Tier ${tier}. `) +
           (asks > 0
             ? `${asks} question${asks === 1 ? '' : 's'} a day on /campaign ask.`
             : 'Questions on /campaign ask are unlimited.') +
@@ -473,7 +539,7 @@ export const ACTIONS = {
     const id = campaignId(body);
     if (!id) return badRequest('A numeric campaignId is required.');
 
-    if (isOperator(cfg, userId)) {
+    if (runsThisBot(db, cfg, userId)) {
       return { status: 200, payload: restoreArchivedCampaign({ db, cfg, campaignId: id, userId }) };
     }
 
@@ -548,10 +614,71 @@ export const ACTIONS = {
     };
   },
 
-  'campaign/output': (db, cfg, body) => {
+  // Handing a campaign to somebody else at the table.
+  //
+  // Gated at `manage` by ACTION_NEEDS and then narrowed here, the same two-step
+  // campaign/delete uses: a Discord server's owner reaches `manage` for every
+  // campaign in their server, and owning the Discord a game is played in is not
+  // running the game. campaign/handover.js holds the real check.
+  //
+  // The one action on this bot that creates a `creator`, and it does it without
+  // granting anything: it changes who runs the campaign, and buildViewer
+  // derives the level from that the next time it is asked.
+  'campaign/manager': (db, cfg, body, ctx) => {
     const id = campaignId(body);
     if (!id) return badRequest('A numeric campaignId is required.');
-    return { status: 200, payload: setOutput(db, { campaignId: id, mode: body.mode }) };
+
+    const acting = actingUserId(ctx?.viewer, cfg);
+    if (!acting) {
+      return { status: 403, payload: { ok: false, message: 'Sign in before handing a campaign over.' } };
+    }
+
+    const to = userId(body);
+    if (!to) return badRequest('A Discord user id is required.');
+
+    const result = handOverCampaign({ db, cfg, campaignId: id, userId: acting, toUserId: to });
+    // 'not-yours' is the only refusal here that is about authority rather than
+    // about the request, and it is the one worth a 403 — the page draws this
+    // control for whoever may manage a campaign, which is wider than the set
+    // this action accepts.
+    return {
+      status: result.ok ? 200 : result.reason === 'not-yours' ? 403 : 400,
+      payload: result,
+    };
+  },
+
+  'campaign/output': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+
+    // Only 'channel' needs Discord, and only 'channel' waits for it. Moving the
+    // write-ups to a DM or back to the channel you played in is a database
+    // write and stays one — a dropped gateway connection must not stand
+    // between somebody with a guest at the table and making the notes private.
+    if (String(body?.mode ?? '') !== 'channel') {
+      return { status: 200, payload: setOutput(db, { campaignId: id, mode: body.mode }) };
+    }
+
+    const campaign = db.getCampaign(id);
+    if (!campaign) return badRequest('No such campaign.');
+
+    // No bridge, or a bridge that cannot answer, both arrive at setOutput with
+    // no `postable` list — which refuses and says so, rather than writing an id
+    // nothing has vouched for.
+    const asked =
+      typeof ctx?.discord?.listChannels === 'function'
+        ? ctx.discord.listChannels({ guildId: campaign.guild_id }).catch(() => null)
+        : Promise.resolve(null);
+
+    return asked.then((res) => ({
+      status: 200,
+      payload: setOutput(db, {
+        campaignId: id,
+        mode: 'channel',
+        channelId: body.channelId,
+        postable: res?.ok ? res.channels : null,
+      }),
+    }));
   },
 
   // Who in this campaign's server matches what was typed.

@@ -560,7 +560,7 @@ function campaignsToOffer(interaction, db, cfg) {
 
   if (MANAGER_SUBCOMMANDS.has(sub)) {
     const all = interaction.guildId ? db.listCampaignsInGuild(interaction.guildId) : db.listCampaigns();
-    return isOwner(userId, cfg) ? all : all.filter((c) => c.manager_user_id === userId);
+    return isOwner(userId, cfg, db) ? all : all.filter((c) => c.manager_user_id === userId);
   }
 
   // A player command's list is the caller's OWN campaigns, plus any in the
@@ -585,7 +585,7 @@ async function handleCampaignAutocomplete(interaction, db, cfg) {
   // whether the one that failed was 02 or 03.
   if (focused.name === 'session') {
     const lower = typed.toLowerCase();
-    const reachable = isOwner(interaction.user.id, cfg)
+    const reachable = isOwner(interaction.user.id, cfg, db)
       ? db.listCampaigns()
       : db.listCampaignsForUser(interaction.user.id);
     const choices = [];
@@ -1130,7 +1130,7 @@ async function handleLeave(interaction, db, cfg) {
   const recording = db.getMeeting(session.meetingId);
   const mayStop =
     !recording?.campaign_id ||
-    isOwner(interaction.user.id, cfg) ||
+    isOwner(interaction.user.id, cfg, db) ||
     db.isCampaignMember(recording.campaign_id, interaction.user.id);
 
   if (!mayStop) {
@@ -1238,7 +1238,7 @@ async function handleLeave(interaction, db, cfg) {
 // The owner reaches every campaign, since these are all owner-tier commands
 // and unsticking someone else's stuck session is the job.
 function resolveSession(interaction, db, cfg) {
-  const reachable = isOwner(interaction.user.id, cfg)
+  const reachable = isOwner(interaction.user.id, cfg, db)
     ? db.listCampaigns()
     : db.listCampaignsForUser(interaction.user.id);
   return resolveSessionRef(interaction.options.getString('session'), reachable, db);

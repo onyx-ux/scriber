@@ -29,6 +29,16 @@
 // 9 is the house. The owner is always on it and it is the one to hand to
 // anybody who should not be metered at all.
 //
+// It is also the ONE TIER THAT IS NOT ONLY A CEILING. Putting somebody on it
+// makes them an operator — the machinery, every campaign, the whole dashboard
+// — because "the house" was always what it read as and pretending otherwise
+// was a control that lied. That is a fact about tier 9 specifically and it
+// changes nothing about the argument above for 0 to 4: those still answer only
+// "how much may they spend", and none of them touches a level. See
+// access/operators.js `runsThisBot` and docs/adr/0003 for why it goes that way
+// round — a fourth way of BEING an operator, rather than a level derived from
+// a number somebody typed.
+//
 // 5 to 8 DO NOT EXIST, and the hole is the point. Tiers between the paid band
 // and the house are the ones most likely to be wanted later, and a gap means
 // adding one is a new number rather than a renumbering of everybody's row.
@@ -40,11 +50,14 @@
 // are the ones the operator has in mind next; they read their allowance from
 // here, in the same shape, and the enforcement goes at the point that spends.
 
-import { isOperator } from './operators.js';
+import { isOperator, HOUSE_TIER } from './operators.js';
 
 export const TIERS = [0, 1, 2, 3, 4, 9];
 export const FREE_TIER = 0;
-export const TOP_TIER = 9;
+// Borrowed from operators.js rather than written again here. Tier 9 stopped
+// being only a spending ceiling the day it started making somebody an operator,
+// and the two files must not be able to disagree about which number it is.
+export const TOP_TIER = HOUSE_TIER;
 
 // A tier that came from somewhere untrustworthy -- a column written by hand, a
 // body posted at the actions endpoint -- is not a tier. Anything unrecognised

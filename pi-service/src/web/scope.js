@@ -156,7 +156,16 @@ export function scopeCampaign(view, viewer) {
     guildId: view.guildId,
     channel: view.channel,
     claimed: view.claimed,
+    // Only to somebody who could act on it. To everybody else "who runs this"
+    // is a name, which the roster already gives them, and an id, which it does
+    // not — see the roster cut below.
+    managerUserId: manage ? (view.managerUserId ?? null) : null,
     output: manage ? view.output : 'default',
+    // Which channel, when the destination is one. Only ever to somebody who
+    // may change it: to everyone else it is a fact about where this table's
+    // write-ups are read, which is not the same question as what happened at
+    // the table and is not theirs to be told.
+    outputChannelId: manage ? (view.outputChannelId ?? null) : null,
     // Sessions minus the machinery: what happened and whether it is readable,
     // never the job that is about to spend something on it.
     sessions: (view.sessions ?? []).map((s) => scopeSession(s, viewer)),

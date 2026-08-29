@@ -149,7 +149,26 @@ CREATE TABLE IF NOT EXISTS dashboard_access (
   -- decoration: nothing is matched on it, because names change and ids do not.
   username TEXT,
   invited INTEGER NOT NULL DEFAULT 0,
+  -- The operator's one opinion about somebody's level, in two columns because
+  -- they are two different facts and the row has to be able to say which.
+  --
+  -- cap holds this person below what they have earned; granted holds them
+  -- above it. Only ever one at a time — the control that writes them is a single
+  -- dropdown, and access/level clears the other whichever way it is pointed.
+  --
+  -- Two columns rather than one signed opinion because "held down from owner"
+  -- and "raised to creator" want different words on the page, and working out
+  -- which a single column meant would need the derived level fetched first,
+  -- every time anybody read a row.
+  --
+  -- A GRANT DOES NOT WIDEN SCOPE, and that is the property that keeps
+  -- web/viewer.js honest. It changes how much machinery is on screen for the
+  -- campaigns somebody already has a claim on. Which campaigns those are stays
+  -- the union of three checkable facts, so granting creator to somebody who
+  -- runs nothing gives them a creator's controls over nothing. The way to make
+  -- somebody run a campaign is to hand them one — see campaign/handover.js.
   cap TEXT,
+  granted TEXT,
   -- NULL means "whatever DEFAULT_TIER says", not tier 1. Storing the default
   -- would freeze today's answer into every row and quietly ignore the setting
   -- the next time it changed.
@@ -403,6 +422,13 @@ function migrate(db) {
   if (accessCols.length && !accessCols.includes('requested_at')) {
     db.prepare(`ALTER TABLE dashboard_access ADD COLUMN requested_at TEXT`).run();
     console.log('[db] migrated: added dashboard_access.requested_at');
+  }
+  // The Level column could only ever take somebody down. Existing `cap` rows
+  // keep meaning exactly what they meant — the new column starts empty, so an
+  // install that never grants anybody anything behaves as it did yesterday.
+  if (accessCols.length && !accessCols.includes('granted')) {
+    db.prepare(`ALTER TABLE dashboard_access ADD COLUMN granted TEXT`).run();
+    console.log('[db] migrated: added dashboard_access.granted');
   }
 
   const charCols = db.prepare(`PRAGMA table_info(characters)`).all().map((c) => c.name);
@@ -1548,7 +1574,7 @@ function wrap(db) {
     listAccessRows() {
       return db
         .prepare(
-          `SELECT user_id AS userId, username, invited, cap, tier,
+          `SELECT user_id AS userId, username, invited, cap, granted, tier,
                   set_by AS setBy, set_at AS setAt, note,
                   requested_at AS requestedAt
              FROM dashboard_access ORDER BY set_at DESC, user_id`
@@ -1571,15 +1597,34 @@ function wrap(db) {
       ).run(String(userId), username, setBy, note);
     },
 
+    // Setting either half of the level opinion clears the other. The control
+    // is one dropdown with one answer, and a row holding a floor of `creator`
+    // and a ceiling of `player` would be two answers that cannot both be
+    // obeyed — buildViewer would silently pick one and the page would show the
+    // other.
     setCap(userId, cap, { username = null, setBy = null } = {}) {
       db.prepare(
-        `INSERT INTO dashboard_access (user_id, username, cap, set_by)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO dashboard_access (user_id, username, cap, granted, set_by)
+         VALUES (?, ?, ?, NULL, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            cap = excluded.cap,
+           granted = NULL,
            username = COALESCE(excluded.username, dashboard_access.username),
            set_by = excluded.set_by`
       ).run(String(userId), username, cap === null ? null : String(cap), setBy);
+      this.tidyAccess(userId);
+    },
+
+    setGrant(userId, granted, { username = null, setBy = null } = {}) {
+      db.prepare(
+        `INSERT INTO dashboard_access (user_id, username, granted, cap, set_by)
+         VALUES (?, ?, ?, NULL, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           granted = excluded.granted,
+           cap = NULL,
+           username = COALESCE(excluded.username, dashboard_access.username),
+           set_by = excluded.set_by`
+      ).run(String(userId), username, granted === null ? null : String(granted), setBy);
       this.tidyAccess(userId);
     },
 
@@ -1618,7 +1663,8 @@ function wrap(db) {
       db.prepare(
         `DELETE FROM dashboard_access
           WHERE user_id = ?
-            AND invited = 0 AND cap IS NULL AND tier IS NULL AND requested_at IS NULL`
+            AND invited = 0 AND cap IS NULL AND granted IS NULL AND tier IS NULL
+            AND requested_at IS NULL`
       ).run(String(userId));
     },
 
@@ -1632,6 +1678,13 @@ function wrap(db) {
     capFor(userId) {
       return (
         db.prepare(`SELECT cap FROM dashboard_access WHERE user_id = ?`).get(String(userId))?.cap
+        ?? null
+      );
+    },
+
+    grantFor(userId) {
+      return (
+        db.prepare(`SELECT granted FROM dashboard_access WHERE user_id = ?`).get(String(userId))?.granted
         ?? null
       );
     },

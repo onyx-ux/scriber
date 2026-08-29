@@ -24,7 +24,7 @@
 import { cookieFrom, readSession } from './auth.js';
 import { buildViewer, OPERATOR, maySee, mayManage, atLeast, LEVELS, LEVEL_WORDS, HOW_TO_RAISE } from './viewer.js';
 import { scopeStatus, scopeCampaign } from './scope.js';
-import { isOperator, isPrimaryOperator } from '../access/operators.js';
+import { isOperator, isPrimaryOperator, runsThisBot } from '../access/operators.js';
 
 // The read-side surface, re-exported so a caller needs one import rather than
 // three. These are not re-implemented here — they are the same functions.
@@ -92,8 +92,10 @@ export function maySignIn(cfg, userId, db = null) {
   // this line is the one exception, and it exists so that the exception cannot
   // become a trap. It covers OPERATOR_USER_IDS as well as OWNER_USER_ID —
   // appointing a second operator and then locking them out with a list would
-  // be the same trap wearing a different name.
-  return isOperator(cfg, id);
+  // be the same trap wearing a different name. The house tier counts here too:
+  // it is a way of running this bot, and being shut out of the dashboard by the
+  // very page that grants it would be the trap at its most circular.
+  return runsThisBot(db, cfg, id);
 }
 
 // Whether a guest list exists at all.
@@ -111,16 +113,23 @@ export const listInForce = (cfg, db) => guestList(cfg, db).size > 0;
 //
 //   'owner'  OWNER_USER_ID, admitted unconditionally and not removable here
 //   'op'     OPERATOR_USER_IDS, the same but not the primary owner
+//   'house'  on tier 9, which makes them an operator — and unlike the two
+//            above this one IS removable on the page, by moving them off it
 //   'env'    DASHBOARD_ALLOWED_USERS, removable only in pi-service/.env
 //   'list'   a row in dashboard_invites, removable on the page
 //   'open'   no list is in use, so everybody is welcome
 //   null     not admitted
+//
+// Ordered by which fact would survive the others being taken away, so a person
+// who is both on the house tier and on the guest list is described by the one
+// that would still let them in tomorrow.
 export function admissionOf(cfg, userId, db = null) {
   if (!userId) return null;
   const id = String(userId);
 
   if (isPrimaryOperator(cfg, id)) return 'owner';
   if (isOperator(cfg, id)) return 'op';
+  if (runsThisBot(db, cfg, id)) return 'house';
   if (db?.isInvited?.(id)) return 'list';
   if (fromEnv(cfg).has(id)) return 'env';
   return guestList(cfg, db).size === 0 ? 'open' : null;
@@ -215,6 +224,15 @@ export const ACTION_NEEDS = {
   'corrections/replay': 'manage',
   'campaign/output': 'manage',
   'campaign/create': 'manage',
+  // Deciding who runs a campaign, which is a question about WHO SOMEBODY IS
+  // rather than about what a campaign does — the person it lands on resolves to
+  // `creator` afterwards. Assigning that belongs with the Level and Tier
+  // columns, in one pair of hands.
+  //
+  // Deliberately tighter than campaign/delete, which a manager passes: throwing
+  // away a campaign disposes of something already yours, and handing one on
+  // makes somebody else into something. See campaign/handover.js.
+  'campaign/manager': 'everything',
   'campaign/delete': 'manage',
   // Restoring cannot go through the manage check: that check ends in
   // db.getCampaign(), and an archived campaign is invisible to it -- which

@@ -139,6 +139,13 @@ async function world(t) {
         { userId: '999888777666555444', username: 'newbie', displayName: 'Newbie', avatar: null },
       ] }),
       invite: async () => ({ ok: true, message: 'asked' }),
+      // The destination switch's channel picker. Without this the middle
+      // option renders disabled, which is a state the walk cannot tell apart
+      // from a control wired to nothing.
+      listChannels: async () => ({
+        ok: true,
+        channels: [{ id: '900000000000000001', name: 'session-notes', category: null }],
+      }),
     },
   });
   await new Promise((resolve) => server.once('listening', resolve));
@@ -191,6 +198,11 @@ function matches(node, sel) {
   }
   return false;
 }
+
+// Which event actually operates each kind of control. A dropdown is worked by
+// choosing, not by clicking, and firing a click at one would report every
+// picker on the page as wired to nothing.
+const EVENT_FOR = { form: 'submit', select: 'change' };
 
 // What a person would plausibly type, per field name.
 const TYPED = {
@@ -402,7 +414,10 @@ async function driver({ base, typed = {}, signedInAs = null }) {
   function controls() {
     const markup = body();
     const found = [];
-    const re = /<(button|form|input|div|span)\b([^>]*\bdata-[a-z-]+[^>]*)>/g;
+    // <select> is on the list because a dropdown is a control like any other:
+    // it is the one shape whose event is a change rather than a click, and
+    // leaving it out would let a picker that talks to nothing pass this walk.
+    const re = /<(button|form|input|select|div|span)\b([^>]*\bdata-[a-z-]+[^>]*)>/g;
     let m;
     while ((m = re.exec(markup))) {
       const [, tag, attrs] = m;
@@ -426,8 +441,19 @@ async function driver({ base, typed = {}, signedInAs = null }) {
         fields = [...block.matchAll(/name="([a-zA-Z]+)"/g)].map((f) => [f[1], TYPED[f[1]] ?? 'x']);
       }
 
+      // What choosing from this dropdown would choose. The first real option,
+      // skipping the empty "Choose a…" placeholder — a select fired with no
+      // value is a person opening the list and closing it again, which is
+      // correctly a no-op and would tell this walk nothing.
+      let value;
+      if (tag === 'select') {
+        const rest = markup.slice(m.index);
+        const block = rest.slice(0, rest.indexOf('</select>') + 9);
+        value = /<option value="([^"]+)"/.exec(block)?.[1];
+      }
+
       found.push({
-        tag, dataset, fields,
+        tag, dataset, fields, value,
         classes: (/class="([^"]*)"/.exec(attrs)?.[1] ?? '').split(/\s+/).filter(Boolean),
         type: /type="button"/.test(attrs) ? 'button' : 'submit',
       });
@@ -435,10 +461,11 @@ async function driver({ base, typed = {}, signedInAs = null }) {
     return found;
   }
 
-  async function fire(node, kind = node.tag === 'form' ? 'submit' : 'click') {
+  async function fire(node, kind = EVENT_FOR[node.tag] ?? 'click') {
     const target = {
       tag: node.tag, classes: node.classes ?? ['btn'], dataset: node.dataset,
       type: node.type ?? 'button', __fields: node.fields ?? [], disabled: false,
+      value: node.value ?? '',
       closest(sel) { return matches(this, sel) ? this : null; },
       querySelector: () => null,
       get textContent() { return 'x'; }, set textContent(v) {},
@@ -483,6 +510,11 @@ test('every control the dashboard renders does something', async (t) => {
     ['campaign / the table', [CAMPAIGN, nav({ tab: 'table' }, ['tab'])]],
     ['campaign / corrections', [CAMPAIGN, nav({ tab: 'corrections' }, ['tab'])]],
     ['campaign / settings', [CAMPAIGN, nav({ tab: 'settings' }, ['tab'])]],
+    // The channel list is its own stop for the same reason the dialogs are:
+    // the dropdown inside it does not exist until the middle destination is
+    // asked for, so a walk that only visited Settings would never see it.
+    ['campaign / settings, choosing a channel',
+     [CAMPAIGN, nav({ tab: 'settings' }, ['tab']), nav({ pickChannel: '' })]],
     ['transcript reader', [CAMPAIGN, nav({ transcript: String(parked) })]],
     ['models', [nav({ screen: 'models' }, ['navlink'])]],
     ['servers', [nav({ screen: 'servers' }, ['navlink'])]],
