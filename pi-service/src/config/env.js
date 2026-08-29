@@ -162,6 +162,22 @@ export const config = validate({
     const v = optional('SUMMARY_PROVIDER', 'gemini').toLowerCase();
     return v === 'anthropic' ? v : 'gemini';
   })(),
+
+  // When the provider above cannot answer AT ALL — every model of theirs out
+  // of quota, or nothing answering on the other end — write the session up
+  // with the other one instead, if it has a key.
+  //
+  // On by default, and only for session notes: /campaign ask never crosses
+  // over, because "ask me again in a bit" is a fine answer to a question and
+  // is not a fine answer to an evening somebody already recorded. It does not
+  // fire on an ordinary failure either — a refusal or a malformed response is
+  // the request's fault and would fail the same way twice, at twice the price.
+  //
+  // Set to false if the second key is there for choosing per job on the
+  // dashboard rather than for spending unasked. With only one key configured
+  // there is nothing to fall back to and this changes nothing.
+  summaryProviderFallback: optional('SUMMARY_PROVIDER_FALLBACK', 'true') !== 'false',
+
   anthropicApiKey: optional('ANTHROPIC_API_KEY', null),
   anthropicModel: optional('ANTHROPIC_MODEL', 'claude-opus-5'),
 

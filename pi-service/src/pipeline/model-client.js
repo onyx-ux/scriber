@@ -175,6 +175,54 @@ export function isQuotaError(err) {
   return /RESOURCE_EXHAUSTED|rate.?limit|quota|too many requests|overloaded|high demand/i.test(message);
 }
 
+// Whether the provider could not be reached at all, as opposed to answering
+// badly.
+//
+// A different question from isQuotaError and it leads somewhere different. Out
+// of quota is the provider talking, so a cheaper model of theirs is worth a
+// try. Unreachable is nobody talking — the same host, the same DNS, the same
+// dead link — and walking down that provider's own ladder is three more ways
+// to fail identically. The only move that could work is the other provider.
+//
+// Node's fetch buries the real reason one level down in `cause`, and the two
+// SDKs each have their own name for it, so all three shapes are asked about.
+const NETWORK_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT',
+]);
+
+export function isProviderUnreachable(err) {
+  if (/^(APIConnectionError|APIConnectionTimeoutError|AbortError|TimeoutError|FetchError)$/.test(err?.name ?? '')) {
+    return true;
+  }
+  if (NETWORK_CODES.has(err?.code) || NETWORK_CODES.has(err?.cause?.code)) return true;
+
+  // callGemini turns its own AbortError into a plain Error, so the wording it
+  // chose has to be recognised here rather than the name.
+  return /timed out|fetch failed|network error|socket hang up/i.test(String(err?.message ?? ''));
+}
+
+// The other provider to try when the configured one cannot answer at all.
+//
+// Both keys being set is already the operator saying they are willing to pay
+// either — configuredProviders is the same list the dashboard offers them to
+// pick from per job. So crossing over is inside what they have authorised, and
+// the alternative is the failure this bot is least willing to hand somebody:
+// we recorded your evening and never wrote it up.
+//
+// It is still a switch, because "willing to pay for either" and "spend the
+// other one without asking me" are not quite the same sentence, and the
+// operator paying the bill is the one who gets to decide which they meant.
+export function fallbackProvider(cfg, current) {
+  if (cfg?.summaryProviderFallback === false) return null;
+  return configuredProviders(cfg).find((p) => p !== current) ?? null;
+}
+
+// Mark an error as "this provider could not answer", which is the only kind
+// worth asking somebody else about. The error itself is kept rather than
+// wrapped, so the message and the stack still point at what actually broke.
+const unavailable = (err) => Object.assign(err, { providerUnavailable: true });
+
 // Ask a model, and step down the ladder if the provider is out of room.
 //
 // The ladder comes from pipeline/model-choice.js and differs by role: writing
@@ -182,19 +230,62 @@ export function isQuotaError(err) {
 // at the cheapest that will do. `db` is optional — without it nothing is
 // recorded and the call still works, which is what keeps every existing test
 // and the injectable-callModel seams in summarize-client working unchanged.
+//
+// If the whole ladder is exhausted, the OTHER provider gets one attempt — but
+// only for a summary. /ask deliberately does not cross over, for the same
+// reason its ladder does not climb: a question asked in passing is not worth
+// quietly reaching for a second bill, and "ask me again in a bit" is a fine
+// answer to one. A session that has already been recorded is not.
 export async function callModel(systemPrompt, userMessage, cfg, timeoutMs, options = {}) {
-  const { role = 'summary', db = null, meetingId = null } = options;
-  const provider = cfg.summaryProvider === ANTHROPIC ? ANTHROPIC : GEMINI;
-  const ladder = ladderFor(cfg, role, db);
+  // `ask` is injectable for the same reason summarize-client's callModel is:
+  // the ladder, the crossing over and the recording are the parts worth
+  // testing, and none of them should need a live key to exercise. The default
+  // is the real thing.
+  const { role = 'summary', db = null, meetingId = null, ask = askOnce } = options;
+  const first = cfg.summaryProvider === ANTHROPIC ? ANTHROPIC : GEMINI;
+  const record = { role, db, meetingId, ask };
+
+  try {
+    return await askProvider(first, systemPrompt, userMessage, cfg, timeoutMs, record);
+  } catch (err) {
+    const other = err?.providerUnavailable && role === 'summary' ? fallbackProvider(cfg, first) : null;
+    if (!other) throw err;
+
+    console.warn(
+      `[model] ${first} could not answer (${String(err.message).slice(0, 120)}) — trying ${other}`
+    );
+
+    try {
+      const text = await askProvider(other, systemPrompt, userMessage, cfg, timeoutMs, record);
+      console.log(`[model] ${role}: ${other} wrote this one because ${first} was unavailable`);
+      return text;
+    } catch (second) {
+      // Both are down, so report the configured one — that is the provider the
+      // operator set up and the one they will go looking for in the log. But a
+      // fallback that failed for its OWN reason is saying something about the
+      // request rather than about the weather, and that is the more useful of
+      // the two errors.
+      throw second?.providerUnavailable ? err : second;
+    }
+  }
+}
+
+// One call, to whichever provider was named.
+const askOnce = (provider, systemPrompt, userMessage, cfg, timeoutMs, model) =>
+  provider === ANTHROPIC
+    ? callAnthropic(systemPrompt, userMessage, cfg, timeoutMs, model)
+    : callGemini(systemPrompt, userMessage, cfg, timeoutMs, model);
+
+// One provider, top of its ladder down.
+async function askProvider(provider, systemPrompt, userMessage, cfg, timeoutMs, { role, db, meetingId, ask }) {
+  const pinned = withProvider(cfg, provider);
+  const ladder = ladderFor(pinned, role, db);
 
   let lastError = null;
   for (const [index, model] of ladder.entries()) {
     const startedAt = Date.now();
     try {
-      const result =
-        provider === ANTHROPIC
-          ? await callAnthropic(systemPrompt, userMessage, cfg, timeoutMs, model)
-          : await callGemini(systemPrompt, userMessage, cfg, timeoutMs, model);
+      const result = await ask(provider, systemPrompt, userMessage, pinned, timeoutMs, model);
 
       recordUsage(db, {
         provider, model, role, meetingId, outcome: 'ok',
@@ -207,6 +298,7 @@ export async function callModel(systemPrompt, userMessage, cfg, timeoutMs, optio
       return result.text;
     } catch (err) {
       const limited = isQuotaError(err);
+      const unreachable = isProviderUnreachable(err);
       recordUsage(db, {
         provider, model, role, meetingId,
         outcome: limited ? 'rate_limited' : 'failed',
@@ -215,6 +307,9 @@ export async function callModel(systemPrompt, userMessage, cfg, timeoutMs, optio
       });
 
       lastError = err;
+      // Nobody is home. A cheaper model of theirs is the same host over the
+      // same broken link, so stop walking down and let the caller step across.
+      if (unreachable) throw unavailable(err);
       // Only quota sends us down the ladder. Anything else is the request's
       // fault and would fail again, one model cheaper.
       if (!limited) throw err;
@@ -222,7 +317,9 @@ export async function callModel(systemPrompt, userMessage, cfg, timeoutMs, optio
     }
   }
 
-  throw lastError ?? new Error('No model was available to answer.');
+  // Every model this provider has, all out of room. That is a fact about the
+  // provider rather than about the request, so it is worth asking the other.
+  throw unavailable(lastError ?? new Error('No model was available to answer.'));
 }
 
 // Written where it can be counted later, and never allowed to break a call
