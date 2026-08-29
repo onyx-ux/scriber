@@ -297,60 +297,189 @@ A validation on the summary output that if the output has no real content of val
       left empty. It now grows with the window and stops at a line that can
       still be tracked back to its own left edge.
 
+## Implemented (2026-08-29)
+
+Deployed to the Pi the same day — commits `27d6dc1` and `978cde4`. All three
+entries that stood under "Known faults" below are in here; the section is empty
+for the first time.
+
+- [x] **A channel to post in** — the destination switch had three options and
+      the middle one, "A chosen channel", was drawn disabled from the day it
+      existed, pointing at `/campaign output` in Discord. The page had never
+      been told which channels the bot may post in, and only Discord can say.
+      It is told now: `web/discord-bridge.js` gained `listChannels`, and the
+      switch opens a dropdown grouped under each category in the order
+      Discord's own sidebar draws them.
+
+      Text and announcement channels only. Voice channels carry a text chat and
+      the bot could post in one, but that is where the table *plays* — a recap
+      dropped there lands in the middle of next week's session. Threads are out
+      for a different reason: Discord archives them after a few days of quiet,
+      and a destination that stops existing on its own is not a destination.
+
+      **Nothing is typed, and the id is not taken on trust.** A channel id is
+      eighteen digits with no check digit, so a box to paste one into is a box
+      to mistype one into, and the mistake surfaces weeks later as a write-up
+      nobody received. `setOutput` is handed Discord's own answer to "where may
+      I speak" and refuses anything not on it. "Discord said no" and "nobody
+      managed to ask Discord" are kept apart, because only the second means
+      leave the setting alone.
+
+      Which closed the open question the old note ended on. A campaign pointed
+      at a deleted channel already fell back to the recording channel silently —
+      `scopeCampaign` had never sent `outputChannelId` at all, so nobody could
+      even see which channel was set. The page now says the channel has gone and
+      what is happening in the meantime.
+
+- [x] **Tier 9 means the house** — setting it makes that account an operator.
+      Not by deriving a level from a number somebody typed, which is the thing
+      `access/tiers.js` refused and was right to refuse, but the other way
+      round: tier 9 is a **fourth way of *being*** an operator, alongside
+      `OWNER_USER_ID`, `OPERATOR_USER_IDS` and the console token, and the level
+      then derives from that honestly through the same line it always did.
+      `runsThisBot` replaced `isOperator` at every call site that asks about
+      authority; `isOperator` stays wherever the question is really "which line
+      of the config file names you".
+
+      The question the other routes answer with an SSH session is answered
+      twice here: only `dev` may set any tier at all, and **only an operator
+      named in the file may hand out or take back tier 9** — both directions,
+      because an operator who could not appoint another but could remove one
+      would still leave "who runs this bot" answerable from a web page. So an
+      operator appointed from the page cannot mint another. See
+      `docs/adr/0003`, which also states the cost plainly: who can spend the
+      owner's money is no longer purely a fact about a file.
+
+- [x] **The Level column goes both ways** — it could only ever hold somebody
+      down. It raises them now, and the argument it used to protect survives
+      intact, because a level and a scope are different things and `viewer.js`
+      already said so: the level decides how much machinery is on screen.
+
+      **A grant moves controls, never scope.** Which campaigns somebody sees
+      stays the union of three checkable claims, untouched. Granting `creator`
+      to somebody who runs nothing gives them a creator's controls over nothing
+      at all — so the action's own message says "adds controls, not campaigns"
+      and names the act that would actually give them one, rather than leaving
+      that to a help panel nobody opens.
+
+      A floor and a ceiling, and only ever one of them: the store clears the
+      opposite column on every write, so a floor of `creator` under a ceiling of
+      `player` is unreachable rather than something `buildViewer` picks between
+      while the page draws the other. The rule for the derived level overtaking
+      a grant is that **the grant goes quiet and the row survives** — deleting
+      it the moment it was redundant would take the decision away for good, and
+      the fact that overtook it can go away again.
+
+      `dev` is off that menu entirely. One way to appoint an operator, next
+      door in the Tier column, rather than two things to remember to take away.
+
+- [x] **A campaign can be handed on** — a campaign acquired a manager exactly
+      once, whoever typed `/campaign create`, and that was permanent. There was
+      no answer to "the person who set this up has stopped running the game"
+      except an operator with SSH, while `HOW_TO_RAISE` had spent months telling
+      people to "hand them one from that campaign's settings" — describing a
+      control that did not exist. It exists.
+
+      Recipients come from the roster and nowhere else, so "invite them first"
+      is the whole prerequisite and a mistyped id cannot become the person who
+      runs a table. It grants nothing: it changes who runs the campaign, and
+      `buildViewer` derives `creator` from that the next time it is asked.
+
+      **The operator's alone**, and deliberately tighter than deleting, which a
+      manager may do. Throwing a campaign away disposes of something already
+      yours; handing one on decides who somebody *is* on this bot, and that
+      belongs with the Level and Tier columns rather than inside one campaign's
+      settings. A manager keeps everything else on that screen — the roster,
+      the corrections, where the notes go.
+
+      One consequence, met head-on rather than papered over: a `player` claim is
+      having *spoken* at a table, not being listed on it, so a DM who set a
+      campaign up, handed it on and never recorded a session keeps no read
+      access. The message says "stays on the roster" rather than "still sees
+      it", because the roster is what a handover can actually promise.
+
+- [x] **The summariser asks the other provider** — the model ladder already
+      stepped down within one provider when it said it was out of quota. The
+      level above that was missing: every model of theirs exhausted, or nothing
+      answering at the other end, failed the job and left a recorded evening
+      unwritten while a second configured key sat idle.
+
+      Three kinds of failure now. Out of quota walks down that provider's
+      ladder, as before. **Unreachable does not walk down at all** — a cheaper
+      model of theirs is the same host over the same dead link, so stepping down
+      is three more ways to fail identically, and the only move that could work
+      is the other provider. Anything else throws: a refusal or a malformed
+      response is the request's fault and would fail the same way twice, at
+      twice the price.
+
+      Summaries only. `/campaign ask` never crosses over, on the same argument
+      its ladder already makes for not climbing — a question asked in passing is
+      not worth quietly reaching for a second bill, and "ask me again in a bit"
+      is a fine answer to one and not to an evening somebody already recorded.
+      `SUMMARY_PROVIDER_FALLBACK` turns it off for an operator who keeps the
+      second key for choosing per job rather than for spending unasked. With one
+      key configured it changes nothing.
+
+      **Inert on this install today** — `pi-service/.env` has no
+      `ANTHROPIC_API_KEY`. It starts working the day one is added.
+
+- [x] **Discord is the entryway, the dashboard is the powerhouse** — recorded
+      as `docs/adr/0004`, because it reverses a rule that was tested on every
+      run. `test/dashboard-optional.test.js` required every dashboard action a
+      non-dev could reach to have a slash command doing the same job, so that
+      the web page stayed genuinely skippable.
+
+      Retired. It taxed the wrong thing — the queue, the compendium, the
+      transcripts and the gatehouse have no sensible slash-command shape and
+      never wanted one — and it had quietly run out of room, because
+      `/campaign` sits at **Discord's hard ceiling of 25 subcommands** and a
+      26th throws inside the builder at import time, taking the whole bot down
+      with a message that names neither the command nor the limit. Found the
+      hard way. That ceiling is now a test with a readable message rather than
+      a boot failure.
+
+      What survives is the half that was load-bearing, in
+      `test/entryway.test.js`: **the acts that make somebody a participant stay
+      in Discord.** A player agreed to play D&D, not to open a web page.
+      Joining, leaving, consenting, naming a character, reading a recap and
+      claiming an unclaimed table are theirs and happen where they are — as is
+      correcting a misheard name, which is not about participation but takes
+      five seconds mid-session.
+
+- [x] **The chain was read end to end** — `CONTEXT.md` had one box left
+      unticked: nobody had actually queried the `meetings` and `summaries`
+      tables to say the whole pipeline had run. Done, against the live
+      database. `markJobDone` only runs after `postSessionNotes`,
+      `updateCampaignLedger` and `pushLedgerToDrive` have all returned, so a
+      summarize job sitting at `done` is the one row that proves the whole
+      chain rather than just the summary. Three real Cipher sessions, ~3h15m
+      each, six speakers, 2027/2377/2440 lines, every job `done`. Corroborated
+      on disk by the vault's 17 NPC notes and by `DnDSessions/notes/Cipher` on
+      Drive. (There is no `summaries` table — the recap lives in
+      `meetings.summary_json`.)
+
 ## Known faults, not fixed yet
 
-These are the operator's own reports, written down before they are argued
-with — two of them collide with a design decision that is recorded on purpose,
-and whoever picks them up should read the argument before deciding against it.
-
-- **Tier 9 does not grant dev access.** The gatehouse offers tier 9 as "the
-  house", and the expectation is that setting it makes that account an
-  operator. It does not, and today that is deliberate: `access/tiers.js`
-  argues that a *level* answers "what may they see" and is derivable from facts
-  in the world — `OWNER_USER_ID` in a file, Discord saying somebody owns a
-  server, a campaign naming its manager — while a *tier* answers "how much of
-  the owner's GPU and API bill may they spend", which no fact answers and only
-  the person paying can decide. Granting a level from a tier would mean
-  inventing the fact.
-
-  So this is a decision to take rather than a bug to fix. If tier 9 is to mean
-  "runs this bot", the honest shape is probably not to derive the level from it
-  but to make tier 9 a *fourth* way of being an operator alongside
-  `OWNER_USER_ID` and `OPERATOR_USER_IDS` — in which case it has to answer
-  the question those two answer with an SSH session: what stops somebody who
-  reaches the gatehouse from promoting themselves. The likely answer is that
-  only `dev` may set tier 9, which is already true, and that it is written
-  down as such rather than being a side effect.
-
-- **Levels can only be taken away.** The Level column caps somebody below what
-  they have earned; it cannot raise them. Same argument as above — the rungs
-  rest on facts, and picking one on this page does not make the fact true. What
-  the operator actually wants is to hand somebody `creator` or `owner`
-  without going through Discord, which needs a stored grant that
-  `buildViewer` unions with the derived level rather than intersecting, and a
-  rule for what happens when the derived level later rises above the granted
-  one. Note that the cap and the grant are then two different columns doing
-  opposite jobs, and one control that goes both ways is probably clearer than
-  two.
-
-- **The Settings tab cannot pick a channel.** The destination switch offers
-  "Where we played", "A chosen channel" and "DM to me", and the middle one is
-  permanently disabled with a note pointing at `/campaign output` in Discord.
-  The reason is that choosing a channel means listing the channels the bot may
-  post in, and only Discord can answer that — the dashboard's payload has never
-  carried one. The shape of the fix: `/campaign?id=` gains the text channels
-  the bot can both see and send in for that guild (the same question
-  `canCreateIn` already asks for guilds), the segment becomes a picker when
-  that list is non-empty, and `campaign/output` takes a `channelId`
-  alongside its mode. Worth checking what happens to a campaign whose chosen
-  channel is later deleted or made invisible to the bot, since that is a state
-  `/campaign output` can already leave behind.
+Empty as of 2026-08-29 — the three that stood here are in the section above.
+The note they were kept under is worth keeping for whatever lands here next:
+these are the operator's own reports, written down before they are argued with,
+and some of them will collide with a design decision recorded on purpose.
+Whoever picks one up should read the argument before deciding against it. Two
+of the three did collide, and both turned out to be right anyway — but the
+shape of the fix came from taking the old argument seriously rather than from
+overruling it.
 
 ## Ideas not built yet
 
 - **Limits behind the tiers** — the tier is set, stored and visible, and it
   governs exactly one ceiling: the daily `/campaign ask` allowance, via
-  `TIER_ASK_LIMITS`. The two the operator actually has in mind are not built:
+  `TIER_ASK_LIMITS`. The two the operator actually has in mind are not built.
+
+  One thing changed under this since it was written: **tier 9 is no longer only
+  a ceiling** — it makes an operator, as of 2026-08-29. Nothing below it moved,
+  so 0 to 4 are still purely about money and the plan below is unaffected; but
+  whatever meters spend has to keep treating 9 as unmetered for the same reason
+  it already did, and now for a second one as well.
 
   * **A token budget.** The blocker is attribution, not accounting. `model_usage`
     already records input/output/total tokens per call, but against a
