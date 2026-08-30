@@ -7,19 +7,37 @@ name: Test, build and publish Docker image
 #
 # The test job gates the build: an arm64 image takes ~15 minutes to compile
 # under QEMU, so there is no sense publishing one from code that fails a
-# suite which runs in under a second.
+# suite which takes about seventy seconds.
+#
+# `dashboard/**` is on both path lists, and it is not decoration. Four test
+# files reach out of pi-service/test and read the pages directly —
+# dashboard-render, dashboard-controls and gatehouse-render extract the
+# <script> blocks and run them in a vm against a real server, and morph.test
+# loads dash/morph.js. That harness is the safety net ADR-0002 leans on when
+# it argues the dashboard may stay one 6,000-line file. Without the path here
+# the net does not fail on a dashboard commit; it silently never runs, which
+# is worse.
+#
+# So a dashboard-only commit now also reaches build-and-push, and that is
+# fine rather than merely tolerable: the build context is ./pi-service, so
+# nothing the image is made of has changed, every layer hits the buildx
+# cache, and the run amounts to re-tagging an identical image. It is also the
+# behaviour you want, because :${{ github.sha }} should exist for every
+# commit on main whether or not that commit touched the bot.
 
 on:
   push:
     branches: [main]
     paths:
       - "pi-service/**"
+      - "dashboard/**"
       - ".github/workflows/docker-publish.yml"
   # Run the tests on branches/PRs too, so regressions surface before merge
   # rather than after something has already been published.
   pull_request:
     paths:
       - "pi-service/**"
+      - "dashboard/**"
       - ".github/workflows/docker-publish.yml"
   workflow_dispatch: {}
 

@@ -83,18 +83,31 @@ async function world(t, over = {}) {
   // carries it. That is the whole point: holding the token must not be the
   // same as being somebody.
   const base = `http://127.0.0.1:${server.address().port}`;
-  const get = async (path) => {
-    const res = await fetch(`${base}${path}${path.includes('?') ? '&' : '?'}token=sesame`);
+  const get = async (path, headers = {}) => {
+    const res = await fetch(`${base}${path}${path.includes('?') ? '&' : '?'}token=sesame`, { headers });
     return { status: res.status, body: await res.json().catch(() => null) };
   };
-  const post = async (action, body = {}) => {
+  const post = async (action, body = {}, headers = {}) => {
     const res = await fetch(`${base}/actions/${action}?token=sesame`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body),
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   };
 
-  return { db, cfg, campaignId, meeting, get, post };
+  // The same two, arriving the way a stranger's request does: through nginx,
+  // from an address that is not the house. `X-Quill-Local: 0` is exactly what
+  // `geo $local_console` in the template stamps on such a request, and the
+  // header is set on every proxied request so it cannot be omitted or forged.
+  //
+  // Without this pair the suite could only ever ask the server questions from
+  // 127.0.0.1, which is genuinely local and would always be answered as such —
+  // so the case that matters, the one arriving off the tunnel, would go
+  // untested no matter how many assertions were written.
+  const AWAY = { 'x-quill-local': '0' };
+  const getAway = (path) => get(path, AWAY);
+  const postAway = (action, body = {}) => post(action, body, AWAY);
+
+  return { db, cfg, campaignId, meeting, get, post, getAway, postAway };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,11 +218,17 @@ test('the refusal does not depend on the body being empty', async (t) => {
 // ---------------------------------------------------------------------------
 
 // The counterpart, stated out loud rather than left implied. With the toggle
-// OFF the old behaviour is back and anything past nginx is the operator. That
-// is the documented default for a LAN install and it is also exactly the hole
-// this file exists to keep shut, so it is asserted here where the two sit
-// together: turning it off is a decision, never an accident.
-test('with the toggle off, a cookieless request IS the operator', async (t) => {
+// OFF a cookieless request FROM THE HOUSE is the operator — that is the
+// console, and it is why the fallback exists at all.
+//
+// The clause in capitals is new, and it is the fix. This used to read "anything
+// past nginx", and anything past nginx included the entire internet: /api/ has
+// no gate, nginx attaches a valid X-Status-Token to every request that reaches
+// it, so with the toggle off a stranger who knew the hostname WAS the operator.
+// The flag is on in production and always has been, so the door was shut — but
+// the repo ships it off in three places, and one restored .env was the distance
+// between a private bot and an open one.
+test('with the toggle off, a cookieless request from the house IS the operator', async (t) => {
   const { get, post } = await world(t, { dashboardRequireLogin: false });
 
   const me = (await get('/me')).body;
@@ -220,7 +239,36 @@ test('with the toggle off, a cookieless request IS the operator', async (t) => {
   assert.notEqual(res.status, 403, 'the off behaviour changed');
 });
 
-test('turning it on is the whole of the difference', async (t) => {
+// The half that used to be missing, and the reason the fix is worth having.
+//
+// Same server, same toggle, same absent cookie, same valid token — the only
+// difference is the one nginx knows and the bot cannot work out for itself:
+// this request came down the tunnel rather than from the LAN. It must be
+// nobody, and the flag must not be what decides that.
+test('with the toggle off, a request off the tunnel is NOT the operator', async (t) => {
+  const { getAway, postAway } = await world(t, { dashboardRequireLogin: false });
+
+  const me = (await getAway('/me')).body;
+  assert.equal(me.level, 'none', 'a stranger is the operator again — the locality check is not holding');
+  assert.equal(me.can.everything, false);
+  assert.equal(me.can.machinery, false);
+
+  assert.equal((await getAway('/status')).body.campaigns.length, 0, 'a stranger can read the campaigns');
+  assert.equal((await getAway('/access')).status, 403, 'a stranger can read the roster');
+  assert.equal((await postAway('pause', { paused: true })).status, 403, 'a stranger can stop the queue');
+});
+
+// And the toggle ON is still the stronger of the two: it refuses the house as
+// well, so an install that has invited its players in is not relying on where
+// anybody is standing.
+test('with the toggle on, even the house is nobody without a session', async (t) => {
+  const { get, getAway } = await world(t);
+
+  assert.equal((await get('/me')).body.level, 'none');
+  assert.equal((await getAway('/me')).body.level, 'none');
+});
+
+test('turning it on is the whole of the difference — for the house', async (t) => {
   const off = await world(t, { dashboardRequireLogin: false });
   const on = await world(t);
 
@@ -229,4 +277,10 @@ test('turning it on is the whole of the difference', async (t) => {
 
   assert.notEqual((await off.get('/status')).body.campaigns.length, 0);
   assert.equal((await on.get('/status')).body.campaigns.length, 0);
+
+  // For everybody else the toggle makes no difference at all any more, which
+  // is the point: it went from being the only thing holding the door to being
+  // the second of two.
+  assert.equal((await off.getAway('/me')).body.level, 'none');
+  assert.equal((await on.getAway('/me')).body.level, 'none');
 });

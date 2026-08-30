@@ -71,6 +71,42 @@ map $http_cf_visitor $forwarded_proto {
     "~*http"  http;
 }
 
+# ── Whether this request is the operator's own console ───────────────────
+#
+# The bot has an OPERATOR fallback: a request with no Discord session is
+# treated as `dev` unless DASHBOARD_REQUIRE_LOGIN is on. That exists so a
+# Discord outage cannot lock the owner out of their own Pi, and it was safe
+# for exactly as long as the only way to reach /api/ was to be in the house.
+#
+# It is not the only way any more. /api/ has no gate on it -- it cannot have
+# one, the sign-in flow lives inside it -- so with that flag off, "reach this
+# server" and "be the operator" became the same sentence for anybody on the
+# internet who knows the hostname. The flag IS on here, and the bot is not
+# open; the problem was that one .env line was the whole of the difference,
+# and .env.example ships it off.
+#
+# So the bot is told the one thing it cannot work out for itself. Every
+# request it sees arrives from this container, and nginx is the only party
+# that still knows where the person is.
+#
+# $remote_addr, not a header, and read AFTER realip has run -- geo is
+# evaluated when the variable is first used, which is proxy_set_header below,
+# long after the post-read phase. A visitor through the tunnel therefore
+# carries their own public address here and cannot match. Nothing a client
+# sends is consulted, so there is nothing for a client to forge.
+# "0" rather than "" for the default, deliberately. proxy_set_header with an
+# empty value tells nginx not to pass that field at all -- which is safe, but
+# "safe because the header is missing" and "safe because the header says no"
+# fail differently the day somebody adds a location that forgets to set it.
+# A header that is always present and always overwritten cannot be smuggled
+# in by a client either way.
+geo $local_console {
+    default        "0";
+    127.0.0.1      "1";
+    192.168.0.0/24 "1";   # the house LAN, as the allow list has it
+    172.21.0.0/16  "1";   # this Pi's own compose network -- see set_real_ip_from
+}
+
 server {
     listen 80;
     server_name _;
@@ -101,7 +137,27 @@ server {
     # straight through. Verify with the access log rather than assuming: the
     # line for a request through the tunnel must show the visitor's public
     # address, never 127.0.0.1 or a 172.x one.
-    set_real_ip_from 172.16.0.0/12;
+    # Narrowed from 172.16.0.0/12 on 2026-08-30. The /12 trusted every docker
+    # network on this Pi -- including the ones belonging to containers that
+    # have nothing to do with this stack, the hand-run Vaultwarden and the
+    # older cloudflared among them. Any one of those could have set its own
+    # apparent client address by sending CF-Connecting-IP, because this is the
+    # header that decides what the allow list below is judged against.
+    #
+    # This is pi-service_default's subnet, which is where cloudflared's
+    # requests actually land. Verify after any `docker compose down` that
+    # recreates the network -- compose picks the subnet, so it can move:
+    #
+    #   docker network inspect pi-service_default \
+    #     -f '{{range .IPAM.Config}}{{.Subnet}} gw={{.Gateway}}{{end}}'
+    #
+    # If it has moved, a tunnel request stops being rewritten, keeps a
+    # 172.x address, and is REFUSED rather than waved through -- because the
+    # allow list no longer carries the /12 either. That is the point of
+    # changing both together: the two failure modes used to compose into
+    # "open to the internet" and now compose into "401 for everybody", which
+    # is the direction you can notice.
+    set_real_ip_from 172.21.0.0/16;
     set_real_ip_from 127.0.0.1;
     real_ip_header CF-Connecting-IP;
 
@@ -111,6 +167,63 @@ server {
     # a dead connection. A relative Location is resolved by the browser
     # against the URL it already has, which is right every time.
     absolute_redirect off;
+
+    # ── Headers every answer carries ─────────────────────────────────────
+    #
+    # Three of these are hygiene. One is load-bearing, and it became so the
+    # day this got a hostname.
+    #
+    # X-Frame-Options / frame-ancestors is the load-bearing one. `satisfy any`
+    # below means anybody on the LAN reaches /app/ WITH NO PASSWORD, and the
+    # same page now also answers at quill.thehouseofcake.org. Without this,
+    # any page on the internet may put that dashboard in a transparent iframe,
+    # float a decoy button over "Delete campaign" or "Revoke", and collect the
+    # click from a browser the allow list already trusts. The person never
+    # sees the page they actually clicked. Both spellings are sent because the
+    # header is what old browsers obey and the CSP directive is what current
+    # ones do; they say the same thing and neither is redundant yet.
+    #
+    # nosniff stops a browser second-guessing a Content-Type -- the /api/
+    # answers are JSON and should never be executed as anything else.
+    #
+    # Referrer-Policy keeps the dashboard's own URLs out of the Referer of
+    # anything it links to. It is what most browsers now default to anyway;
+    # saying it out loud costs nothing and does not depend on the default.
+    #
+    # WHAT THE CSP DELIBERATELY DOES NOT SAY: there is no default-src and no
+    # script-src. Both pages are one file with the script inline, by the
+    # argument in docs/adr/0002, and a script-src would need a nonce or a hash
+    # per block -- which means a build step, which is the whole thing that ADR
+    # declines. The three directives here need none of that: they are about
+    # who may frame the page, where <base> may point, and where a form may
+    # post, and every one of those is already 'none' or 'self' in fact. So
+    # this is the part of CSP that is free, taken now, rather than the whole
+    # of it deferred forever. If a bundler ever arrives, script-src is the
+    # line to add.
+    #
+    # `always` on all four, which matters more here than usual: without it
+    # nginx sends a header only on 2xx/3xx, and the gate below answers 401 to
+    # every request from outside. Those are exactly the replies an attacker
+    # sees most of.
+    #
+    # NOT SET, on purpose: Strict-Transport-Security. It would be correct for
+    # the tunnel and ignored on the LAN (browsers only honour HSTS over TLS,
+    # and never for a bare IP), so it is safe -- but max-age is sticky in a
+    # way that is genuinely hard to walk back, and this is pre-alpha. When the
+    # door is properly open, turn it on at Cloudflare's edge rather than here,
+    # where it can also be turned off again.
+    #
+    # INHERITANCE, which is nginx's sharpest footgun and the reason these are
+    # repeated further down. add_header is NOT additive across levels: the
+    # moment a location declares one add_header of its own, it drops every
+    # add_header inherited from the server block. Two locations do that --
+    # `= /robots.txt` and `/api/` -- so both carry their own copy of these
+    # four. Any location that adds a header later has to copy them too, or it
+    # silently loses all four. Check with `curl -I`, never by reading.
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'none'; form-action 'self'" always;
 
     # ── What is public, and what is not ──────────────────────────────────
     #
@@ -138,21 +251,34 @@ server {
     # landing page pulls nothing local (Google Fonts and one link, that is
     # all), so two exact paths cover it completely.
     #
-    # GATED FOR NOW, which it was not before the hostname existed. The landing
-    # page is written to be read by strangers and a marketing page behind a
-    # password is not a marketing page — but it only became reachable by
-    # strangers today, and "let the world in" is a decision to make awake and
-    # on purpose rather than a side effect of switching a tunnel on.
+    # OPEN. This paragraph said "GATED FOR NOW" and described five gate lines
+    # to delete when the decision was made; the decision was evidently made,
+    # the lines went, and the paragraph stayed — so the file spent a while
+    # claiming a boundary it did not have. Corrected 2026-08-29 after checking
+    # rather than reading: served from a real nginx:alpine with this template,
+    # `/` answers 200 to a request arriving from off the allow list.
     #
-    # To open it: delete the five gate lines from each of these two blocks and
-    # `docker compose restart dashboard`. Nothing else has to change, and the
-    # dashboard itself stays behind its own gate below either way.
+    # Which is the intended shape. The landing page is written to be read by
+    # strangers and a marketing page behind a password is not a marketing
+    # page. To put the gate back, copy the five lines from `location /` below
+    # into each of these two blocks and `docker compose restart dashboard`.
+    #
+    # Note what is NOT protected by this being open or shut: the dashboard at
+    # /app/ is open too, deliberately, and what keeps it safe is
+    # DASHBOARD_REQUIRE_LOGIN and the bot's own authority layer rather than
+    # anything in this file. See the note on the /api/ block.
     # Pre-alpha. Open to anyone with the address, but not advertised to
     # crawlers -- a search result is far easier to create than to remove, and
     # the invite queue is not a support desk. Delete this block when the door
     # is genuinely open.
     location = /robots.txt {
         add_header Content-Type text/plain;
+        # Re-declared, not forgotten: the line above cost this location every
+        # add_header from the server block. See the inheritance note up there.
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'none'; form-action 'self'" always;
         return 200 "User-agent: *\nDisallow: /\n";
     }
 
@@ -192,16 +318,27 @@ server {
     # nothing under /app/ to serve but index.html, and this spelling has none
     # of alias's footguns.
     #
-    # The page does now load one file of its own — /dash/morph.js — and this
-    # block still does not have to become a prefix location, because that file
-    # is not under /app/. It is an absolute path, so the catch-all `location /`
-    # below answers it, with the same five gate lines and the same document
-    # root. Checked rather than assumed: through the tunnel from an address off
-    # the allow list, /dash/morph.js answers 401 exactly as /app/ does, and
-    # from the LAN it answers 200 as application/javascript.
+    # The page does now load files of its own — /dash/morph.js and the card
+    # /dash/og.png — and this block still does not have to become a prefix
+    # location, because neither is under /app/. They are absolute paths, and
+    # `location /dash/` below answers them.
+    #
+    # THIS PARAGRAPH USED TO SAY the catch-all `location /` answered them "with
+    # the same five gate lines", and that off the allow list /dash/morph.js
+    # answered 401 exactly as /app/ does. Both halves were wrong, and the
+    # second was wrong while claiming to have been checked. `location /dash/`
+    # is a longer prefix, so it wins over `location /` and there are no gate
+    # lines in it. Measured 2026-08-30, forging an off-list address at a
+    # trusted socket: /index.html 401, /gatehouse/ 401, /dash/morph.js 200.
+    #
+    # 200 is the correct answer — see the block itself for why, and og.png has
+    # to be fetchable by Discord's unfurler besides. The defect was the file
+    # describing a boundary it does not have, which is the same defect the
+    # `location = /` paragraph above was corrected for the day before.
     #
     # A file added under /app/ ITSELF would still need the prefix location.
-    # Putting new ones next to morph.js is the cheaper habit.
+    # Putting new ones next to morph.js is the cheaper habit — but note that
+    # doing so puts them OUTSIDE the gate, which is a decision, not a detail.
     #
     # The dashboard's own API constant is '/api', rooted at the host rather
     # than relative, so serving the page from /app/ does not disturb it.
@@ -312,6 +449,10 @@ server {
 
         proxy_pass ${PI_API}/auth/;
         proxy_set_header X-Status-Token "${STATUS_TOKEN}";
+        # Where the person is. See the geo block at the top of this file. Set
+        # on both /api/ blocks, and it has to stay on both: a location that
+        # forgets it sends whatever the client sent instead.
+        proxy_set_header X-Quill-Local $local_console;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $forwarded_proto;
         proxy_connect_timeout 3s;
@@ -324,6 +465,9 @@ server {
 
         proxy_pass ${PI_API}/;
         proxy_set_header X-Status-Token "${STATUS_TOKEN}";
+        # Where the person is. See the geo block at the top of this file, and
+        # identify() in src/web/authority.js for what the bot does with it.
+        proxy_set_header X-Quill-Local $local_console;
         proxy_set_header Host $host;
         # Whether the browser is actually on https, which decides whether the
         # session cookie may carry Secure. Setting Secure on a LAN http page
@@ -347,5 +491,14 @@ server {
 
         # The page polls; a cached status is a lie.
         add_header Cache-Control "no-store" always;
+        # Re-declared, not forgotten: the line above cost this location every
+        # add_header from the server block. See the inheritance note up there.
+        # nosniff is the one that earns its place on this block in particular —
+        # everything under /api/ is JSON and none of it should ever be talked
+        # into being script.
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'none'; form-action 'self'" always;
     }
 }

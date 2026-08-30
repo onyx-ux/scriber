@@ -148,10 +148,24 @@ export function admissionOf(cfg, userId, db = null) {
 // credential to present, and rather than treat that as "open to everyone" the
 // server refuses every action and says why. Turning the dashboard from a
 // window into a control panel has to be something the operator did on purpose.
+// The header first, the query string second.
+//
+// Both are accepted because the test suite reaches this server without an
+// nginx in front of it and `?token=` is how it knocks — eight files and some
+// dozens of call sites, which is a lot of churn to buy a property the browser
+// never exercises. What the order buys instead is cheap: nginx's own header is
+// the credential in production, so a token that has leaked into somewhere URLs
+// end up — a log line, browser history, a Referer — can no longer take
+// precedence over it on a request that already carried the real one.
+//
+// The query string remains the worse habit of the two. Prefer the header
+// anywhere new.
+const tokenFrom = (req, url) => req.headers['x-status-token'] || url.searchParams.get('token');
+
 export function checkDoor({ req, url, cfg, mutating }) {
   if (!mutating) {
     if (!cfg.statusToken) return null;
-    const given = url.searchParams.get('token') || req.headers['x-status-token'];
+    const given = tokenFrom(req, url);
     return given === cfg.statusToken ? null : { status: 401, message: 'bad token' };
   }
 
@@ -163,7 +177,7 @@ export function checkDoor({ req, url, cfg, mutating }) {
         'Set STATUS_TOKEN in pi-service/.env (and in the dashboard) to enable them.',
     };
   }
-  const given = url.searchParams.get('token') || req.headers['x-status-token'];
+  const given = tokenFrom(req, url);
   return given === cfg.statusToken ? null : { status: 401, message: 'bad token' };
 }
 
@@ -187,6 +201,54 @@ export function checkDoor({ req, url, cfg, mutating }) {
 // players in stops handing anyone with the token the keys to the machinery. It
 // is off by default on purpose — turning it on before you have signed in once
 // would lock you out of your own Pi.
+//
+// WHICH USED TO MEAN the flag was the only thing standing between the internet
+// and `dev`. /api/ has no gate on it — it cannot have one, the sign-in flow
+// lives inside it — and nginx attaches a valid X-Status-Token to every request
+// that reaches it, so checkDoor above always passes. With the flag off, "can
+// reach this server" and "is the operator" were the same sentence, and the
+// repo ships the flag off in three places (config/env.js, .env.example, and
+// the pre-oauth ROLLBACK.md). One restored .env was the distance between a
+// private bot and an open one.
+//
+// So the fallback now asks WHERE as well as WHETHER. nginx sets X-Quill-Local
+// from `geo $local_console` — the visitor's own address after realip has
+// rewritten it — and overwrites the field on every proxied request, so it
+// cannot be sent in from outside. A request down the tunnel carries "0" no
+// matter what its sender wrote.
+//
+// The console keeps working: an operator is on the LAN, so their request is
+// local and the fallback still hands them `dev` with no Discord account, which
+// is the whole reason the fallback exists. What ends is a stranger inheriting
+// it because a config file was restored from a backup.
+//
+// TWO SIGNALS, and the order between them is the whole design.
+//
+// If nginx spoke, believe nginx. It sets the field on every proxied request
+// from `geo $local_console`, so it is always present and always overwritten —
+// "1" for the house, "0" for a visitor down the tunnel — and a client cannot
+// smuggle its own past it.
+//
+// If nothing set it, the request did not come through nginx at all, and the
+// only honest thing left to ask is who is on the other end of the socket.
+// Loopback means the caller is inside this container: a health check, a test
+// harness on 127.0.0.1. That is a fact about the connection rather than
+// something a client asserts, and nginx can never look like it — it reaches
+// this bot across the compose bridge as 172.21.0.x, so a tunnel request cannot
+// arrive by this door even if it somehow arrived without the header.
+//
+// The two together are why the test suite needed no rewriting for this: it
+// calls the server on 127.0.0.1 with no proxy in front, which is genuinely
+// local and genuinely says so. Sending X-Quill-Local: 0 is how a test asks
+// for the tunnel's answer instead — see no-session.test.js.
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+const isLocalConsole = (req) => {
+  const said = req.headers['x-quill-local'];
+  if (said !== undefined) return said === '1';
+  return LOOPBACK.has(req.socket?.remoteAddress ?? '');
+};
+
 export function identify({ req, db, cfg, client }) {
   const token = cookieFrom(req.headers.cookie);
   const session = token ? readSession(db, cfg, token) : null;
@@ -198,7 +260,8 @@ export function identify({ req, db, cfg, client }) {
     return buildViewer({ db, cfg, userId: session.userId, username: session.username, guildsOwned });
   }
 
-  return cfg.dashboardRequireLogin ? buildViewer({ db, cfg, userId: null }) : OPERATOR;
+  if (cfg.dashboardRequireLogin) return buildViewer({ db, cfg, userId: null });
+  return isLocalConsole(req) ? OPERATOR : buildViewer({ db, cfg, userId: null });
 }
 
 // --- 3. the act ---

@@ -584,11 +584,15 @@ test('a name in the write-up links to that entry', async (t) => {
   assert.match(markup, /<button type="button" class="wiki" data-entry="npcs:wren halloway">Wren Halloway<\/button>/);
   assert.doesNotMatch(markup, /\[\[/, 'the brackets are how a link is written, not how it is read');
 
-  // And following it lands on that entry rather than merely selecting it.
+  // And following it lands on that name in the list rather than merely
+  // selecting it in the column.
   await page.click(['[data-entry]'], { entry: 'npcs:wren halloway' },
                    (m) => /notary clerk/.test(m));
-  assert.match(page.body(), /Wren Halloway/);
-  assert.match(page.body(), /First met in\s+Session 1/, 'and the entry says which night, by number');
+  const landed = page.body();
+  assert.match(landed, /class="cast-row" id="entry-npcs-wren-halloway"/,
+               'and there is a row to scroll to, with an id a browser will accept');
+  assert.match(landed, /class="ledger-night"[\s\S]*?<span class="n">Session 1<\/span>/,
+               'under the night it walked on, named by number');
 });
 
 // A name that has no entry must not be dressed as a link to one.
@@ -614,6 +618,40 @@ test('items are one list, and coin is not on it', async (t) => {
   assert.match(markup, /A brass key stamped with a wren/);
   assert.doesNotMatch(markup, /450 gold pieces/, 'a quantity is what a night was worth, not a thing');
   assert.match(markup, /class="ledger\b/, 'and what is drawn is a list rather than a page per item');
+});
+
+// --- the cast list ---------------------------------------------------------
+
+test('people are one list, and a returning name says which nights', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-shelf]'], { shelf: 'npcs' }, (m) => /notary clerk/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /class="ledger\b/, 'a list, not a page per name');
+  assert.match(markup, /<div class="nm">Wren Halloway<\/div>/);
+
+  // Met on the first night and named again on the second. The row belongs to
+  // the night the name walked on and carries the return, rather than being
+  // printed again under session two.
+  assert.match(markup, /class="again">back in <b>2<\/b>/);
+  assert.equal((markup.match(/<div class="nm">Wren Halloway<\/div>/g) ?? []).length, 1,
+               'a recurring name is on the list once');
+});
+
+test('places are one list too, in the order the party found them', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-shelf]'], { shelf: 'places' }, (m) => /Ashen Vaults/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /class="ledger\b/);
+  assert.match(markup, /<div class="nm">The Ashen Vaults<\/div>/);
+  assert.match(markup, /in the order the party found them/);
 });
 
 // --- the pane's own furniture ---------------------------------------------

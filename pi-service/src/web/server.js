@@ -192,14 +192,31 @@ export function startStatusServer({
   };
 
   const server = createServer(async (req, res) => {
-    // The dashboard may be served from another machine, so the browser needs
-    // permission to talk to this. The allow-list is explicit about methods and
-    // the token header now that POST exists — a wildcard that lets any page on
-    // the internet fire actions at a LAN bot is a different thing entirely
-    // from one that lets it read a session count.
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Status-Token');
+    // NO CORS HEADERS, as of 2026-08-30. There used to be three:
+    //
+    //   Access-Control-Allow-Origin: *
+    //   Access-Control-Allow-Methods: GET, POST, OPTIONS
+    //   Access-Control-Allow-Headers: Content-Type, X-Status-Token
+    //
+    // They were written when the dashboard ran on the PC and really was on
+    // another origin. It does not any more: nginx serves the page and proxies
+    // /api/ on the same host, so every request the dashboard makes is
+    // same-origin and none of them were ever using these.
+    //
+    // What they did instead was tell any page on the internet that it might
+    // read this API's answers. That was survivable while the only thing on the
+    // far side was a session count, and stopped being survivable when POST
+    // arrived — the comment here used to reason that a wildcard was fine
+    // because credentials are not allowed with it, which holds only while
+    // authority comes from a cookie. It does not: with DASHBOARD_REQUIRE_LOGIN
+    // off, authority came from the ABSENCE of a cookie plus the token nginx
+    // injects, so "no credentials needed" was the attack rather than the
+    // mitigation. identify() in authority.js now requires a local address for
+    // that path, and this removes the delivery mechanism as well.
+    //
+    // Nothing needs them back unless the dashboard is genuinely served from
+    // another origin again — and the answer then is to name that origin here,
+    // never to restore the wildcard.
     res.setHeader('Cache-Control', 'no-store');
 
     if (req.method === 'OPTIONS') {

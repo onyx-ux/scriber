@@ -97,6 +97,20 @@
     --shadow-hard: #000A;
     --scrim:    #08090CCC;
     --hover:    #1C222C;  /* the wash under a hovered row */
+
+    /* These three exist in the light set too, and for a long time ONLY there.
+       A custom property with no value does not fall back to the browser's
+       default — the declaration using it is invalid at computed-value time and
+       the property resets to `initial`. So on the dark theme, which is the one
+       most people get, `::selection` took `background: transparent` and the
+       highlight painted nothing: text was selecting and copying perfectly and
+       showing no sign of it, which reads exactly like text that cannot be
+       selected at all. The banner lost its ground and its rule the same way.
+       Same family as their light counterparts — the alarm is the red pair, the
+       selection is the pen — pitched for a dark ground. */
+    --alarm-bg: #2B1918;
+    --alarm-br: #6B322D;
+    --select:   #343E72;
   }
 
   :root[data-theme="light"] {
@@ -1168,6 +1182,7 @@
   .ledger-night {
     display: flex; align-items: baseline; gap: 12px;
     padding: 22px 0 8px; border-bottom: 1px solid var(--rule);
+    scroll-margin-top: calc(var(--above, 76px) + 16px);
   }
   .ledger-night .n {
     font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
@@ -1393,41 +1408,82 @@
      ======================================================================
      The summariser already names every NPC and every place, once per session,
      and then that naming is stranded in the session it came from. Read down
-     the campaign instead of across it and the same names line up into an
-     entry: who they are, the night they walked on, and what has been said
-     about them since.  */
+     the campaign instead of across it and the same names line up into a cast
+     list: who they are, the night they walked on, and what has been said
+     about them since.
 
-  .entries { display: flex; flex-direction: column; gap: 2px; margin-top: 26px; }
-  .entry {
-    display: grid; grid-template-columns: 186px minmax(0, 1fr);
-    gap: 28px; padding: 24px 0; border-bottom: 1px solid var(--rule);
+     Read the way the items are read — one list, down the page, under the
+     night that put each name on it. A person used to be a page, and the page
+     held a name, a date and two sentences, so reading everyone the party met
+     meant opening forty of them.
+
+     The headings come from `first` rather than from every night a name is in.
+     An item's whole life is the night it was found; a person recurs, and the
+     one night that is uniquely theirs is the night they walked on.  */
+
+  .cast-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 22px; padding: 16px 0 17px 2px;
+    border-bottom: 1px solid var(--rule);
+    scroll-margin-top: calc(var(--above, 76px) + 16px);
   }
-  .entry:last-child { border-bottom: 0; }
-  .entry-who { min-width: 0; }
-  .entry-name {
+  .cast-row .nm {
     font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
-    font-size: 19px; line-height: 1.25; letter-spacing: -.005em;
+    font-size: 17.5px; font-weight: 400; letter-spacing: -.005em;
+    line-height: 1.3; color: var(--text);
   }
-  .entry-first {
-    display: block;
-    font-family: var(--mono); font-size: 11px; letter-spacing: .07em;
-    text-transform: uppercase; color: var(--dim); margin-top: 8px; line-height: 1.7;
+
+  /* The nights a name came back in, on the line the name is on. An item has
+     one night and nothing to say about it; a person has a run of them, and
+     that run read down the right-hand edge is the campaign's recurring cast —
+     which is the one thing a shelf of separate pages could not show at all. */
+  .cast-row .again {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+    white-space: nowrap; padding-top: 6px;
   }
-  .entry-first b { display: block; font-weight: 500; color: var(--pen); margin: 2px 0 4px; }
-  .entry-said { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-  .entry-said:empty { display: none; }
-  .entry-said .point { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 14px; }
-  .entry-said .point.bare { display: block; }
-  .entry-said .s {
-    font-family: var(--mono); font-size: 11px; color: var(--dim);
-    padding-top: 4px; letter-spacing: .04em;
+  .cast-row .again b { font-weight: 400; color: var(--text-2); }
+
+  .cast-said { grid-column: 1 / -1; margin-top: 6px; min-width: 0; }
+  .cast-said p {
+    margin: 0; font-family: var(--serif); font-size: 15px;
+    line-height: 1.62; color: var(--text-2);
   }
-  .entry-said .p { font-size: 15.5px; line-height: 1.66; color: var(--text-2); }
+  .cast-said p + p { margin-top: 7px; }
+
+  /* The highlighter, spent here the way the rest of the page spends it: on
+     the line somebody will want to read out loud. */
   .entry-aside {
-    margin-top: 4px; border-left: 2px solid var(--mark); padding: 2px 0 2px 15px;
+    margin-top: 11px; border-left: 2px solid var(--mark); padding: 2px 0 2px 15px;
     font-size: 14.5px; line-height: 1.6; color: var(--text);
   }
-  .entry-aside + .entry-aside { margin-top: 10px; }
+  .entry-aside + .entry-aside { margin-top: 9px; }
+
+  /* Landed on, from the index or from a name in a write-up. A whole cast
+     entry washed yellow is a block of highlighter five lines deep, so the
+     mark goes down its edge instead: the same arrival the item ledger uses,
+     at the size this row actually is. */
+  .cast-row.flash { animation: landed 1.5s ease-out; }
+  @keyframes landed {
+    from { box-shadow: inset 3px 0 0 var(--mark); background: var(--hover); }
+    to   { box-shadow: inset 3px 0 0 transparent; background: transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) { .cast-row.flash { animation: none; } }
+
+  /* An index row. The column is the way into the list rather than a second
+     copy of it, so it carries the two things you scan a cast for — the name
+     and the night — and leaves the prose to the page. */
+  .sess-list.index { gap: 1px; }
+  .sess.thin { padding: 10px 14px 11px; display: flex; align-items: baseline; gap: 12px; }
+  .sess.thin .ref { font-size: 15px; min-width: 0; }
+  .sess.thin .when {
+    display: inline; margin-top: 0; margin-left: auto; white-space: nowrap;
+  }
+
+  @media (max-width: 700px) {
+    .cast-row { grid-template-columns: minmax(0, 1fr); }
+    .cast-row .again { padding-top: 0; }
+  }
 
   /* The column holds two pages in a clipped frame and slides between them,
      the same gesture the campaign rail uses one level out: choose, and what
@@ -1491,15 +1547,6 @@
     .shelf-page { transition-duration: .01ms; }
   }
 
-    .comp-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-  .comp-count { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
-  .comp-bar { margin-top: 30px; display: flex; align-items: center; gap: 10px;
-               flex-wrap: wrap; }
-
-  @media (max-width: 900px) {
-    .entry { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  }
-
   @media (max-width: 1180px) {
     .pane-main { padding: 30px 26px 48px; }
     .sessions { flex: none; }
@@ -1541,6 +1588,11 @@
      The typefaces load on demand, from loadGateFonts(). Most visits to this
      page never see this screen and should not pay for three extra families.  */
   body.gate-open { background: #E6E8E3; }
+  /* The palette is the light one here whatever the theme says, so the
+     selection has to be too. Left to the token, a dark-theme reader gets the
+     dark band under this screen's dark type and cannot read what they have
+     just selected. */
+  body.gate-open ::selection { background: #C9D0EE; }
   body.gate-open .sheet,
   body.gate-open .top,
   body.gate-open #banner { display: none; }
@@ -1661,7 +1713,24 @@
 </div>
 
 <div id="modal"></div>
-<div class="toast" id="toast"></div>
+<!-- Every answer this page gives arrives here — the confirmation, the
+     refusal, the "can't reach the bot". Without a live region a screen
+     reader is told none of it: you press Approve and nothing is announced
+     either way, which makes the whole outcome channel of the tool silent.
+     gatehouse.html has had this since it was written; this page just never
+     got it.
+
+     role="status" already implies polite and atomic; both are spelled out
+     anyway, the way the gatehouse spells out aria-live, because older
+     assistive tech does not always infer them.
+
+     Deliberately ONE static region rather than swapping in role="alert" for
+     the offline notice. Changing role at the same moment as the text is a
+     reliable way to have the announcement dropped entirely — screen readers
+     read a live region's configuration when it is registered, not when it
+     changes. A failure already sits on screen for 9s against a success's
+     4.5s (see toast()), which is what actually gives it the longer hearing. -->
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Patches a panel instead of replacing it, so a poll that lands while
      somebody is typing does not take their caret. Ordinary script, absolute
@@ -1674,7 +1743,24 @@
 // Pi's port can stay on the LAN even when the dashboard is published.
 //
 // ?api=http://host:port still overrides it, for pointing at a second bot.
-const API = new URLSearchParams(location.search).get('api') || window.SCRIBER_API || '/api';
+// `?api=` and window.SCRIBER_API point the page at a bot somewhere else. They
+// are development affordances and they are now restricted to a path on this
+// origin, which they were not until 2026-08-30.
+//
+// This page is public at quill.thehouseofcake.org. An absolute value meant a
+// link on the REAL hostname could turn the real dashboard into a client of
+// somebody else's server: no cookie theft (fetch defaults to same-origin
+// credentials) and no injection (everything drawn goes through esc()/wiki()),
+// but the whole interface became theirs to write, and every correction or
+// roster search typed into it was posted to them. A convincing password prompt
+// on your own domain is worth more to an attacker than an alert box.
+//
+// A leading slash that is not followed by another slash or a backslash is a
+// path here and cannot be a host — `//evil.tld` and `/\evil.tld` are both
+// read as protocol-relative by browsers, so both are refused.
+const samePath = (v) => (typeof v === 'string' && /^\/(?![/\\])/.test(v) ? v : null);
+const API = samePath(new URLSearchParams(location.search).get('api'))
+  || samePath(window.SCRIBER_API) || '/api';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
@@ -1691,7 +1777,7 @@ const view = {
   tab: 'notes',         // notes | table | corrections | compendium | settings
   shelf: 'sessions',    // what the middle column lists: sessions | npcs | places | items
   shelfPicking: true,   // the column showing the four rather than one of them
-  entry: null,          // the chosen npc/place/item, as "<shelf>:<key>"
+  entry: null,          // the name last landed on in the list, as "<shelf>:<key>"
   meetingId: null,
   editing: null,        // the user id whose character name is being typed
   fixing: false,        // the correction form is open on the notes being read
@@ -3099,17 +3185,6 @@ function firstRun() {
 const PILL_WORD = { posted: 'posted', approval: 'approval', failed: 'failed',
                     recording: 'recording', queued: 'queued', working: 'working' };
 
-// What the third tab is called depends on what the column is listing, because
-// that tab IS the reading pane — a session's write-up, or whoever you just
-// picked out of the campaign.
-const READING_NAME = {
-  sessions: 'Notes',
-  npcs: 'NPC',
-  places: 'Place',
-  // Plural, because items are read as one list rather than one at a time.
-  items: 'Items',
-};
-
 const SHELVES = [
   ['sessions', 'Sessions'],
   ['npcs', 'NPCs'],
@@ -3217,86 +3292,56 @@ function columnList() {
     return `<div class="empty"><div class="say">${say[0]}</div><div class="quiet">${say[1]}</div></div>`;
   }
 
-  return `<div class="sess-list">${list.map((e) => `
-    <button class="sess${view.entry === `${view.shelf}:${e.key}` ? ' on' : ''}"
+  // An index, not a second copy. The list itself is in the pane now, so the
+  // column keeps the two things you scan a cast for — the name and the night
+  // it walked on — and picking one lands on that name in the list. The rest
+  // of what these rows used to carry, the opening line of what the write-ups
+  // say, was the same sentence the pane was already showing.
+  return `<div class="sess-list index">${list.map((e) => `
+    <button class="sess thin${view.entry === `${view.shelf}:${e.key}` ? ' on' : ''}"
             data-key="entry-${esc(String(e.key))}"
             data-entry="${view.shelf}:${esc(e.key)}">
-      <div class="l1"><span class="ref">${esc(e.name)}</span></div>
+      <span class="ref">${esc(e.name)}</span>
       <span class="when">${esc(sessionName(e.first))}</span>
-      ${e.said[0] ? `<div class="say">${esc(trim(e.said[0].text, 120))}</div>` : ''}
-      ${e.asides.length || e.seen.length > 1 ? `<div class="facets">
-        ${e.seen.length > 1 ? `<span>${plural(e.seen.length, 'session')}</span>` : ''}
-        ${e.asides.length ? `<span>${plural(e.asides.length, 'aside')}</span>` : ''}
-      </div>` : ''}
     </button>`).join('')}</div>`;
 }
 
-// The reading pane, when what you picked was not a session.
-function entryPane() {
+// The shelf, as one document.
+//
+// Items, people and places are the same shape now: a list, read down the page,
+// grouped under the night that put each line on it. A person used to be a
+// page — a name, a date, and the sentence the summariser wrote on the night
+// they walked on — so reading everyone the party met meant opening forty
+// pages to collect what one list could hold, and reading down the cast is the
+// thing anybody actually wants from this shelf.
+function shelfPane() {
   if (!compendium || compendium.campaignId !== view.campaignId || compendium.loading) {
     return '<div class="quiet" style="padding-top:30px">Reading back through the campaign…</div>';
   }
-
-  // Nothing selected means nothing on the shelf: settleEntry() opens the first
-  // name the moment there is one, so this is the empty state rather than a
-  // request for a click. It says what is missing and what fills it.
-  const [kind, key] = String(view.entry ?? '').split(/:(.*)/);
-  if (kind !== view.shelf || key == null || key === '') {
-    const read = compendium.story?.length ?? 0;
-    const empty = view.shelf === 'places'
-      ? { head: 'Nowhere yet.', kept: 'a place' }
-      : { head: 'Nobody yet.', kept: 'a name' };
-    return `
-      <div class="kicker" style="margin-top:26px">${esc(READING_NAME[view.shelf] || '')}</div>
-      <h1 class="display sm" style="margin-top:12px">${empty.head}</h1>
-      <div class="say-2 measure">
-        ${read
-          ? `Quill has read ${plural(read, 'write-up')} for this campaign and none of them named
-             ${empty.kept} worth keeping. The next session that does will put it here.`
-          : `Nothing is written up yet. Record a session, and every name in the recap lands here
-             with the night it first turned up.`}
-      </div>`;
+  if (compendium.error) {
+    return `<div style="padding-top:30px">
+      <div class="say-2">That did not read back — ${esc(compendium.error)}</div>
+      <button type="button" class="btn sm" style="margin-top:16px" data-rebuild-compendium>Try again</button>
+    </div>`;
   }
+  return view.shelf === 'items' ? itemLedger() : castLedger();
+}
 
-  const e = (compendium[kind] ?? []).find((x) => x.key === key);
-  if (!e) return '<div class="quiet" style="padding-top:30px">That entry is no longer in the notes.</div>';
-
-  // Everything on this page is prose the summariser wrote about somebody, so
-  // every other name in it is a page of its own. The entry being read is left
-  // out of its own vocabulary — a link back to where you already are is not a
-  // connection, it is a loop.
-  const here = `${kind}:${e.key}`;
-
+// What a ledger opens with, and the rule that divides it. Written once for all
+// three shelves so they cannot drift into three slightly different pages.
+function ledgerHead(kicker, head, say) {
   return `
-    <div class="kicker" style="margin-top:26px">${kind === 'places' ? 'Place' : 'NPC'}</div>
-    <h1 class="display sm" style="margin-top:12px">${esc(e.name)}</h1>
-    <div class="say-2 measure">
-      ${kind === 'places' ? 'First gone to in' : 'First met in'}
-      ${esc(sessionName(e.first))}, ${esc(longDate(e.first.startedAt))}.
-      ${e.seen.length > 1 ? `Named again in ${
-        e.seen.slice(1, 5).map((x) => esc(sessionName(x))).join(', ')
-      }${e.seen.length > 5 ? ` and ${plural(e.seen.length - 5, 'night')} more` : ''}.` : ''}
-    </div>
+    <div class="kicker" style="margin-top:26px">${esc(kicker)}</div>
+    <h1 class="display sm" style="margin-top:12px">${esc(head)}</h1>
+    <div class="say-2 measure">${say}</div>`;
+}
 
-    ${e.said.length ? `
-      <div class="cap" style="margin:38px 0 14px">What the write-ups say</div>
-      <div class="entry-said measure">
-        ${e.said.map((pt) => `
-          <div class="point${e.said.length > 1 ? '' : ' bare'}">
-            ${e.said.length > 1 ? `<span class="s">${esc(String(pt.session.sessionNumber ?? ''))}</span>` : ''}
-            <span class="p">${wiki(pt.text, here)}</span>
-          </div>`).join('')}
-      </div>` : ''}
-
-    ${e.asides.length ? `
-      <div class="cap" style="margin:38px 0 14px">Worth remembering</div>
-      <div class="measure">
-        ${e.asides.map((a) => `<div class="entry-aside">${wiki(a.text, here)}</div>`).join('')}
-      </div>` : ''}
-
-    <div class="comp-bar">
-      ${e.seen.map((x) => `<button type="button" class="btn sm" data-session="${x.meetingId}">
-        Open ${esc(sessionName(x))}</button>`).join('')}
+function nightRule(session) {
+  return `
+    <div class="ledger-night" id="night-${session.meetingId}" data-key="night-${session.meetingId}">
+      <span class="n">${esc(sessionName(session))}</span>
+      <span class="d">${esc(longDate(session.startedAt))}</span>
+      <button type="button" class="btn sm ghost" data-session="${session.meetingId}">Open</button>
     </div>`;
 }
 
@@ -3313,52 +3358,125 @@ function itemNights(items) {
   return nights;
 }
 
-// One list, holding every item the campaign has come away with.
-//
-// An item used to be a page. There was never more to put on it than the one
-// sentence the summariser wrote on the night it was found, so the page was a
-// click that led to that sentence in a larger font — and reading down the
-// campaign's haul, which is the thing anybody actually wants from this shelf,
-// meant opening forty of them.
-function itemsPane() {
-  if (!compendium || compendium.campaignId !== view.campaignId || compendium.loading) {
-    return '<div class="quiet" style="padding-top:30px">Reading back through the campaign…</div>';
+// The cast, under the night each name turned up. Grouped on `first` and not on
+// every night a name appears in: an item belongs to one evening, but a person
+// recurs, and printing them again under each return would make the list longer
+// than the campaign.
+function castNights(list) {
+  const nights = [];
+  for (const e of list ?? []) {
+    const at = nights.find((x) => x.session.meetingId === e.first.meetingId);
+    if (at) at.rows.push(e);
+    else nights.push({ session: e.first, rows: [e] });
   }
-  if (compendium.error) {
-    return `<div style="padding-top:30px">
-      <div class="say-2">That did not read back — ${esc(compendium.error)}</div>
-      <button type="button" class="btn sm" style="margin-top:16px" data-rebuild-compendium>Try again</button>
-    </div>`;
-  }
+  return nights;
+}
 
+// A folded key is lowercase words with spaces between them, and an id may not
+// carry a space. One function, so the row that gets written and the row that
+// gets scrolled to can only ever be the same row.
+const entryId = (kind, key) => `entry-${kind}-${String(key ?? '').replace(/\s+/g, '-')}`;
+
+// One list, holding every item the campaign has come away with.
+function itemLedger() {
   const items = compendium.items ?? [];
   if (!items.length) {
-    return `
-      <div class="kicker" style="margin-top:26px">Items</div>
-      <h1 class="display sm" style="margin-top:12px">Nothing found yet.</h1>
-      <div class="say-2 measure">
-        Anything a write-up names as loot collects here, under the night the party came away with it.
-        Coin and experience are left out — those are what a night was worth rather than something to carry.
-      </div>`;
+    return ledgerHead('Items', 'Nothing found yet.', `
+      Anything a write-up names as loot collects here, under the night the party came away with it.
+      Coin and experience are left out — those are what a night was worth rather than something to carry.`);
   }
 
   const nights = itemNights(items);
 
   return `
-    <div class="kicker" style="margin-top:26px">Items</div>
-    <h1 class="display sm" style="margin-top:12px">${esc(plural(items.length, 'item'))}, in the order they were found.</h1>
-    <div class="say-2 measure">
+    ${ledgerHead('Items', `${plural(items.length, 'item')}, in the order they were found.`, `
       Nothing here was written for this page — every line is what the summariser said at the time,
-      gathered out of ${esc(plural(nights.length, 'write-up'))}. Coin and experience are left out.
-    </div>
+      gathered out of ${esc(plural(nights.length, 'write-up'))}. Coin and experience are left out.`)}
     <div class="ledger measure">
       ${nights.map(({ session, rows }) => `
-        <div class="ledger-night" id="night-${session.meetingId}" data-key="night-${session.meetingId}">
-          <span class="n">${esc(sessionName(session))}</span>
-          <span class="d">${esc(longDate(session.startedAt))}</span>
-          <button type="button" class="btn sm ghost" data-session="${session.meetingId}">Open</button>
-        </div>
+        ${nightRule(session)}
         ${rows.map((row) => `<div class="ledger-row"><span class="thing">${wiki(row.text)}</span></div>`).join('')}`).join('')}
+    </div>`;
+}
+
+// What each of the two cast shelves calls itself. They differ in every
+// sentence — you meet people and you go places — and the one word that would
+// have covered both is "entries", which is what the software calls them and
+// not what they are.
+const CAST_WORDS = {
+  npcs: {
+    kicker: 'NPCs',
+    unit: 'name',
+    none: 'Nobody yet.',
+    order: 'in the order the party met them',
+    fills: 'Everyone a write-up names collects here, under the night the party met them.',
+  },
+  places: {
+    kicker: 'Places',
+    unit: 'place',
+    none: 'Nowhere yet.',
+    order: 'in the order the party found them',
+    fills: 'Everywhere a write-up names collects here, under the night the party first went there.',
+  },
+};
+
+// Everyone the party met, or everywhere it went, as one list.
+function castLedger() {
+  const w = CAST_WORDS[view.shelf];
+  const list = compendium[view.shelf] ?? [];
+  const read = compendium.story?.length ?? 0;
+
+  if (!list.length) {
+    return ledgerHead(w.kicker, w.none, read
+      ? `Quill has read ${esc(plural(read, 'write-up'))} for this campaign and none of them named
+         one worth keeping. ${esc(w.fills)}`
+      : `Nothing is written up yet. ${esc(w.fills)}`);
+  }
+
+  const nights = castNights(list);
+  // Every night that named somebody — which is where these lines came from,
+  // and not the same as the nights in the headings: a name introduced on the
+  // first night collects sentences from every night it comes back in.
+  const heard = new Set(list.flatMap((e) => e.seen.map((s) => s.meetingId))).size;
+
+  return `
+    ${ledgerHead(w.kicker, `${plural(list.length, w.unit)}, ${w.order}.`, `
+      Nothing here was written for this page — every line is what the summariser said at the time,
+      gathered out of ${esc(plural(heard, 'write-up'))}.`)}
+    <div class="ledger measure">
+      ${nights.map(({ session, rows }) => `
+        ${nightRule(session)}
+        ${rows.map(castRow).join('')}`).join('')}
+    </div>`;
+}
+
+// One name in the ledger: the name, the nights it came back in, whatever the
+// write-ups have said about it, and the aside that belongs to it.
+//
+// The return run leaves out the night in the heading above rather than the
+// first night in the list, and those are the same night only while a name is
+// sorted under the night it walked on. Matched on the meeting rather than
+// sliced off the front, so it stays true if that ever stops being the case.
+function castRow(e) {
+  const here = `${view.shelf}:${e.key}`;
+  const back = e.seen
+    .filter((s) => s.meetingId !== e.first.meetingId)
+    .map((s) => s.sessionNumber)
+    .filter((no) => no != null)
+    .sort((a, b) => a - b);
+  const shown = back.slice(0, 6);
+  const id = entryId(view.shelf, e.key);
+
+  return `
+    <div class="cast-row" id="${id}" data-key="${id}">
+      <div class="nm">${esc(e.name)}</div>
+      ${shown.length ? `<div class="again">back in <b>${
+        shown.map((no) => esc(String(no))).join(' · ')
+      }</b>${back.length > shown.length ? ` +${back.length - shown.length}` : ''}</div>` : ''}
+      ${e.said.length || e.asides.length ? `<div class="cast-said">
+        ${e.said.map((pt) => `<p>${wiki(pt.text, here)}</p>`).join('')}
+        ${e.asides.map((a) => `<div class="entry-aside">${wiki(a.text, here)}</div>`).join('')}
+      </div>` : ''}
     </div>`;
 }
 
@@ -3478,8 +3596,7 @@ function paneBody() {
   // somebody who was managing it a moment ago and is not now — gets the
   // reading rather than a screen of values they cannot move.
   if (view.tab === 'settings') return canManage() ? settingsTab() : sessionReader();
-  if (view.shelf === 'items') return itemsPane();
-  if (view.shelf !== 'sessions') return entryPane();
+  if (view.shelf !== 'sessions') return shelfPane();
   return sessionReader();
 }
 
@@ -4079,6 +4196,24 @@ async function buildCompendium() {
   attach(npcs);
   attach(places);
 
+  // Everything above is collected newest-first, because the session list is
+  // newest-first and collect() leans on that to find the night a name walked
+  // on. Read back, an entry runs the other way: it sits under that night, so
+  // its first line has to be the one that night wrote and the rest have to
+  // follow in the order the campaign added them. Sorted here rather than at
+  // the point of reading, so the list and the run of nights beside it can
+  // only ever agree.
+  const byNight = (a, b) => (a.sessionNumber ?? 0) - (b.sessionNumber ?? 0);
+  const chronological = (map) => {
+    for (const entry of map.values()) {
+      entry.seen.sort(byNight);
+      entry.said.sort((a, b) => byNight(a.session, b.session));
+      entry.asides.sort((a, b) => byNight(a.session, b.session));
+    }
+  };
+  chronological(npcs);
+  chronological(places);
+
   // Oldest first. The session column is newest-first because you want the
   // last night you played; a cast list is the opposite — you meet people in
   // the order the campaign met them, and session one is where most of them
@@ -4096,31 +4231,7 @@ async function buildCompendium() {
     places: [...places.values()].sort(order),
     items: items.sort((a, b) => (a.session.sessionNumber ?? 0) - (b.session.sessionNumber ?? 0)),
   });
-  settleEntry();
   paint();
-}
-
-// Open the first name on the shelf rather than asking for a click.
-//
-// The cast is sorted first-met-first, so entry one is the person this campaign
-// opened with — a good page to land on, and a real one. What it replaces was
-// two thirds of the window given over to the sentence "Pick somebody on the
-// left", printed beside a column that was already showing them.
-//
-// Only ever fills a blank. A name followed out of a write-up, or picked from
-// the column, has already said which one it wants and this must not overrule
-// it — hence the check that what is selected still exists on the shelf being
-// read, which is also what makes this safe to call after a rebuild.
-function settleEntry() {
-  if (view.shelf !== 'npcs' && view.shelf !== 'places') return;
-  if (!compendium || compendium.campaignId !== view.campaignId || compendium.loading) return;
-
-  const shelf = compendium[view.shelf] ?? [];
-  const [kind, key] = String(view.entry ?? '').split(/:(.*)/);
-  const held = kind === view.shelf && key && shelf.some((e) => e.key === key);
-  if (held) return;
-
-  view.entry = shelf.length ? `${view.shelf}:${shelf[0].key}` : null;
 }
 
 // The word each kind of entry uses for the night it turned up.
@@ -5190,6 +5301,22 @@ function renderModal() {
   $('imp-url')?.focus();
 }
 
+// Land on a line in a ledger and say which one. The wash names what you
+// arrived at and then goes: a highlight that stayed would still be there the
+// next time the shelf was opened, answering a question nobody had asked.
+//
+// The list is one document, so this is the whole of what following a name
+// does — no page is opened and nothing is left behind to go back to.
+function reveal(id) {
+  const target = document.getElementById(id);
+  if (!target) return;
+  const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  target.scrollIntoView?.({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+  target.classList?.remove('flash');
+  void target.offsetWidth;
+  target.classList?.add('flash');
+}
+
 // ==========================================================================
 // Painting
 // ==========================================================================
@@ -5647,43 +5774,34 @@ document.addEventListener('click', async (event) => {
     if (pick.dataset.shelf !== view.shelf) {
       view.shelf = pick.dataset.shelf;
       view.entry = null;
+      // A shelf opens at the top of its list. Nothing is picked out of it
+      // until somebody picks something, and the list is what there is to read.
       view.tab = 'notes';
-      // Land on the first name rather than on a request for a click. Does
-      // nothing while the compendium is still being read — buildCompendium
-      // calls this again when it has one.
-      settleEntry();
     }
     return paint();
   }
 
-  // An entry, picked from the column or followed out of a write-up. A
-  // wikilink in the prose is the same gesture as a row in the list, so it is
+  // A name, picked out of the index or followed out of a write-up. A
+  // wikilink in the prose is the same gesture as a row in the column, so it is
   // the same attribute — it just has to bring the column with it, because the
   // name it was following belongs to a shelf the reader may not be on.
   const entry = t.closest('[data-entry]');
   if (entry) {
-    const [kind] = String(entry.dataset.entry ?? '').split(':');
+    const [kind, key] = String(entry.dataset.entry ?? '').split(/:(.*)/);
     if (kind && kind !== view.shelf) view.shelf = kind;
     view.shelfPicking = false;
     view.entry = entry.dataset.entry;
     view.tab = 'notes';
-    return paint();
-  }
-
-  // A night in the item list, jumped to from the column. The wash says which
-  // one you landed on and then fades, because the list is one document and
-  // the alternative was scrolling it looking for a date.
-  const hop = t.closest('[data-jump]');
-  if (hop) {
-    const target = document.getElementById(hop.dataset.jump);
-    if (target && typeof target.scrollIntoView === 'function') {
-      target.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      target.classList?.remove('flash');
-      void target.offsetWidth;
-      target.classList?.add('flash');
-    }
+    paint();
+    // After the paint, because on a wikilink out of a write-up the row being
+    // aimed at does not exist until the shelf it belongs to has been drawn.
+    reveal(entryId(kind, key));
     return;
   }
+
+  // A night in the ledger, jumped to from the column.
+  const hop = t.closest('[data-jump]');
+  if (hop) { reveal(hop.dataset.jump); return; }
 
   // Fixing a misheard name from the write-up that has it.
   if (t.closest('[data-fix-name]')) { view.fixing = !view.fixing; return paint(); }

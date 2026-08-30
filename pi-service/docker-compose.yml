@@ -1,3 +1,29 @@
+# ── How much log any of this may keep ──────────────────────────────────
+#
+# Docker's default logging driver is json-file with NO rotation, so a
+# container's stdout grows without limit until something stops it. Nothing
+# was stopping it. src/ alone makes 145 console calls, this Pi has been up
+# continuously for weeks, and the file it all lands in sits on an SD card —
+# so the most likely way this install falls over has nothing to do with the
+# bot being wrong. It is a full disk, and a full disk on a Pi takes the
+# database down with everything else.
+#
+# 10 MB × 5 is fifty megabytes of history per service, which is far more than
+# anyone reads and can never become a problem. Rotation is by size, not by
+# age: a quiet month keeps a month, a loud night keeps a night, and either
+# way the ceiling is the same.
+#
+# An anchor rather than three copies. The nginx template argues the opposite
+# for its gate — repeat a security boundary so it reads in one place — and
+# that argument is right about a security boundary and wrong here. This is
+# one number that has to be the same in three services; three copies of it
+# is three chances for them to drift, and nothing would ever notice.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # This is what runs day-to-day on both the Pi and your PC — pulls the
   # image GitHub Actions already built for the right architecture, no local
@@ -6,6 +32,7 @@ services:
   bot:
     image: ghcr.io/onyx-ux/scriber:latest
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     ports:
       # The read-only status API the dashboard polls (STATUS_PORT). This is the
@@ -45,6 +72,7 @@ services:
   dashboard:
     image: nginx:alpine
     restart: unless-stopped
+    logging: *logging
     depends_on: [bot]
     ports:
       - '8095:80'
@@ -122,6 +150,7 @@ services:
   tunnel:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    logging: *logging
     depends_on: [dashboard]
     network_mode: host
     command: tunnel --no-autoupdate run

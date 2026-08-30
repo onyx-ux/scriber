@@ -610,7 +610,11 @@
 // that four out of five viewers are refused is an invitation to rattle a
 // locked door.
 
-const API = new URLSearchParams(location.search).get('api') || '/api';
+// Restricted to a path on this origin — see the longer note in index.html.
+// An absolute value here would be worth more than there, because this is the
+// page that shows the roster and grants access.
+const samePath = (v) => (typeof v === 'string' && /^\/(?![/\\])/.test(v) ? v : null);
+const API = samePath(new URLSearchParams(location.search).get('api')) || '/api';
 
 let me = null;
 let access = null;
