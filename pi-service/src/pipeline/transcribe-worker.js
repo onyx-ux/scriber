@@ -2,7 +2,7 @@ import { finishSession } from './finish-session.js';
 import { rebuildCapturedUtterances } from './recovery.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
 import { decideTranscribeAction } from './transcribe-schedule.js';
-import { applyTranscribeTarget, TARGET_PI, TARGET_PC } from './transcribe-target.js';
+import { applyTranscribeTarget, isValidTarget, TARGET_PC } from './transcribe-target.js';
 import { notifyTranscribeReminder } from '../delivery/transcribe-notify.js';
 import { notifyApprovalNeeded } from '../delivery/approval-notify.js';
 import { startLiveProgress } from '../delivery/live-progress.js';
@@ -44,15 +44,23 @@ export async function transcribeTick(
       continue;
     }
 
-    // "Use the Pi instead" deliberately opts out of the whole GPU schedule:
-    // it needs no PC, so it must not be gated on the PC answering.
-    const onPi = db.getSetting(`transcribe_target_${job.id}`) === 'pi';
-    const { action, reason } = decideTranscribeAction({
+    // A target chosen by hand deliberately opts out of the whole GPU
+    // schedule: neither the Pi nor Gemini needs the PC, so neither may be
+    // gated on the PC answering. Anything unrecognised (a hand-edited
+    // setting, a target from an older version) falls back to the GPU path,
+    // which is the one that waits rather than the ones that spend something.
+    const chosen = db.getSetting(`transcribe_target_${job.id}`);
+    const picked = isValidTarget(chosen) ? chosen : TARGET_PC;
+    const { action, reason, via } = decideTranscribeAction({
       job,
       now,
-      serverReachable: onPi ? true : serverReachable,
+      serverReachable: picked === TARGET_PC ? serverReachable : true,
       cfg,
     });
+
+    // `via` is the schedule diverting an unreachable-PC job to the cloud; an
+    // explicit choice already made above outranks it.
+    const target = picked === TARGET_PC && via ? via : picked;
 
     if (action === 'remind') {
       await notifyTranscribeReminder({ discordClient, cfg, meeting, jobId: job.id, now });
@@ -64,8 +72,8 @@ export async function transcribeTick(
 
     if (action !== 'run') continue;
 
-    console.log(`[transcribe] meeting ${meeting.id}: starting (${reason}${onPi ? ', on the Pi' : ''})`);
-    await runJob(db, discordClient, applyTranscribeTarget(cfg, onPi ? TARGET_PI : TARGET_PC), job, meeting);
+    console.log(`[transcribe] meeting ${meeting.id}: starting (${reason}, on ${target})`);
+    await runJob(db, discordClient, applyTranscribeTarget(cfg, target), job, meeting);
     return job.id; // one per tick
   }
 

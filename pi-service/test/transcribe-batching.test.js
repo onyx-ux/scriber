@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { writePcmWav } from '../src/pipeline/wav-merge.js';
-import { planBatches, transcribeAll, shouldBatch } from '../src/pipeline/transcribe.js';
+import { planBatches, transcribeAll, shouldBatch, shouldUseGemini } from '../src/pipeline/transcribe.js';
 
 const FORMAT = { sampleRate: 16000, channels: 1, bitsPerSample: 16 };
 const BYTES_PER_MS = 32;
@@ -286,5 +286,128 @@ test('transcribeAll routes through the batching decision', async () => {
       { onProgress: (done) => cleanSteps.push(done) }
     );
     assert.deepEqual(cleanSteps, [1, 2, 3, 4], 'unbatched reports per clip');
+  });
+});
+
+// --- the cloud rung ---
+//
+// Which engine runs is a separate decision from how the clips are grouped,
+// and it has one property worth defending above all the others: an audible
+// recording of somebody's evening must not leave the network because a probe
+// came back false. The GPU always wins when it can do the work.
+
+const CLOUD = { geminiTranscribe: true, geminiApiKey: 'gm-test' };
+
+test('the cloud stays off without both the switch and a key', () => {
+  const off = { ...CLOUD, whisperServerUrl: null };
+  assert.equal(shouldUseGemini({ ...off, geminiTranscribe: false }), false, 'a key alone is the summariser’s');
+  assert.equal(shouldUseGemini({ ...off, geminiApiKey: null }), false, 'a switch with no key is nothing');
+  assert.equal(shouldUseGemini({}), false);
+});
+
+test('a working GPU server always wins — it is faster and stays on the LAN', () => {
+  assert.equal(
+    shouldUseGemini({ ...CLOUD, whisperServerUrl: 'http://pc:8089' }, { serverReachable: true }),
+    false,
+    'turning the cloud on must not move every session’s audio off the network'
+  );
+});
+
+test('an unreachable GPU server is what the cloud is for', () => {
+  assert.equal(shouldUseGemini({ ...CLOUD, whisperServerUrl: 'http://pc:8089' }, { serverReachable: false }), true);
+  assert.equal(shouldUseGemini({ ...CLOUD, whisperServerUrl: null }), true, 'no PC at all is the same answer');
+});
+
+// An unprobed run (serverReachable null) is not evidence the PC is off.
+test('not having asked the PC yet is not the same as it being off', () => {
+  assert.equal(shouldUseGemini({ ...CLOUD, whisperServerUrl: 'http://pc:8089' }), false);
+});
+
+test('an explicit choice at /leave outranks the automatic ladder both ways', () => {
+  const withPc = { ...CLOUD, whisperServerUrl: 'http://pc:8089' };
+  assert.equal(
+    shouldUseGemini({ ...withPc, transcribeVia: 'gemini' }, { serverReachable: true }),
+    true,
+    'somebody pressed the button while the PC was up; that is still their call'
+  );
+  assert.equal(
+    shouldUseGemini({ ...withPc, transcribeVia: 'pi' }, { serverReachable: false }),
+    false,
+    'choosing the Pi must mean the Pi, not "anything that is not the PC"'
+  );
+});
+
+// Proves transcribeAll actually routes on the decision. The whisper config is
+// deliberately broken, so anything reaching whisper at all would fail loudly
+// rather than pass by accident.
+test('transcribeAll hands the whole session to the cloud path', async () => {
+  await withTempDir(async (dir) => {
+    const utterances = [];
+    for (let i = 0; i < 3; i += 1) {
+      utterances.push({
+        userId: `u${i}`,
+        displayName: `Player ${i}`,
+        wavPath: await clip(dir, `${i}.wav`, 900),
+        startMs: i * 1000,
+        endMs: i * 1000 + 500,
+      });
+    }
+
+    const cfg = {
+      ...BROKEN_WHISPER,
+      ...CLOUD,
+      whisperServerUrl: null,
+      transcribeBatching: 'auto',
+      geminiTranscribeModel: 'gemini-3.5-transcribe-live',
+      geminiTranscribeSessionMs: 540_000,
+      geminiTranscribeClipTimeoutMs: 1_000,
+      geminiTranscribeVad: 'explicit',
+      whisperLanguage: 'en',
+    };
+
+    // A socket per speaker, answering partway through each one's stream. The
+    // three clips are three DIFFERENT speakers, so three sockets open and each
+    // hears only its own person — a mix-up in the grouping would show up as
+    // text on the wrong player rather than as a pass.
+    let n = 0;
+    const connect = async ({ callbacks }) => {
+      let audioMs = 0;
+      const said = `line ${n++}`;
+      let sent = false;
+      return {
+        sendRealtimeInput(message) {
+          if (!message.audio?.data) return;
+          audioMs += Buffer.from(message.audio.data, 'base64').length / 32;
+          if (!sent && audioMs >= 500) {
+            sent = true;
+            callbacks.onmessage({ serverContent: { inputTranscription: { text: said } } });
+          }
+        },
+        close() {},
+      };
+    };
+
+    // Progress is reported against AUDIO, not clip count — a session is not
+    // 2,440 equal units of work, it is however many minutes of speech, and a
+    // bar that jumps by clip stalls on the long ones.
+    const steps = [];
+    const result = await transcribeAll(utterances, cfg, {
+      connect,
+      onProgress: (done, total) => steps.push([done, total]),
+    });
+
+    assert.ok(steps.length >= 3, 'each speaker stream should report as it goes');
+    const [lastDone, lastTotal] = steps[steps.length - 1];
+    assert.equal(lastDone, lastTotal, 'the bar has to reach the end');
+    assert.deepEqual(result.failures, [], 'nothing here should have reached whisper, which does not exist');
+    assert.deepEqual(
+      result.utterances.map((u) => [u.displayName, u.text]),
+      [
+        ['Player 0', 'line 0'],
+        ['Player 1', 'line 1'],
+        ['Player 2', 'line 2'],
+      ],
+      'every clip keeps the speaker Discord recorded it against'
+    );
   });
 });

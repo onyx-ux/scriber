@@ -119,6 +119,25 @@ export function decideTranscribeAction({ job, now, serverReachable, cfg }) {
 
   if (!serverReachable) {
     // Waiting for the PC is the whole point — never quietly divert to the Pi.
+    // That would spend hours of unattended CPU to produce a worse transcript,
+    // and waiting costs nothing but time.
+    //
+    // Gemini is a different trade and gets a different answer. It is minutes
+    // rather than hours, the transcript is no worse, and the operator has
+    // already said yes to it: GEMINI_TRANSCRIBE is precisely the sentence
+    // "when the PC can't do this, use the cloud instead". So with it on, an
+    // unreachable PC diverts. With it off — the default — nothing changes and
+    // the session waits exactly as it always did.
+    //
+    // Note what this does NOT bypass: a session still has to be approved or
+    // inside the automatic window to get this far. Turning the cloud on buys
+    // a faster answer to "the PC is off", not permission to transcribe things
+    // nobody has agreed to yet.
+    if (cfg.geminiTranscribe && cfg.geminiApiKey) {
+      // 'gemini' is pipeline/transcribe-target.js's TARGET_GEMINI, written
+      // out rather than imported so this module stays free of discord.js.
+      return { action: 'run', reason: 'pc-unreachable, diverting to gemini', via: 'gemini' };
+    }
     return { action: 'wait', reason: 'pc-unreachable' };
   }
 

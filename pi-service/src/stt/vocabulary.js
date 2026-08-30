@@ -140,27 +140,61 @@ function stemsMatch(word, term) {
   return word === head || (head.length >= 4 && word.length >= 4 && (word.startsWith(head) || head.startsWith(word)));
 }
 
-// Gathers this campaign's vocabulary. Campaign-scoped, not server-scoped: two
-// tables in one Discord must not bleed names into each other's transcripts,
-// and biasing whisper toward the wrong campaign's proper nouns is worse than
-// no prompt at all — it invents the other game's NPCs into this one.
-export async function campaignPrompt(db, cfg, meeting) {
-  if (!cfg.whisperPrompt) return '';
+// How many terms Gemini's custom_vocabulary is given.
+//
+// That API takes a LIST rather than a decoder prefix, so it has no 224-token
+// window to fit inside and PROMPT_MAX_CHARS does not apply — it accepts up to
+// 1000 terms. Google's guidance is that results are typically best around
+// 100, so this sits between the two: comfortably more of the campaign than
+// whisper could ever be told, without diluting the bias across every name the
+// ledger has ever recorded.
+export const VOCABULARY_MAX_TERMS = 250;
+
+async function gatherSources(db, cfg, meeting) {
+  const campaignId = meeting?.campaign_id;
+  if (!campaignId) return null;
+  const folder = campaignFolder(meeting, db.getCampaignName(campaignId));
+  const { npcs, locations } = await readKnownEntityNames(cfg, folder);
+  return {
+    corrections: db.listCorrections(campaignId),
+    characters: db.listCharacters(campaignId),
+    npcs,
+    locations,
+  };
+}
+
+// Gathers this campaign's vocabulary, in both the forms the two engines want.
+//
+//   prompt — whisper's decoder prefix, packed into PROMPT_MAX_CHARS.
+//   terms  — the ordered list, for Gemini's custom_vocabulary.
+//
+// Built together from ONE read of the ledger, because which engine will
+// actually transcribe the session is not decided until the GPU server has
+// been probed (see pipeline/transcribe.js), and reading the vault twice to
+// find out would be the same work for the same answer.
+//
+// Campaign-scoped, not server-scoped: two tables in one Discord must not
+// bleed names into each other's transcripts, and biasing a recogniser toward
+// the wrong campaign's proper nouns is worse than no vocabulary at all — it
+// invents the other game's NPCs into this one.
+export async function campaignVocabulary(db, cfg, meeting, { maxTerms = VOCABULARY_MAX_TERMS } = {}) {
+  const nothing = { prompt: '', terms: [] };
+  if (!cfg.whisperPrompt) return nothing;
 
   try {
-    const campaignId = meeting?.campaign_id;
-    if (!campaignId) return '';
-    const folder = campaignFolder(meeting, db.getCampaignName(campaignId));
-    const { npcs, locations } = await readKnownEntityNames(cfg, folder);
-    return buildWhisperPrompt({
-      corrections: db.listCorrections(campaignId),
-      characters: db.listCharacters(campaignId),
-      npcs,
-      locations,
-    });
+    const sources = await gatherSources(db, cfg, meeting);
+    if (!sources) return nothing;
+    return {
+      prompt: buildWhisperPrompt(sources),
+      terms: selectVocabulary(sources).slice(0, maxTerms),
+    };
   } catch (err) {
-    // A prompt is an optimisation. Losing it must never cost a transcript.
-    console.warn(`[whisper] could not build vocabulary prompt: ${err.message}`);
-    return '';
+    // A vocabulary is an optimisation. Losing it must never cost a transcript.
+    console.warn(`[stt] could not build campaign vocabulary: ${err.message}`);
+    return nothing;
   }
+}
+
+export async function campaignPrompt(db, cfg, meeting) {
+  return (await campaignVocabulary(db, cfg, meeting)).prompt;
 }

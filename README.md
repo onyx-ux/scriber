@@ -12,8 +12,14 @@ machines on your home network:
   falls back to its own CPU when it isn't. Audio never leaves your LAN.
 
 The AI summary is written by a cloud model (Gemini by default, Claude
-optionally) from the finished transcript TEXT. The recordings themselves never
-leave your network under any setting.
+optionally) from the finished transcript TEXT. **No summariser ever sees
+audio.**
+
+Recordings stay on your network unless you deliberately turn on
+`GEMINI_TRANSCRIBE`, which adds a cloud transcription rung between the PC and
+the Pi for the nights the PC is off — see [Transcribing in the
+cloud](#transcribing-in-the-cloud-optional-off-by-default). It ships off, and
+with it off the sentence above is absolute.
 
 A local summariser (Ollama on the PC) used to fill that role and was removed:
 on a 12GB card a 14B model took ~7.5 minutes per transcript slice — about an
@@ -645,7 +651,157 @@ automatic window too, so "remind me tomorrow" genuinely means tomorrow. A
 session interrupted by a crash or restart goes back through the same gate
 rather than resuming pre-approved at whatever hour the bot came back up.
 
+(With `GEMINI_TRANSCRIBE=true` an unreachable PC diverts to the cloud instead
+of waiting — see below. It still has to get past the approval gate and the
+window first. Measured, that divert is currently SLOWER than the Pi it
+replaces, which is why the switch ships off.)
+
 the dashboard lists everything waiting, and Pause holds the whole queue.
+
+## Transcribing in the cloud (optional, off by default)
+
+> **STATUS: rebuilt as per-speaker streams; needs a live trial.** The first
+> design sent one clip at a time and did not work — 13.1s per clip and 19% of
+> them lost, ~9 hours for a session. It is now one continuous stream per
+> speaker, which is what the live API is actually built for. The unit tests
+> cover the mapping and the rolling; what has NOT yet happened is a full
+> session through the new path end to end, so the switch stays off.
+
+`GEMINI_TRANSCRIBE=true` adds a third place transcription can happen, between
+the two that already exist:
+
+| | speed | cost | where the audio goes |
+|---|---|---|---|
+| **PC** — whisper.cpp on the GPU | 0.39s/clip, **16 min/session** | free | stays on your LAN |
+| **Gemini** — `gemini-3.5-transcribe-live`, per-speaker streams | ~1× realtime, **≈ longest speaker** | ~$0.005/min of audio | **sent to Google** |
+| **Pi** — whisper.cpp on the CPU | ~65s per 30s window, ~8-9 h/session | free | stays on the Pi |
+
+It is reached for **only when the PC can't do the work.** A reachable GPU
+server always wins: it is faster, free, and keeps the recording at home.
+
+### Measured timings — the same 191-minute session, four ways
+
+| engine | wall clock | throughput | notes |
+|---|---|---|---|
+| whisper, PC GPU | **16 min** | 12× realtime | the real production run, 15 Aug |
+| `gemini-3.5-transcribe` (file, 28-min chunks) | **6 min** | 32× realtime | but no speaker attribution |
+| `gemini-3.5-transcribe-live`, continuous stream | **92 min** | 2.1× realtime | rate-capped; no attribution |
+| `gemini-3.5-transcribe-live`, **per clip** | **~9 h (projected)** | 0.38× realtime | what this feature does. 19% of clips timed out |
+
+The per-clip figure was the problem, and it was never the handshake — it was
+*waiting* for each clip's transcription before sending the next. Pipelining the
+activity blocks instead does not help: the socket dies with `Internal error`
+after 16 seconds. The live API is built for a **continuous** stream and
+punishes anything else.
+
+### How it works now — one stream per speaker
+
+Discord already hands us one audio track per person, so each person gets their
+own socket. Attribution is then exact by construction: the model is never asked
+who spoke, and diarization stays off. Six concurrent sockets were measured
+working on one key, which is a table's worth, and the wall clock becomes the
+**longest single speaker** rather than the sum of everyone.
+
+A speaker's clips are laid end to end with 700ms of real silence between them —
+sent, not just counted, because that silence is what the model's own voice
+detection segments on. As fragments come back they are matched to whichever
+clip the audio cursor was inside, the same nearest-range trick
+`assignSegmentsToRanges` uses for whisper's merged batches.
+
+**Why 1× realtime.** The live model returns no word timestamps, so something
+else has to say when each line was said. Measured at 1×, fragments arrive
+**0.3s** behind the audio — checked against whisper's own timings for the same
+minutes and matching to about a second. So arrival time *is* the timestamp.
+Push faster and the model falls behind unpredictably (at 4× it was still
+draining ~100s after the audio stopped) and that lag lands in the transcript as
+misplaced lines. `GEMINI_TRANSCRIBE_MAX_REALTIME` still exists, but raising it
+trades timestamp accuracy for speed.
+
+**Session rolling.** The 10-minute cap is **wall clock, not audio** — measured:
+a socket given only 41s of audio was still cut at ten minutes. It is announced
+first, `goAway` arriving ~50s ahead, and the roll happens on that warning at a
+clip boundary so no utterance straddles a seam.
+
+**This is the one setting in the bot that sends recordings off your network.**
+Everything else — including both summarisers — only ever handles text. That is
+why it ships off, why nothing turns it on for you, and why the button that
+picks it says so out loud. If your table agreed to be recorded on the
+understanding the audio stays in the house, this is the setting that changes
+what they agreed to.
+
+### What it's actually good at
+
+Two things this pipeline had to work around simply stop being problems:
+
+- **Campaign vocabulary stops echoing.** Whisper's prompt is text fed to the
+  decoder, which is why it hallucinates campaign names onto near-silent clips
+  and why [Campaign vocabulary](#campaign-vocabulary-whisper-prompting) needs
+  an echo guard and an RMS gate. Gemini's `custom_vocabulary` is a biasing
+  list — structurally incapable of coming back as dialogue. The 224-token
+  prompt window goes with it: whisper gets ~40 truncated terms, Gemini gets
+  250.
+- **Line breaks and timestamps stay exact.** The Pi's path merges clips into
+  27-second batches to fill whisper's fixed encode window, and pays for it in
+  ragged line breaks and per-line timestamps that drift by seconds. A
+  streaming socket has no window to fill, so the cloud path sends clips one at
+  a time and keeps the timing capture recorded.
+
+Speaker attribution is unaffected either way — Discord already tells us who
+was talking, one WAV per speaking turn. The model is never asked to guess, and
+speaker diarization is deliberately left off for that reason.
+
+The one regression: Gemini reports no per-clip language confidence, which is
+what the [silence hallucination](#silence-hallucinations) filter uses to tell
+invented "Thank you." from a real one. On this path that filter falls back to
+clip duration alone, which catches less. Gemini isn't trained on subtitles, so
+there should be much less to catch.
+
+### Settings
+
+| variable | default | what it does |
+|---|---|---|
+| `GEMINI_TRANSCRIBE` | `false` | the switch. Needs `GEMINI_API_KEY`; refused at startup without one |
+| `GEMINI_TRANSCRIBE_MODEL` | `gemini-3.5-transcribe-live` | the live variant, deliberately — see below |
+| `GEMINI_TRANSCRIBE_SESSION_MS` | `540000` | audio per socket before rolling onto a fresh one (the API caps a session at 10 min) |
+| `GEMINI_TRANSCRIBE_MAX_REALTIME` | `4` | how many times faster than real speech audio may be pushed. **Load-bearing** — see below |
+| `GEMINI_TRANSCRIBE_CLIP_TIMEOUT_MS` | `30000` | how long to wait for one clip before giving up on it |
+| `GEMINI_TRANSCRIBE_VAD` | `explicit` | who decides where utterances start and end. `auto` hands it to the model |
+
+### Two undocumented API limits, both found the hard way
+
+**1. The live API meters how *fast* audio arrives.** Measured on real session
+audio, pushing 120 seconds at:
+
+| pace | result |
+|---|---|
+| 1× realtime | 94 words |
+| 4× realtime | 93 words — same transcript, four times sooner |
+| 16× realtime | **5 words**, socket closed `Resource has been exhausted` |
+| 64× realtime | **0 words**, same close |
+
+Note the failure mode: the socket does not reject the send. It accepts
+everything, transcribes almost none of it, and closes with a message that
+reads like a billing problem. An unpaced run of this whole session returned
+**0–6 words per nine minutes of audio** and looked, from outside, like a model
+that could not hear. Discord clips arrive far faster than they were spoken, so
+`GEMINI_TRANSCRIBE_MAX_REALTIME` is what keeps a busy session under the
+ceiling. The cost is wall-clock: 60 minutes of speech takes ~15 minutes at 4×.
+
+**2. `custom_vocabulary` is mutually exclusive with word timestamps *and* with
+diarization** — `400 custom_vocabulary is incompatible with timestamps` /
+`with diarization`, on the file model. Neither the model page nor the
+transcribe guide mentions it. It costs this pipeline nothing (the live model
+has no timestamps or diarization anyway, and Discord supplies both), but it
+means you cannot have biased proper nouns and word timings in one call.
+
+**Why the live model rather than `gemini-3.5-transcribe`.** The file model has
+word-level timestamps and 8-speaker diarization; the live one has neither.
+Both are things this pipeline already has better answers for — Discord's
+capture gives exact speakers and exact per-clip timings — and the only reason
+whisper needed word timestamps here was to split merged batches back apart, a
+workaround for a fixed encode window that a socket doesn't have. So the live
+model gives up two features we were only using to undo a limitation it doesn't
+share, and in exchange the request-count and rate-limit ceiling is far higher.
 
 ## Summarise on approval (optional)
 
@@ -693,10 +849,14 @@ overwrote the other's archive with its own sessions.
   though it serves requests, so probe a model with a real call before
   concluding it is unavailable.
 
-**Audio and transcription are always local.** Recordings never leave the
-network under any setting — a cloud option only ever sees text that has
-already been transcribed on the Pi. Long transcripts are still sliced and
-merged automatically, so session length isn't capped either way.
+**A summariser only ever sees text.** Neither provider is sent audio under any
+setting — what leaves here is a transcript that was already produced
+somewhere else. Long transcripts are still sliced and merged automatically, so
+session length isn't capped either way.
+
+(Whether the *transcription* was local is a separate switch, and off by
+default: see [Transcribing in the
+cloud](#transcribing-in-the-cloud-optional-off-by-default).)
 
 ### Picking a summariser per session
 

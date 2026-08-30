@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { transcribeWav } from '../stt/whisper.js';
+import { transcribeSpeakerStreams, isGeminiTranscribeConfigured } from '../stt/gemini-stream.js';
 import { looksLikePromptEcho, promptTerms } from '../stt/vocabulary.js';
 import { looksLikeHallucination } from '../stt/hallucination.js';
 import { mergeWavs, assignSegmentsToRanges } from './wav-merge.js';
@@ -203,13 +204,93 @@ export function shouldBatch(cfg, { serverReachable = null } = {}) {
   return serverReachable === false;
 }
 
+// Whether this session goes to Gemini instead of whisper.
+//
+// The middle rung, never the first: the GPU is faster, costs nothing and
+// keeps the audio on the LAN, so Gemini is only reached for when that machine
+// cannot do the work. It is off entirely without GEMINI_TRANSCRIBE and a key
+// — see config/env.js for why that switch is the operator's to throw.
+//
+// Exported for the tests, which is where the ordering is pinned: a reachable
+// GPU server must win, or turning this on would quietly move every session's
+// audio off the network.
+export function shouldUseGemini(cfg, { serverReachable = null } = {}) {
+  if (!isGeminiTranscribeConfigured(cfg)) return false;
+
+  // An explicit answer at /leave beats the automatic ladder either way. The
+  // literals are pipeline/transcribe-target.js's TARGET_* values, compared by
+  // hand rather than imported so this module stays free of discord.js.
+  if (cfg.transcribeVia === 'gemini') return true;
+  if (cfg.transcribeVia === 'pi') return false;
+
+  if (!cfg.whisperServerUrl) return true;
+  return serverReachable === false;
+}
+
+// The Gemini path. Flat by design — no batching, no merging, no word
+// timestamps — because the thing batching exists to amortise (whisper.cpp's
+// fixed 30-second encode window) has no equivalent on a streaming socket.
+// See stt/gemini-live.js.
+// `connect` is injectable for the same reason probe and runJob are in
+// transcribe-worker.js: the routing and the filtering are the parts worth
+// testing, and neither should need a key or a socket. Production never passes
+// it — stt/gemini-live.js supplies the real transport.
+async function transcribeViaGemini(capturedUtterances, cfg, { onProgress, vocabulary, connect }) {
+  // Chronological, so a rolled session's boundary falls between two clips
+  // that were already neighbours rather than in the middle of the evening.
+  const clips = [...capturedUtterances].sort((a, b) => a.startMs - b.startMs);
+
+  console.log(
+    `[gemini-stt] transcribing ${clips.length} clips on ${cfg.geminiTranscribeModel}` +
+      `${vocabulary.length ? ` with ${vocabulary.length} campaign terms` : ''}`
+  );
+
+  const { results, failures } = await transcribeSpeakerStreams(clips, cfg, {
+    vocabulary,
+    onProgress,
+    ...(connect ? { connect } : {}),
+  });
+
+  // The filler guard still runs, but with one hand tied: it separates real
+  // speech from silence-hallucination on whisper's LANGUAGE CONFIDENCE, and
+  // Gemini reports none. That leaves the duration fallback, which by design
+  // only catches the very shortest clips (see stt/hallucination.js). Kept
+  // anyway — it is strictly better than nothing, and Gemini is not trained on
+  // subtitles so it should have far less of this to catch in the first place.
+  const utterances = [];
+  for (const { seconds, ...result } of results) {
+    if (cfg.whisperDropFiller !== false && looksLikeHallucination(result.text, { seconds })) {
+      console.log(`[gemini-stt] dropped filler "${result.text}" from ${result.displayName} (${seconds.toFixed(1)}s)`);
+      continue;
+    }
+    utterances.push(result);
+  }
+
+  // No prompt-echo guard here on purpose. custom_vocabulary is a biasing list
+  // rather than text fed to the decoder, so there is no prompt to come back —
+  // the failure looksLikePromptEcho exists to catch cannot happen on this path.
+  return { utterances, failures };
+}
+
 // capturedUtterances: [{ userId, displayName, wavPath, startMs, endMs }]
 //
 // Set cfg.transcribeBatching = false to transcribe every clip on its own
 // instead. That is ~5x slower on CPU (a 235-clip session measured at ~4.5
 // hours vs ~50 min) but gives cleaner line breaks and exact per-clip
 // timestamps — see the trade-off note at the top of this file.
-export async function transcribeAll(capturedUtterances, cfg, { onProgress, serverReachable = null, prompt = '' } = {}) {
+export async function transcribeAll(
+  capturedUtterances,
+  cfg,
+  { onProgress, serverReachable = null, prompt = '', vocabulary = [], connect = null } = {}
+) {
+  // Gemini takes the whole run or none of it — the two engines split a
+  // session's clips differently (one socket vs per-speaker merged batches),
+  // so mixing them within one session would mean two sets of line breaks and
+  // two sets of timestamp behaviour in the same transcript.
+  if (shouldUseGemini(cfg, { serverReachable })) {
+    return transcribeViaGemini(capturedUtterances, cfg, { onProgress, vocabulary, connect });
+  }
+
   const results = [];
   const failures = [];
 

@@ -91,6 +91,14 @@ function validate(cfg) {
       'SUMMARY_PROVIDER=gemini requires GEMINI_API_KEY. Get one from https://aistudio.google.com/apikey'
     );
   }
+  // Refused at startup rather than at 2am when a session falls back to it and
+  // finds there is no key — by which point the choice is between the Pi's CPU
+  // and nothing, and nobody is awake to be asked.
+  if (cfg.geminiTranscribe && !cfg.geminiApiKey) {
+    throw new Error(
+      'GEMINI_TRANSCRIBE=true requires GEMINI_API_KEY. Get one from https://aistudio.google.com/apikey'
+    );
+  }
   return cfg;
 }
 
@@ -179,7 +187,8 @@ export const config = validate({
   // neural inference at roughly 10x slower than realtime (a 30-minute session
   // took ~4.5 hours). Set to a whisper.cpp HTTP server on a machine with a
   // GPU — in this setup, the Windows PC on the LAN — and the same work
-  // takes seconds. Audio still never leaves the LAN either way.
+  // takes seconds. Audio stays on the LAN under both of these; GEMINI_TRANSCRIBE
+  // below is the only setting that changes that.
   whisperServerUrl: optional('WHISPER_SERVER_URL', null),
   // A long session is a lot of audio; the per-request cap is generous so a
   // big /import doesn't fail halfway.
@@ -188,6 +197,63 @@ export const config = validate({
   // a session is never lost. Set false to fail instead, so it can be retried
   // later on the GPU rather than grinding through it on CPU.
   whisperLocalFallback: optional('WHISPER_LOCAL_FALLBACK', 'true') !== 'false',
+
+  // --- Gemini as the middle rung of the transcription ladder ---
+  //
+  // With this on, a session that missed the GPU goes to Gemini instead of
+  // grinding through the Pi's CPU: minutes rather than hours. The Pi stays as
+  // the last resort behind it, so nothing is ever lost — this only changes
+  // what gets tried second. See stt/gemini-live.js.
+  //
+  // OFF by default, and that default is the whole point. This is the ONE
+  // setting in this bot that sends RECORDINGS off the network. Everything
+  // else keeps audio local: summarising sends the finished transcript text
+  // and nothing else, and the README says so to the people being recorded.
+  // Turning this on changes what the table is agreeing to, so it is the
+  // operator saying it deliberately rather than something the pipeline
+  // reaches for on their behalf. With it off, nothing here does anything.
+  geminiTranscribe: optional('GEMINI_TRANSCRIBE', 'false') === 'true',
+
+  // The LIVE variant, not the file one, and deliberately: this pipeline needs
+  // neither of the two features the file model has over it. Speakers and
+  // per-clip timings both come from Discord's own capture, which is exact.
+  // The reasoning is written out at the top of stt/gemini-live.js.
+  geminiTranscribeModel: optional('GEMINI_TRANSCRIBE_MODEL', 'gemini-3.5-transcribe-live'),
+
+  // How much audio one socket carries before it is rolled onto a fresh one.
+  // The API caps a live session at 10 minutes; this sits under it so a clip
+  // never straddles the ceiling and gets cut in half.
+  geminiTranscribeSessionMs: parseInt(optional('GEMINI_TRANSCRIBE_SESSION_MS', '540000'), 10),
+
+  // The hard one, and the reason a whole session can come back empty.
+  //
+  // The live API meters how FAST audio arrives, not just how much. Measured
+  // against it: 4x realtime returns the same transcript as 1x, 16x returns
+  // "Resource has been exhausted" and silently drops nearly all of it. It does
+  // not reject the send — it accepts everything, transcribes ~nothing, and
+  // closes with what reads like a quota error. An unpaced run of a real
+  // session came back with 0-6 words per NINE MINUTES.
+  //
+  // Discord clips arrive far faster than they were spoken, so the pacing is
+  // what keeps a busy session under that ceiling. 4 is measured-safe; lower it
+  // if sessions ever come back short, and note that lowering it makes a run
+  // proportionally slower (60 min of speech takes ~15 min at 4x).
+  geminiTranscribeMaxRealtime: parseFloat(optional('GEMINI_TRANSCRIBE_MAX_REALTIME', '4')),
+
+  // How long to wait for one clip's transcription before giving up on it.
+  // Generous — a timeout costs the session it was on, because a late
+  // transcription arriving during the NEXT clip would attribute one person's
+  // words to another.
+  geminiTranscribeClipTimeoutMs: parseInt(optional('GEMINI_TRANSCRIBE_CLIP_TIMEOUT_MS', '30000'), 10),
+
+  // Who decides where an utterance starts and ends. 'explicit' (the default)
+  // tells the model, because Discord already knows — capture writes one file
+  // per speaking turn, so the boundaries are given rather than guessed, and
+  // the model's own voice detection cannot split one clip across two turns.
+  // 'auto' hands that back to the model's VAD; it is here as an escape hatch
+  // in case a future model revision stops honouring explicit activity
+  // signals, not because it is expected to be the better setting.
+  geminiTranscribeVad: optional('GEMINI_TRANSCRIBE_VAD', 'explicit').toLowerCase() === 'auto' ? 'auto' : 'explicit',
 
   // whisper.cpp encodes a fixed 30-second window however short the clip is,
   // so transcribing hundreds of one-second Discord clips one at a time wastes
@@ -210,8 +276,9 @@ export const config = validate({
   })(),
 
   // Which model writes the summary. Both send the finished TRANSCRIPT TEXT to
-  // a cloud provider; audio and transcription always stay local, so the
-  // recordings never leave the network under any setting.
+  // a cloud provider and nothing else — no audio is sent for a summary under
+  // any setting. (Transcription is a separate question: it is local unless
+  // GEMINI_TRANSCRIBE above is turned on.)
   //
   // There is no local option any more — see pipeline/model-client.js for why
   // Ollama was dropped. The practical consequence is that summarising needs

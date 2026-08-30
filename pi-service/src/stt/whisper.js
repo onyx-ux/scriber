@@ -7,7 +7,7 @@ import { worthPrompting } from './hallucination.js';
 
 const execFileAsync = promisify(execFile);
 
-// Transcription runs in one of two places:
+// Whisper runs in one of two places:
 //
 //   local  — whisper.cpp's CLI on the Pi itself. Works with no other machine
 //            involved, but the Pi does neural inference on a 4-core ARM CPU:
@@ -15,10 +15,18 @@ const execFileAsync = promisify(execFile);
 //            a real session takes hours.
 //   server — whisper.cpp's HTTP server on a machine with a GPU (in this setup,
 //            the Windows PC on the LAN). Two to three orders of magnitude
-//            faster, and the audio never leaves the LAN.
+//            faster.
 //
 // WHISPER_SERVER_URL picks the second. Everything else in the pipeline is
-// unchanged: both paths return the same { text, segments } shape.
+// unchanged: both paths return the same { text, segments } shape, and under
+// both the audio stays on the LAN.
+//
+// There is a third place transcription can happen, and it is not in this
+// file: with GEMINI_TRANSCRIBE on, a session that missed the GPU goes to
+// Gemini rather than grinding through the Pi. That path is streaming and
+// stateful across a whole session, so it hangs off pipeline/transcribe.js
+// rather than this per-file function — see stt/gemini-live.js. It is also the
+// only one of the three that sends audio off the network.
 
 // whisper annotates non-speech audio with bracketed markers rather than
 // leaving the segment empty — [BLANK_AUDIO] for silence, plus [SOUND],

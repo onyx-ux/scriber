@@ -143,14 +143,36 @@ export async function rebuildCapturedUtterances(db, meeting, cfg, discordClient)
       // leaves a truncated/empty WAV on disk that whisper.cpp can't do
       // anything useful with and would otherwise just log as a failure.
       const filePath = join(userPath, file);
-      if ((await wavDurationMs(filePath)) < MIN_UTTERANCE_MS) continue;
+      const durationMs = await wavDurationMs(filePath);
+      if (durationMs < MIN_UTTERANCE_MS) continue;
 
       captured.push({
         userId,
         displayName,
         wavPath: filePath,
         startMs,
-        endMs: startMs, // unknown after a crash; fine, only used for talk-time stats we don't compute yet
+        // From the WAV, not left equal to startMs.
+        //
+        // It used to be `endMs: startMs`, on the reasoning that the real end
+        // was unknowable after a crash and nothing read it. Both halves were
+        // wrong. The duration is right there in the file — it is already being
+        // read on the line above to decide whether the clip is long enough to
+        // keep — and two things do read it:
+        //
+        //   export/markdown.js  builds the per-speaker Talk time column, and
+        //                       hides the column entirely when every duration
+        //                       is zero. So the column silently never appeared
+        //                       on any session that came through here.
+        //   session-recording.js sizes the whole-session archive from the
+        //                       LARGEST endMs. Zero-length clips made that the
+        //                       last utterance's START, so the archive's header
+        //                       declared a length short by the final clip and
+        //                       players cut it off.
+        //
+        // This is the path EVERY scheduled session takes (the live capture
+        // path in voice/capture.js sets it properly), so it was not a rare
+        // crash-recovery corner — it was all of them.
+        endMs: startMs + Math.round(durationMs),
       });
     }
   }

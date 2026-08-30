@@ -200,3 +200,72 @@ test('the reminder says how long it has been waiting', () => {
   assert.match(text, /3 days/);
   assert.match(text, /#12/);
 });
+
+// --- diverting to the cloud when the PC is off ---
+//
+// The rule this changes is "never quietly divert", which was written about
+// the Pi: hours of unattended CPU for a worse transcript is not worth doing
+// on somebody's behalf. Gemini is minutes for a transcript that is no worse,
+// and GEMINI_TRANSCRIBE is the operator having already said yes to exactly
+// this situation — so it diverts, and only it does.
+
+const CLOUD_ON = { ...cfg, geminiTranscribe: true, geminiApiKey: 'gm-test' };
+
+test('with the cloud off, an unreachable PC still waits', () => {
+  const d = decideTranscribeAction({ job: job({ status: 'pending' }), now: WED_10AM, serverReachable: false, cfg });
+  assert.equal(d.action, 'wait');
+  assert.equal(d.via, undefined);
+});
+
+test('with the cloud on, an unreachable PC diverts instead of waiting', () => {
+  const d = decideTranscribeAction({
+    job: job({ status: 'pending' }),
+    now: WED_10AM,
+    serverReachable: false,
+    cfg: CLOUD_ON,
+  });
+  assert.equal(d.action, 'run');
+  assert.equal(d.via, 'gemini');
+  assert.match(d.reason, /gemini/);
+});
+
+test('a switch without a key diverts nowhere', () => {
+  const d = decideTranscribeAction({
+    job: job({ status: 'pending' }),
+    now: WED_10AM,
+    serverReachable: false,
+    cfg: { ...CLOUD_ON, geminiApiKey: null },
+  });
+  assert.equal(d.action, 'wait');
+});
+
+// The important limit. Turning the cloud on buys a faster answer to "the PC
+// is off" — it does not buy permission to transcribe a session nobody has
+// approved, at a time nobody chose, and bill for it.
+test('the cloud does not let a session past the approval or window gates', () => {
+  const unapprovedAtNight = decideTranscribeAction({
+    job: job({ notified_at: WED_9PM.toISOString() }),
+    now: WED_9PM,
+    serverReachable: false,
+    cfg: CLOUD_ON,
+  });
+  assert.notEqual(unapprovedAtNight.action, 'run', 'outside the window is still outside the window');
+
+  const snoozed = job({ status: 'pending', next_attempt_at: '2999-01-01T00:00:00Z' });
+  assert.equal(
+    decideTranscribeAction({ job: snoozed, now: WED_10AM, serverReachable: false, cfg: CLOUD_ON }).action,
+    'wait',
+    '"remind me tomorrow" means tomorrow, whichever engine would do the work'
+  );
+});
+
+test('a reachable PC is never diverted away from', () => {
+  const d = decideTranscribeAction({
+    job: job({ status: 'pending' }),
+    now: WED_10AM,
+    serverReachable: true,
+    cfg: CLOUD_ON,
+  });
+  assert.equal(d.action, 'run');
+  assert.equal(d.via, undefined, 'the GPU is faster, free, and keeps the audio at home');
+});

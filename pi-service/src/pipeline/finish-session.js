@@ -6,7 +6,7 @@ import { applyCorrections } from '../campaign/corrections.js';
 import { syncSessionAudio, backupAndSyncDatabase } from '../sync/drive-sync.js';
 import { archiveSessionAudio } from './session-recording.js';
 import { startTranscription, updateTranscription, endTranscription } from './progress.js';
-import { campaignPrompt } from '../stt/vocabulary.js';
+import { campaignVocabulary } from '../stt/vocabulary.js';
 
 // Moves a finished recording into the outbox the PC collects from, so long
 // campaigns don't accumulate on the Pi's card. The PC pulls and deletes
@@ -54,17 +54,20 @@ export async function finishSession(
 ) {
   db.setMeetingStatus(meetingId, 'transcribing');
 
-  // Bias whisper toward this campaign's proper nouns before transcribing
-  // anything — see stt/vocabulary.js. Campaign-scoped, so tables sharing a
-  // bot (or a server) don't leak names into each other.
-  const prompt = await campaignPrompt(db, cfg, db.getMeeting(meetingId));
-  if (prompt) console.log(`[whisper] meeting ${meetingId}: vocabulary prompt (${prompt.length} chars)`);
+  // Bias the recogniser toward this campaign's proper nouns before
+  // transcribing anything — see stt/vocabulary.js. Campaign-scoped, so tables
+  // sharing a bot (or a server) don't leak names into each other. Both forms
+  // are built here because which engine runs is decided inside transcribeAll,
+  // from a GPU probe this function has already been handed the answer to.
+  const { prompt, terms } = await campaignVocabulary(db, cfg, db.getMeeting(meetingId));
+  if (prompt) console.log(`[stt] meeting ${meetingId}: vocabulary of ${terms.length} terms`);
 
   startTranscription(meetingId, capturedUtterances.length);
   let result;
   try {
     result = await transcribeAll(capturedUtterances, cfg, {
       prompt,
+      vocabulary: terms,
       serverReachable,
       onProgress: (done, total) => {
         updateTranscription(meetingId, done, total);
