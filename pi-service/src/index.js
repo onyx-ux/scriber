@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
 import { config } from './config/env.js';
 import { openDb } from './store/db.js';
 import { commandDefs, registerCommandHandlers, activeSessions } from './commands/index.js';
+import { installProcessGuards } from './lifecycle.js';
 import { startQueueWorker } from './pipeline/queue-worker.js';
 import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
 import { recoverInterruptedMeetings } from './pipeline/recovery.js';
@@ -178,6 +179,31 @@ async function main() {
     };
     sweepInvites();
     setInterval(sweepInvites, 60 * 60 * 1000).unref?.();
+  });
+
+  // Before login rather than inside the ready handler. The window where a
+  // token is wrong or the gateway refuses is precisely when an unexplained
+  // exit is hardest to diagnose, and no ready handler has run yet to catch it.
+  installProcessGuards({
+    onShutdown: async () => {
+      // Discord first, so the voice connections close rather than time out and
+      // the table sees the bot leave instead of going quiet.
+      for (const c of [client, ...voiceClients]) {
+        try {
+          await c.destroy();
+        } catch (err) {
+          console.warn(`[lifecycle] could not close a Discord client: ${err.message}`);
+        }
+      }
+      // The database last, so nothing is still trying to write to it.
+      // better-sqlite3 checkpoints the WAL on close; without this the next
+      // start has to recover it instead.
+      try {
+        db.close?.();
+      } catch (err) {
+        console.warn(`[lifecycle] could not close the database: ${err.message}`);
+      }
+    },
   });
 
   await client.login(config.discordToken);

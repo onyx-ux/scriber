@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { startCapture } from '../voice/capture.js';
 import { voicePool, freeBot, poolSize } from '../voice/pool.js';
+import { recapForTable, worthRecapping } from '../pipeline/recap-client.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { isSummariserReachable, summariserLabel } from '../pipeline/model-client.js';
 import { askCampaign, askAllowance, gatherContext } from '../pipeline/ask-client.js';
@@ -462,7 +463,23 @@ export const commandDefs = [
 
       // --- reading the campaign back ---
       .addSubcommand((s) =>
-        s.setName('recap').setDescription("Post last session's TL;DR again").addStringOption(campaignOption)
+        s
+          .setName('recap')
+          .setDescription("What happened last time")
+          .addStringOption(campaignOption)
+          // Default stays the stored note, so the command somebody already
+          // knows keeps doing what it did — and the one that spends money is
+          // the one you have to choose.
+          .addStringOption((o) =>
+            o
+              .setName('style')
+              .setDescription('How to tell it')
+              .setRequired(false)
+              .addChoices(
+                { name: 'Stored notes — instant, free', value: 'notes' },
+                { name: 'For the table — a spoken "previously on"', value: 'table' }
+              )
+          )
       )
       .addSubcommand((s) =>
         s
@@ -697,7 +714,7 @@ const CAMPAIGN_ROUTES = {
   whoami: (i, db) => handleWhoAmI(i, db),
   consent: (i, db, cfg) => handleConsent(i, db, cfg),
 
-  recap: (i, db) => handleRecap(i, db),
+  recap: (i, db, cfg) => handleRecap(i, db, cfg),
   funny: (i, db) => handleFunny(i, db),
   search: (i, db) => handleSearch(i, db),
   ask: (i, db, cfg) => handleAsk(i, db, cfg),
@@ -1517,15 +1534,85 @@ function unrecordedCaveat(consent) {
   );
 }
 
-async function handleRecap(interaction, db) {
-  const meeting = db.getLastCompletedMeeting(campaignId(interaction));
+// The recap's two forms share a shape: which session, then the telling.
+const headerAnd = (header, body) => `${header}\n\n${body}`;
+
+async function handleRecap(interaction, db, cfg) {
+  const target = campaignId(interaction);
+  const meeting = db.getLastCompletedMeeting(target);
   if (!meeting) {
     return interaction.reply({ content: pick(RECAP_NONE), flags: MessageFlags.Ephemeral });
   }
-  const notes = JSON.parse(meeting.summary_json || '{}');
+
+  let notes = {};
+  try {
+    notes = JSON.parse(meeting.summary_json || '{}');
+  } catch {
+    // A half-written summary should not take the command down with it — the
+    // header and the date are still worth having.
+    notes = {};
+  }
   const date = (meeting.started_at || '').slice(0, 10);
   const header = pick(RECAP_HEADER, { channel: meeting.channel_name, date });
-  await interaction.reply(`${header}\n\n${notes.tldr || '_no recap available_'}`);
+  const stored = notes.tldr || '_no recap available_';
+
+  if (interaction.options.getString('style') !== 'table') {
+    return interaction.reply(headerAnd(header, stored));
+  }
+
+  // --- the spoken version, which costs a model call ----------------------
+  //
+  // Everything below mirrors /ask's gate rather than inventing a second one:
+  // the same pause check, the same reachability check, the same per-person
+  // allowance. This is the other place somebody who is not the owner can
+  // spend the owner's budget, so it should cost them the same slot.
+  if (!worthRecapping(notes)) {
+    return interaction.reply(
+      headerAnd(header, stored) +
+        '\n\n_There is not enough in that session to retell — that is the note as written._'
+    );
+  }
+
+  if (db.getSetting('summarize_paused') === 'true') {
+    return interaction.reply({
+      content:
+        `⏸️ Summarising is paused, so I'm not calling ${summariserLabel(cfg)}. ` +
+        'Run `/resume` first, or ask for the stored notes.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  if (!(await isSummariserReachable(cfg))) {
+    return interaction.reply({
+      content: `🔮 ${summariserLabel(cfg)} isn't reachable, so I can't retell it. The stored note still works.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const allowance = askAllowance(db, cfg, interaction.user.id);
+  if (!allowance.allowed) {
+    return interaction.reply({ content: `🔮 ${allowance.message}`, flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.deferReply();
+  try {
+    const spoken = await recapForTable({
+      notes,
+      characters: db.listCharacters(target),
+      cfg,
+      db,
+      meetingId: meeting.id,
+    });
+    if (!spoken) throw new Error('the model returned nothing');
+    await interaction.editReply(headerAnd(header, spoken));
+  } catch (err) {
+    console.warn(`[recap] could not retell meeting ${meeting.id}: ${err.message}`);
+    // The stored note rather than an error. The table asked what happened last
+    // time, and that question has a perfectly good answer sitting in the
+    // database whether or not the model felt like answering.
+    await interaction.editReply(
+      headerAnd(header, stored) + "\n\n_(I couldn't retell that one, so that's the note as written.)_"
+    );
+  }
 }
 
 async function handleWhoAmI(interaction, db) {

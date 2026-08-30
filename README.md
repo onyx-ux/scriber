@@ -239,7 +239,7 @@ run from inside the voice channel being recorded.
 | `output mode:` | where finished notes are posted |
 | `setchar name:` | your character name, as it appears in transcripts and notes |
 | `whoami` | what name you currently appear as |
-| `recap` | last session's TL;DR again |
+| `recap` | what happened last time — the stored note, or retold for the table |
 | `funny` | a random memorable moment from this campaign |
 | `search query:` | search every transcript in the campaign |
 | `ask question:` | a question answered from past sessions |
@@ -513,8 +513,23 @@ use.
 - **`remove player:`** — take someone off. Their transcripts stay; this is
   about who can be recorded from now on.
 - **`output mode:`** — where this campaign's finished notes are posted.
-- **`recap`** — re-post the last completed session's TL;DR, handy at the start
-  of the next one.
+- **`recap`** — what happened last time, in one of two voices:
+  - **Stored notes** (the default, instant and free) re-posts the last
+    session's TL;DR exactly as the summariser wrote it — past tense, third
+    person, the version that lives in the vault.
+  - **For the table** rewrites it as a spoken "previously on…": three to five
+    sentences, addressed to the party as *you*, using character names rather
+    than Discord ones, and ending on whatever is still unfinished — which is
+    the sentence the table actually needs before they start.
+
+  The second one costs a model call, so it goes through the same gate
+  `/campaign ask` does: the same pause check, the same reachability check, and
+  the same per-person daily allowance. It reads **only the last session's
+  finished notes** — never the transcript, and never other sessions — so it
+  cannot leak something the DM has not shown yet, and it is told to invent
+  nothing and speculate about nothing. If the model is unreachable or the
+  session was not really a session (a mic test, an aborted start), it falls
+  back to the stored note rather than erroring.
 - **`funny`** — a random funny or memorable moment from any completed session
   (the summariser flags these as part of the normal per-session summary).
 - **`search query:`** — search every transcript in the campaign for a word or
