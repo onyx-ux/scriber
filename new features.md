@@ -458,16 +458,124 @@ for the first time.
       Drive. (There is no `summaries` table — the recap lives in
       `meetings.summary_json`.)
 
+## Implemented (2026-08-31)
+
+- [x] **A cloud voice for the nights the PC is dark** — `GEMINI_TRANSCRIBE=true`
+      adds `gemini-3.5-transcribe-live` between the PC's GPU and the Pi's CPU.
+      One continuous stream **per speaker**, so Discord's attribution survives
+      by construction and diarization stays off; six concurrent sockets were
+      measured working, which is a table's worth.
+
+      **Ships OFF and is the one setting that sends recordings off the
+      network.** Every other step, both summarisers included, only ever handles
+      text.
+
+      Three limits are undocumented and all three were found by walking into
+      them: the API meters how *fast* audio arrives (4x realtime fine, 16x
+      returns "Resource has been exhausted" while accepting every byte and
+      transcribing almost none — an unpaced run came back with 0-6 words per
+      NINE MINUTES and looked like a model that could not hear); the 10-minute
+      session cap is **wall clock, not audio**, announced ~50s ahead by
+      `goAway`; and `custom_vocabulary` is mutually exclusive with timestamps
+      AND diarization. Two earlier shapes were measured and abandoned — one
+      clip at a time cost 13.1s per clip and lost 19% of them (~9h/session),
+      and pipelining the activity blocks killed the socket outright.
+
+      Measured against whisper on a real 191-minute session: **2.2x more
+      correctly-spelled proper nouns** (220 vs 100 — whisper writes "Ben 10"
+      for BenTen 37 times out of 40, and "Cypher" for Cipher 19 times out of
+      26), 1 silence hallucination against whisper's 7. See "Known faults" for
+      why it is still off.
+
+- [x] **The clip that had no length** — `recovery.js` gave every rebuilt
+      utterance `endMs: startMs`, reasoning that the real end was unknowable
+      after a crash and that nothing read it. Both halves were wrong. The
+      duration was already being read one line above to decide whether the clip
+      was long enough to keep, and two things read the result: `markdown.js`
+      builds a per-speaker **Talk time** column and hides it when every duration
+      is zero — so that column had never once printed — and
+      `session-recording.js` sizes the whole-session archive from the largest
+      `endMs`, so the archive declared a length short by the final clip and
+      players cut it off. This is the path **every scheduled session** takes,
+      not a crash corner: all 2,440 rows of session 3 had `end_ms == start_ms`.
+
+- [x] **The bot says why it fell over** — there was no `unhandledRejection`
+      handler, no `uncaughtException` handler and nothing listening for a
+      signal. Node terminates on an unhandled rejection by default, so one
+      stray promise in a fire-and-forget path took the bot down **mid-session**
+      and left nothing in the log naming it. The audio always survived, so what
+      was lost was never the recording — it was the ability to find out.
+
+      The two cases now get opposite answers on purpose. A rejection logs its
+      whole stack and **stays up**: it is more often weather than damage, and
+      dying for one in the middle of somebody's evening is the worse outcome.
+      An uncaught exception logs and **exits non-zero**, because the stack it
+      happened on is gone and the state is unknown. SIGTERM/SIGINT close the
+      Discord clients (the voice connection closes rather than timing out) then
+      the database (WAL checkpointed rather than recovered next boot), with a
+      7s deadline under Docker's SIGKILL, and are idempotent under a double
+      signal. See `src/lifecycle.js`.
+
+- [x] **What happened last time, told to the table** — `/campaign recap` gains
+      `style:`. The default is unchanged and still reposts the stored tldr,
+      which is written for the vault: past tense, third person, a record for
+      somebody reading back through a campaign. **For the table** retells it as
+      a spoken "previously on" — three to five sentences, the party addressed
+      as *you*, character names rather than Discord ones, ending on whatever is
+      still unfinished, which is the sentence the table actually needs before
+      they start.
+
+      It reads **only the last session's finished notes** — never the
+      transcript, never other sessions. The notes record what the table
+      witnessed, so a recap built from them cannot leak what the DM has not
+      shown; the transcript would widen that to every aside made with a mic
+      open. It goes through `/ask`'s gate rather than a second one of its own —
+      same pause check, same reachability check, same per-person allowance, same
+      cheap model — and falls back to the stored note on any failure, because
+      the question has a good answer in the database either way.
+
 ## Known faults, not fixed yet
 
-Empty as of 2026-08-29 — the three that stood here are in the section above.
-The note they were kept under is worth keeping for whatever lands here next:
-these are the operator's own reports, written down before they are argued with,
-and some of them will collide with a design decision recorded on purpose.
-Whoever picks one up should read the argument before deciding against it. Two
-of the three did collide, and both turned out to be right anyway — but the
-shape of the fix came from taking the old argument seriously rather than from
-overruling it.
+The note this section was kept under is worth keeping: these are the operator's
+own reports, written down before they are argued with, and some of them will
+collide with a design decision recorded on purpose. Whoever picks one up should
+read the argument before deciding against it.
+
+- [ ] **The Gemini rung is off because its line breaks are wrong** — attribution
+      is exact (validated 229/229 on 396 real clips, zero failures) and it runs
+      at 1.74x realtime against the Pi's 0.38x. What is not right is *when*
+      each line was said: alignment drifts by about one clip, and roughly 4 in
+      10 clips come back with no text at all, because the model segments its own
+      stream by its own voice detection rather than on the clip boundaries.
+
+      This is the ceiling of continuous streaming, not a tuning knob — per-clip
+      text needs per-clip boundaries, and both ways of giving it those were
+      measured and failed. It is also, for what it is worth, **the same trade
+      the whisper batching note already describes** ("a word can land on the
+      neighbouring clip"), and that path ships. So the honest framing is that
+      this competes with the Pi's batched CPU path, not the GPU's clean one.
+
+      Worth deciding before turning it on: whether ragged line breaks matter
+      for a transcript whose main consumer is a summariser that reads the whole
+      thing anyway.
+
+- [ ] **The working tree writes CRLF into an all-LF repo** — `HEAD` is LF
+      throughout, but files come back from an edit with CRLF: `commands/index.js`
+      was sitting at **1,863** CRLF lines on 2026-08-31. It is invisible until
+      something matches on exact text, and then it fails on strings that look
+      identical — it broke two patch attempts in one session before the cause
+      was spotted, and it silently turned `dashboard/html/index.html`
+      mixed-ending once before that.
+
+      The fix is a `.gitattributes` with `* text=auto eol=lf`, which is a
+      one-line change that touches how git handles every file in the repo —
+      left for the operator to agree to rather than slipped in. Until then:
+      sweep `git diff --name-only` for `\r\n` before committing.
+
+- [ ] **The two-tables work is not written down here** — `DISCORD_VOICE_TOKENS`
+      and the voice pool landed in `61880fc` on 2026-08-30 and this file has no
+      section for that date. Not a fault in the code; a gap in the record, and
+      this file is the record.
 
 ## Ideas not built yet
 
@@ -512,7 +620,57 @@ overruling it.
   marks one resolved once a later session answers it.
 - **Auto-join/leave on voice activity** — deliberately skipped so far, since it
   risks recording casual chatter that wasn't meant to be a session.
+
+  Still the biggest real-world gap, because the failure it addresses is the
+  night everybody forgot to type `/join` — and that is the one failure no
+  amount of transcription quality helps with. Two things have moved under it
+  since it was written. The consent machinery now exists (`campaign_consent`,
+  and the invite flow that goes with it), so "recorded chatter nobody agreed
+  to" has an answer that is not just "don't build it". And the voice pool
+  exists, so a bot joining on its own no longer risks stealing the connection
+  from a table that is genuinely recording.
+
+  The shape that seems right: opt-in per campaign, a threshold rather than a
+  trigger (N people in the channel for M minutes), and the bot **asks in the
+  channel and waits** rather than joining silently — a recording that begins
+  without anyone noticing is exactly what the original objection was about.
 - **Session digest/reminder** — auto-post `/recap` the day before game night.
   Needs a "when is game night" concept that doesn't exist yet (a fixed
   day/time config, most likely) — a design question worth confirming before
   building, not something to guess at.
+
+- **Talk time and the quiet player** — the durations start being recorded as of
+  2026-08-31 (see the `endMs` fix above), so the data will exist from the next
+  session onward. `markdown.js` already computes a per-speaker Talk time column
+  and `transcript-view.js` already wanted one and worked around its absence, so
+  the per-session half is nearly free. The part worth actually designing is the
+  campaign-wide view: the player who has not spoken much in three sessions is
+  the thing a DM most wants surfaced and least reliably notices themselves.
+
+  Worth deciding first: who sees it. "Brett has spoken least three weeks
+  running" is useful to a DM in private and unkind in a channel, so this is
+  probably DM-only by default, and possibly opt-in per campaign.
+
+- **Corrections that reach backwards** — `/correct` fixes a name from the next
+  session on. Everything already written keeps the wrong spelling, and the
+  vault's wikilinks stay broken for it, which is exactly where the cost lands:
+  a name the graph cannot resolve is a name the campaign has effectively
+  forgotten. The measured scale of this is not small — whisper wrote "Ben 10"
+  for BenTen 37 times out of 40 across one session.
+
+  The pieces exist (`corrections`, `linkify.js`, the transcripts in the
+  database, the vault on disk); what is missing is the sweep and, more
+  importantly, its safety. Rewriting stored transcripts is the most destructive
+  thing this bot could be asked to do, so: dry-run diff first, a backup taken
+  before the write, and never a silent bulk edit. Whole-word matching only —
+  "Nick" as a correction target would otherwise eat every ordinary use of the
+  word.
+
+- **`/ready` — the question asked at 7pm on a Friday** — is the GPU server up,
+  is the summariser answering, how much room is left on the Pi's card, is any
+  job stuck, how many voices are free. Every probe already exists
+  (`isWhisperServerReachable`, `isSummariserReachable`, the pool, the job
+  queue); this is assembling them into one reply. Today, discovering the PC is
+  off happens *after* three hours of recording, and the cost of that discovery
+  is a session that waits until Monday.
+
