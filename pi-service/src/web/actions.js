@@ -764,8 +764,15 @@ export const ACTIONS = {
 
     // A recording in flight owns the audio pipeline; a second one writing into
     // it at the same time is how two sessions end up interleaved.
-    if (ctx?.activeSessions?.has(campaign.guild_id)) {
-      return { status: 409, payload: { ok: false, message: '⚠️ That server is recording right now — stop it first.' } };
+    //
+    // Asked about the CAMPAIGN now, not its Discord. The map is keyed by
+    // meeting rather than guild (a Discord can record two tables at once —
+    // see commands/index.js), so the old `.has(guild_id)` would not merely be
+    // imprecise, it would answer no every time and the guard would be gone.
+    // Narrower and correct: importing into one table while ANOTHER table in
+    // the same server is mid-session was never the danger this describes.
+    if ([...(ctx?.activeSessions?.values?.() ?? [])].some((s) => s.campaignId === campaign.id)) {
+      return { status: 409, payload: { ok: false, message: '⚠️ That campaign is recording right now — stop it first.' } };
     }
 
     ctx.startImport({

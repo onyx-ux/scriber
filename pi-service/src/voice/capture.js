@@ -72,10 +72,35 @@ function resampleToWav(pcmStream, wavPath) {
 // Defaults to recording everyone, which is what every caller did before
 // consent existed and what the tests rely on; the live path passes the real
 // check. See campaign/consent.js.
-export function startCapture({ channel, guildId, audioDir, getDisplayName, onUtterance, mayRecord = () => true }) {
+//
+// `channel` MUST come from the client whose bot is doing the joining. The
+// adapter below is taken off that guild object, and an adapter is bound to the
+// gateway socket of the client that produced it — hand this the primary's
+// channel while meaning a second bot and the join payload goes down the
+// primary's socket, so the primary moves and the bot you meant never connects.
+// See voice/pool.js and handleJoin.
+//
+// `group` is the other half of that, and it is the one that fails SILENTLY.
+// @discordjs/voice keys its connections by guild id inside a group that
+// defaults to 'default' (joinVoiceChannel.ts, and createVoiceConnection looks
+// up getVoiceConnection(guildId, group) and REUSES what it finds, merely
+// moving it to the new channel). Two bots joining one guild under one group is
+// therefore not two connections — it is the first table's connection being
+// dragged into the second table's channel, mid-session, with no error raised
+// anywhere. One group per bot is what makes them independent.
+export function startCapture({
+  channel, guildId, audioDir, getDisplayName, onUtterance,
+  mayRecord = () => true,
+  // Defaulted here rather than left to joinVoiceChannel's own default,
+  // because its default cannot survive the spread: `{ group: 'default',
+  // ...options }` with an explicit `group: undefined` in options overwrites
+  // it, and every connection would land in a group literally keyed undefined.
+  group = 'default',
+}) {
   const connection = joinVoiceChannel({
     channelId: channel.id,
     guildId,
+    group,
     adapterCreator: channel.guild.voiceAdapterCreator,
     selfDeaf: false,
     selfMute: true, // the bot only ever listens — never let it appear as an open mic

@@ -101,11 +101,21 @@ function permissionsOf(guild) {
   }
 }
 
-function sessionView(guildId, session, guildName, now) {
+// One live recording, as the dashboard sees it.
+//
+// Takes the guild id off the session rather than off the map key, because the
+// map is keyed by meeting now — a Discord can hold two tables at once, and the
+// key had to become the thing there is one of per session. See
+// commands/index.js.
+function sessionView(session, guildName, now) {
   const startedMs = session.startedAtMs ?? null;
   return {
-    guildId,
+    guildId: session.guildId ?? null,
     guildName,
+    // Which table, so web/scope.js can decide who this session is shown to.
+    // Two tables in one Discord means "you can see something in that server"
+    // stopped being a good enough reason to show you a recording in it.
+    campaignId: session.campaignId ?? null,
     meetingId: session.meetingId,
     channel: session.channelName ?? null,
     // capturedUtterances is the live array the capture callback pushes into,
@@ -172,8 +182,8 @@ export function buildStatus({
       }))
     : [];
 
-  const recording = [...activeSessions.entries()].map(([guildId, session]) =>
-    sessionView(guildId, session, guilds.find((g) => g.id === guildId)?.name ?? guildId, now)
+  const recording = [...activeSessions.values()].map((session) =>
+    sessionView(session, guilds.find((g) => g.id === session.guildId)?.name ?? session.guildId, now)
   );
 
   // The queue and the live transcription progress are machinery on both sides
@@ -233,7 +243,17 @@ export function buildStatus({
     lastSessionAt: c.last_session_at,
     claimed: Boolean(c.manager_user_id),
     output: c.output_mode ?? 'default',
-    recording: activeSessions.has(c.guild_id),
+    // THIS campaign, not merely its Discord.
+    //
+    // This used to ask whether the campaign's guild had a session open, which
+    // was wrong before a second bot existed and merely hard to notice: a
+    // server with two campaigns and one of them recording lit up both of them
+    // on the dashboard. Now that a Discord can genuinely record two tables at
+    // once, "is this table recording" has to be a question about the table.
+    recording: [...activeSessions.values()].some((s) => s.campaignId === c.id),
+    // Which session, when it is. The dashboard's live clock used to find its
+    // session by guild, which picks an arbitrary one of two.
+    meetingId: [...activeSessions.values()].find((s) => s.campaignId === c.id)?.meetingId ?? null,
     // Sessions of this campaign stopped waiting for a decision, so the
     // campaign list can say which table needs you without being opened.
     awaiting: c.awaiting ?? 0,
@@ -279,7 +299,11 @@ export function buildStatus({
   if (mayHave(SECTIONS.servers)) {
     status.servers = guilds.map((g) => ({
       ...g,
-      recording: activeSessions.has(g.id),
+      recording: [...activeSessions.values()].some((s) => s.guildId === g.id),
+      // How many at once, since that can now be more than one. A server the
+      // operator has given a second bot is a server where "recording" alone no
+      // longer says how much is happening in it.
+      recordings: [...activeSessions.values()].filter((s) => s.guildId === g.id).length,
       campaigns: campaigns.filter((c) => c.guildId === g.id).length,
     }));
   }

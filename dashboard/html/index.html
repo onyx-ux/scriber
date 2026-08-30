@@ -2355,14 +2355,16 @@ const band = (attrs, { tone, mark, name, say, fig, figAttrs = '', go }) => `
 function deskScreen() {
   const camps = status?.campaigns ?? [];
   const rec = camps.find((c) => c.recording) ?? null;
-  // One session can flag several campaigns — the flag is "this Discord is
-  // recording", and a Discord may hold more than one table — so the number of
-  // sessions is the number of distinct guilds, not the number of flags.
-  const sessions = new Set(camps.filter((c) => c.recording).map((c) => c.guildId)).size;
+  // One flag, one session. The flag used to mean "this Discord is recording",
+  // so it lit every campaign in the server and the count had to be of distinct
+  // guilds to avoid reporting two sessions off one /join. It now means "THIS
+  // table is recording" — and counting guilds would under-report the other
+  // way, since a Discord with a second bot can genuinely hold two at once.
+  const sessions = camps.filter((c) => c.recording).length;
   // The live session behind the recording campaign, which is where the clock
-  // and the clip count come from. Matched on the guild: a campaign is marked
-  // recording precisely when its guild has a session open.
-  const onAir = rec ? (status?.recording ?? []).find((r) => r.guildId === rec.guildId) : null;
+  // and the clip count come from. Matched on the meeting rather than the
+  // guild, which picks an arbitrary one of two tables in the same Discord.
+  const onAir = rec ? (status?.recording ?? []).find((r) => r.meetingId === rec.meetingId) : null;
 
   const waiting = camps.reduce((sum, c) => sum + (c.awaiting || 0), 0);
   const needy = camps.filter((c) => c.awaiting).sort((a, b) => b.awaiting - a.awaiting)[0];
@@ -2407,7 +2409,7 @@ function deskScreen() {
       fig: hhmmss(onAir?.recordingForMs),
       // Read by the second-hand timer at the foot of this file, the same one
       // that keeps the session pane's clock counting between polls.
-      figAttrs: `id="desk-timer" data-guild="${esc(rec.guildId ?? '')}"`,
+      figAttrs: `id="desk-timer" data-meeting="${esc(rec.meetingId ?? '')}"`,
       go: 'Watch it arrive',
     }));
   }
@@ -6082,8 +6084,10 @@ setInterval(() => {
   const mine = running.find((r) => r.meetingId === view.meetingId);
   if (pane && mine) pane.textContent = hhmmss(mine.recordingForMs + since);
 
+  // Matched on the meeting, not the guild: two tables can be recording in one
+  // Discord, and a guild match would count up whichever of them came first.
   const desk = $('desk-timer');
-  const there = desk && running.find((r) => r.guildId === desk.dataset.guild);
+  const there = desk && running.find((r) => String(r.meetingId) === desk.dataset.meeting);
   if (desk && there) desk.textContent = hhmmss(there.recordingForMs + since);
 }, 1000);
 

@@ -434,10 +434,13 @@ test('the reads land on the right table', async (t) => {
 
 // --- stopping a recording belongs to the table being recorded ---
 
-// A bot holds one voice connection per Discord, so activeSessions is keyed by
-// guild — which meant anyone in the server could end the session. Near enough
-// while a server meant a campaign; with two tables the other group's DM could
-// end this one's mid-scene, and it cannot be resumed.
+// Anyone in the server used to be able to end the session. Near enough while a
+// server meant a campaign; with two tables the other group's DM could end this
+// one's mid-scene, and it cannot be resumed.
+//
+// activeSessions is keyed by MEETING now rather than by guild — one Discord can
+// hold two live sessions once the install has a second bot user — so what these
+// tests assert on is how many sessions survive, not whether the guild is a key.
 async function recording(t, { setup = twoTables } = {}) {
   const h = await setup(t);
   const meetingId = h.db.createMeeting({
@@ -448,8 +451,12 @@ async function recording(t, { setup = twoTables } = {}) {
     startedAt: new Date().toISOString(),
     audioDir: '/tmp',
   });
-  activeSessions.set(GUILD, {
+  activeSessions.set(meetingId, {
     meetingId,
+    guildId: GUILD,
+    voiceChannelId: 'voice',
+    campaignId: h.cipher.id,
+    botId: 'primary',
     handle: { disconnect() {} },
     capturedUtterances: [],
     audioDir: '/tmp',
@@ -474,19 +481,19 @@ test("the other table's DM cannot stop this table's recording", async (t) => {
   const said = await run(dispatch, command('leave', { user: DM_B }));
 
   assert.match(said, /you're not at that table/);
-  assert.equal(activeSessions.has(GUILD), true, 'and the session is still running');
+  assert.equal(activeSessions.size, 1, 'and the session is still running');
 });
 
 test('a player at the table can stop it, by naming it', async (t) => {
   const { dispatch, cipher } = await recording(t);
   await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: cipher.id } }));
-  assert.equal(activeSessions.has(GUILD), false);
+  assert.equal(activeSessions.size, 0);
 });
 
 test('the bot owner can stop it, so a session cannot be stranded', async (t) => {
   const { dispatch, cipher } = await recording(t);
   await run(dispatch, command('leave', { user: OWNER, options: { campaign: cipher.id } }));
-  assert.equal(activeSessions.has(GUILD), false);
+  assert.equal(activeSessions.size, 0);
 });
 
 // --- and you have to say which table you are ending ---
@@ -503,7 +510,7 @@ test('a bare /leave in a server with two tables refuses, and says which is recor
 
   assert.match(said, /more than one table/);
   assert.match(said, /Cipher/, 'and answers its own question, or it cannot be acted on');
-  assert.equal(activeSessions.has(GUILD), true, 'nothing is stopped by being asked');
+  assert.equal(activeSessions.size, 1, 'nothing is stopped by being asked');
 });
 
 test('naming the other table stops nothing', async (t) => {
@@ -512,19 +519,19 @@ test('naming the other table stops nothing', async (t) => {
 
   assert.match(said, /not recording \*\*Strahd\*\*/, 'the id they picked is answered with a name');
   assert.match(said, /belongs to \*\*Cipher\*\*/);
-  assert.equal(activeSessions.has(GUILD), true, "the other game's session keeps running");
+  assert.equal(activeSessions.size, 1, "the other game's session keeps running");
 });
 
 test('a name typed by hand is accepted, not just the picker value', async (t) => {
   const { dispatch } = await recording(t);
   await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: 'cipher' } }));
-  assert.equal(activeSessions.has(GUILD), false, 'people fill the box before the list loads');
+  assert.equal(activeSessions.size, 0, 'people fill the box before the list loads');
 });
 
 test('one table in the server means /leave still needs no argument', async (t) => {
   const { dispatch } = await recording(t, { setup: oneTable });
   await run(dispatch, command('leave', { user: PLAYER_A }));
-  assert.equal(activeSessions.has(GUILD), false, 'there is nothing to get wrong, so nothing to ask');
+  assert.equal(activeSessions.size, 0, 'there is nothing to get wrong, so nothing to ask');
 });
 
 test("the picker offers only the campaign that's actually recording", async (t) => {
@@ -547,7 +554,7 @@ test('not being at the table is answered before which table you named', async (t
   const said = await run(dispatch, command('leave', { user: DM_B, options: { campaign: strahd.id } }));
 
   assert.match(said, /you're not at that table/);
-  assert.equal(activeSessions.has(GUILD), true);
+  assert.equal(activeSessions.size, 1);
 });
 
 // --- the gate ---

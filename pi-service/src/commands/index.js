@@ -4,6 +4,7 @@ import { SlashCommandBuilder, AttachmentBuilder, MessageFlags } from 'discord.js
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { startCapture } from '../voice/capture.js';
+import { voicePool, freeBot, poolSize } from '../voice/pool.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { isSummariserReachable, summariserLabel } from '../pipeline/model-client.js';
 import { askCampaign, askAllowance, gatherContext } from '../pipeline/ask-client.js';
@@ -61,6 +62,7 @@ import {
 import {
   pick,
   JOIN_NO_CHANNEL,
+  JOIN_CHANNEL_BUSY,
   JOIN_ALREADY_RECORDING,
   JOIN_STARTED,
   JOIN_FAILED,
@@ -88,14 +90,62 @@ import {
   GENERIC_ERROR,
 } from '../flavor.js';
 
-// active sessions keyed by guildId, since one bot instance can only sensibly
-// record one channel per guild at a time
+// Every recording happening right now, keyed by MEETING id.
+//
+// It used to be keyed by guild, and the reason was sound at the time: one bot
+// user holds one voice connection per Discord, so there could only ever be one
+// session per server and the guild WAS the session's identity. That stopped
+// being true the day the install could log in a second bot user — see
+// voice/pool.js — and a guild key cannot express two tables at once.
+//
+// The meeting id rather than the voice channel's, because a meeting is what
+// the rest of this bot already calls a session: it is what the queue names,
+// what the dashboard names, and what /leave ends. A channel can also be left
+// and rejoined in an evening, which would make its id ambiguous across two
+// sessions; a meeting id never is.
+//
+// Each entry carries guildId, voiceChannelId, campaignId and botId alongside
+// the capture handle, so every "is THIS recording" question is answered from
+// this one map rather than from a second copy of the fact kept elsewhere.
 export const activeSessions = new Map();
 
-// Guilds with a /join currently in flight but not yet registered above.
-// Guards the window between the "already recording?" check and the session
-// actually landing in activeSessions (see handleJoin).
-const startingGuilds = new Set();
+// The live sessions in one Discord. What the guild key used to answer for
+// free, and now the only place that answers it.
+export function sessionsInGuild(guildId) {
+  return [...activeSessions.values()].filter((s) => s.guildId === guildId);
+}
+
+// Which campaign a live session belongs to. Prefers what /join recorded on the
+// session itself and falls back to the meeting row, so a session registered by
+// an older code path (or by a test) still resolves.
+function sessionCampaignId(db, session) {
+  return session?.campaignId ?? db.getMeeting(session?.meetingId)?.campaign_id ?? null;
+}
+
+// Voice channels with a /join in flight but not yet registered above, keyed by
+// voice channel id, remembering which bot was reserved for it.
+//
+// Guards the window between "is anything already recording here?" and the
+// session actually landing in activeSessions — up to ~20 seconds of waiting on
+// a voice connection. Per channel rather than per guild now: two tables
+// starting at the same moment in one Discord is precisely the case this exists
+// to allow, and a guild-wide latch would refuse the second one.
+const starting = new Map();
+
+// Which bots cannot take another table in this Discord: the ones already
+// recording in it, plus the ones reserved by a /join still connecting.
+//
+// Derived on every call rather than tracked, deliberately. A tracked "busy"
+// set is a second copy of a fact the sessions already hold, and the way a
+// second copy fails is a bot left marked busy after a session that ended
+// badly — which nothing would ever notice and no restart-free fix exists for.
+function busyBotIds(guildId) {
+  const busy = new Set(sessionsInGuild(guildId).map((s) => s.botId).filter(Boolean));
+  for (const claim of starting.values()) {
+    if (claim.guildId === guildId) busy.add(claim.botId);
+  }
+  return busy;
+}
 
 // What a PLAYER can run anywhere.
 //
@@ -215,10 +265,10 @@ export const commandDefs = [
         .setRequired(false)
         .setAutocomplete(true)
     ),
-  // The campaign option here names the session rather than finding it — see
-  // handleLeave. A bot holds one voice connection per Discord, so there is
-  // only ever one recording to stop; being made to say which one is what stops
-  // a /leave meant for the game next door.
+  // The campaign option here confirms the session as much as it finds it — see
+  // handleLeave. Being made to say which table you are ending is what stops a
+  // /leave meant for the game next door, and it is asked for whenever the
+  // server holds more than one campaign, whether or not two are live at once.
   new SlashCommandBuilder()
     .setName('leave')
     .setDescription('Stop recording, transcribe, and queue the summary')
@@ -547,15 +597,21 @@ function campaignsToOffer(interaction, db, cfg) {
     return db.listCampaignsForMember(userId).filter((c) => c.guild_id === interaction.guildId);
   }
 
-  // /leave can only stop what is actually being recorded, so that one campaign
-  // is the entire list — offering the caller's other tables would be offering
-  // a choice that is then refused. It also means the picker names the live
-  // session before you commit to ending it, which is the point of asking.
+  // /leave can only stop what is actually being recorded, so the campaigns
+  // with a session open are the entire list — offering the caller's other
+  // tables would be offering a choice that is then refused. It also means the
+  // picker names the live sessions before you commit to ending one, which is
+  // the point of asking.
+  //
+  // A list rather than the single campaign it used to be: with a second bot a
+  // Discord can hold two live sessions, and the picker is where somebody
+  // choosing between them will look first.
   if (name === 'leave') {
-    const live = activeSessions.get(interaction.guildId);
-    const meeting = live ? db.getMeeting(live.meetingId) : null;
-    const which = meeting?.campaign_id ? db.getCampaign(meeting.campaign_id) : null;
-    return which ? [which] : [];
+    return sessionsInGuild(interaction.guildId)
+      .map((live) => sessionCampaignId(db, live))
+      .filter(Boolean)
+      .map((id) => db.getCampaign(id))
+      .filter(Boolean);
   }
 
   if (MANAGER_SUBCOMMANDS.has(sub)) {
@@ -900,7 +956,12 @@ async function handleCampaignOutput(interaction, db, target) {
   return interaction.reply({ content: where, flags: MessageFlags.Ephemeral });
 }
 
-export function registerCommandHandlers(client, db, cfg) {
+// `pool` is every bot user that may hold a voice connection, primary first.
+//
+// Defaulted to a pool of just this client, so every caller that predates the
+// second bot — and every test — gets exactly the behaviour it had before: one
+// bot, one table at a time per server. src/index.js passes the real one.
+export function registerCommandHandlers(client, db, cfg, pool = voicePool(client)) {
   client.on('interactionCreate', async (interaction) => {
     // Approval buttons arrive as component interactions, not commands.
     if (interaction.isButton()) {
@@ -978,7 +1039,7 @@ export function registerCommandHandlers(client, db, cfg) {
       // on the stack, so a rejection later on (e.g. the voice connection
       // timing out well after the initial reply) would silently become an
       // unhandled rejection instead of being caught below.
-      if (name === 'join') return await handleJoin(interaction, db, cfg);
+      if (name === 'join') return await handleJoin(interaction, db, cfg, pool);
       if (name === 'leave') return await handleLeave(interaction, db, cfg);
       if (name === 'campaign') return await handleCampaign(interaction, db, cfg);
     } catch (err) {
@@ -990,7 +1051,7 @@ export function registerCommandHandlers(client, db, cfg) {
   });
 }
 
-async function handleJoin(interaction, db, cfg) {
+async function handleJoin(interaction, db, cfg, pool = voicePool(interaction.client)) {
   // The campaign is resolved and the roster checked by the dispatcher — see
   // MEMBER_COMMANDS. That check is the point: /join starts recording people's
   // voices, and in a server the bot was merely invited to, being able to see a
@@ -1002,19 +1063,50 @@ async function handleJoin(interaction, db, cfg) {
     return interaction.reply({ content: pick(JOIN_NO_CHANNEL), flags: MessageFlags.Ephemeral });
   }
 
-  // Keyed by guild rather than campaign, and correctly so: a bot can only hold
-  // one voice connection per server, so two tables in one Discord genuinely
-  // cannot record at the same time however the bookkeeping is arranged.
-  if (activeSessions.has(interaction.guildId) || startingGuilds.has(interaction.guildId)) {
-    return interaction.reply({ content: pick(JOIN_ALREADY_RECORDING), flags: MessageFlags.Ephemeral });
+  // Already recording THIS channel. Still exactly the right refusal, and now
+  // asked about the channel rather than the server: another table playing in
+  // the room next door stopped being a reason to say no the day this install
+  // could log in a second bot user.
+  if (
+    sessionsInGuild(interaction.guildId).some((s) => s.voiceChannelId === voiceChannel.id) ||
+    starting.has(voiceChannel.id)
+  ) {
+    return interaction.reply({ content: pick(JOIN_CHANNEL_BUSY), flags: MessageFlags.Ephemeral });
   }
 
-  // Claim the guild before the first await. Everything below is async — the
-  // defer, then up to ~20s waiting on the voice connection — and the session
-  // isn't registered in activeSessions until the very end, so two /join
-  // commands issued close together would both clear the check above and both
-  // start capturing, into two different directories.
-  startingGuilds.add(interaction.guildId);
+  // Which bot sits down at this table. Null means every bot this install has
+  // is already in a voice channel in this Discord.
+  //
+  // Refused rather than queued, and that is a decision rather than a corner
+  // cut. A /join that quietly succeeded forty minutes later, when whichever
+  // table finished first released its bot, would start recording mid-scene
+  // with nobody aware it had begun — and the people in the channel would have
+  // had no chance to be asked. A no that says how many bots there are is a
+  // better answer than a yes that arrives unannounced.
+  const bot = freeBot(pool, interaction.guildId, busyBotIds(interaction.guildId));
+  if (!bot) {
+    // The count, and only when there is a count worth giving. With one bot
+    // "I'm already recording in this server" is the whole story; with three it
+    // is the beginning of one, and the number is what somebody deciding
+    // whether to add a fourth token actually needs.
+    const many =
+      poolSize(pool) > 1
+        ? `\n_All ${poolSize(pool)} of my voices are in channels here. One of those tables has to \`/leave\` ` +
+          'before I can sit down at another — or add another bot token to `DISCORD_VOICE_TOKENS`._'
+        : '';
+    return interaction.reply({
+      content: pick(JOIN_ALREADY_RECORDING) + many,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  // Claim the channel AND the bot before the first await. Everything below is
+  // async — the defer, then up to ~20s waiting on the voice connection — and
+  // the session isn't registered in activeSessions until the very end, so two
+  // /join commands issued close together would both clear the checks above.
+  // Without the bot half of the claim they would also both be handed the same
+  // free bot, and the second join would take the first's connection away.
+  starting.set(voiceChannel.id, { guildId: interaction.guildId, botId: bot.id });
   try {
     // Defer instead of replying immediately — we don't actually know the join
     // succeeded until the voice connection reaches Ready (which can take up to
@@ -1022,14 +1114,40 @@ async function handleJoin(interaction, db, cfg) {
     // exactly what caused a silent failure to look like a successful /join.
     await interaction.deferReply();
 
-    const audioDir = join(cfg.dataDir, 'audio', `${interaction.guildId}-${Date.now()}`);
+    // The channel as THAT bot sees it.
+    //
+    // startCapture takes the voice adapter off this object, and an adapter
+    // belongs to the gateway socket of the client that produced it. Hand it
+    // the interaction's copy while meaning a second bot and the join payload
+    // goes down the PRIMARY's socket: the primary gets moved out of whatever
+    // it was recording, and the bot we meant never connects at all. The
+    // primary's own copy is already the right one, so it is reused rather than
+    // fetched again.
+    const joinAs = bot.primary
+      ? voiceChannel
+      : await bot.client.channels.fetch(voiceChannel.id).catch(() => null);
+    if (!joinAs) {
+      return interaction.editReply(
+        `🎲 I couldn't reach **#${voiceChannel.name}** as my second voice. Check that every Quill bot is ` +
+          'invited to this server and can see that channel.'
+      );
+    }
+
+    // The channel id is in the path as well as the guild's now: two tables in
+    // one Discord can start in the same millisecond, and a shared directory is
+    // two sessions' clips interleaved with no way to tell them apart after.
+    const audioDir = join(cfg.dataDir, 'audio', `${interaction.guildId}-${voiceChannel.id}-${Date.now()}`);
     await mkdir(audioDir, { recursive: true });
 
     const capturedUtterances = [];
 
     const handle = startCapture({
-      channel: voiceChannel,
+      channel: joinAs,
       guildId: interaction.guildId,
+      // One group per bot. Without it @discordjs/voice looks up the guild's
+      // existing connection, finds the OTHER table's, and moves that one into
+      // this channel instead of opening a second — silently. See capture.js.
+      group: bot.id,
       audioDir,
       getDisplayName: async (userId) => {
         const m = await interaction.guild.members.fetch(userId).catch(() => null);
@@ -1072,8 +1190,15 @@ async function handleJoin(interaction, db, cfg) {
     // channelName/startedAtMs are carried for the status dashboard — it has
     // no other way to say WHERE the bot is sitting or for how long, and
     // re-deriving either from Discord on every poll would be wasteful.
-    activeSessions.set(interaction.guildId, {
+    activeSessions.set(meetingId, {
       meetingId,
+      // Everything the guild key used to carry implicitly, now written down:
+      // which Discord, which voice channel, which table, and which of this
+      // install's bots is sitting in it. See the map's own comment.
+      guildId: interaction.guildId,
+      voiceChannelId: voiceChannel.id,
+      campaignId: target.id,
+      botId: bot.id,
       handle,
       capturedUtterances,
       audioDir,
@@ -1100,22 +1225,88 @@ async function handleJoin(interaction, db, cfg) {
       declined: silent.filter((m) => db.getConsent(target.id, m.id)?.state === 'declined').map((m) => m.displayName),
     };
 
+    // Which bot actually turned up, said out loud when it isn't the usual one.
+    //
+    // The table is about to see an account they may never have seen before
+    // walk into their voice channel and sit there for four hours. "That is
+    // also me, because the other one is next door" is a sentence worth one
+    // line — an unexplained second bot in a voice channel reads like something
+    // has gone wrong, or like something is listening that shouldn't be.
+    const second = bot.primary
+      ? ''
+      : `\n_That's **${bot.client.user?.username ?? 'my other voice'}** in the channel — my first voice is ` +
+        'recording another table in this server._';
+
     await interaction.editReply(
       pick(JOIN_STARTED, { channel: voiceChannel.name }) +
         (several ? `\n_Recording **${campaignLabel(target)}**${ref ? ` — \`${ref}\`` : ''}._` : '') +
+        second +
         describeUnrecorded(unrecorded)
     );
   } finally {
-    // Must run even if startCapture/createMeeting throws, or the guild would
-    // be permanently unable to start a new recording.
-    startingGuilds.delete(interaction.guildId);
+    // Must run even if startCapture/createMeeting throws, or the channel would
+    // be permanently unable to start a new recording — and the bot reserved
+    // for it would never be offered to another table again.
+    starting.delete(voiceChannel.id);
   }
 }
 
 async function handleLeave(interaction, db, cfg) {
-  const session = activeSessions.get(interaction.guildId);
-  if (!session) {
+  const live = sessionsInGuild(interaction.guildId);
+  if (live.length === 0) {
     return interaction.reply({ content: pick(LEAVE_NOT_RECORDING), flags: MessageFlags.Ephemeral });
+  }
+
+  // WHICH session is being ended.
+  //
+  // There used to be no such question: one bot, one voice connection per
+  // Discord, so the guild named the session. With a second bot a server can
+  // hold two live sessions, and picking the wrong one is unfixable — /join
+  // afterwards opens a NEW session with a new number rather than resuming the
+  // one that was stopped by mistake.
+  //
+  // Three signals, in order of how much they prove:
+  //   * the campaign that was named. An explicit statement outranks a guess.
+  //   * where the person asking is sitting. Somebody standing in a recorded
+  //     voice channel is ending THAT table, and it would be perverse to make
+  //     them spell out the name of the room they are in.
+  //   * there being only one, which is every server that has not grown a
+  //     second table and is the case this must not get slower for.
+  //
+  // Note this only SELECTS. It does not excuse anybody from the confirmation
+  // below: a server holding more than one campaign still has to name the one
+  // it is ending, exactly as before, and the checks that follow still run
+  // against whatever was selected here.
+  const asked = interaction.options.getString('campaign');
+  const named = asked
+    ? live.filter((s) => {
+        const c = db.getCampaign(sessionCampaignId(db, s));
+        return c ? Boolean(findCampaign([c], asked)) : false;
+      })
+    : [];
+  const here = interaction.member?.voice?.channelId
+    ? live.filter((s) => s.voiceChannelId === interaction.member.voice.channelId)
+    : [];
+
+  const session =
+    named.length === 1 ? named[0] : here.length === 1 ? here[0] : live.length === 1 ? live[0] : null;
+
+  // Several running and nothing to tell them apart. Name them rather than
+  // refusing blankly — the whole difficulty is that the person asking cannot
+  // see which sessions exist.
+  if (!session) {
+    const names = live
+      .map((s) => db.getCampaign(sessionCampaignId(db, s)))
+      .map((c) => (c ? campaignLabel(c) : null))
+      .filter(Boolean);
+    return interaction.reply({
+      content:
+        `🎲 There are **${live.length}** tables recording in this server right now` +
+        (names.length ? ` — ${names.map((n) => `**${n}**`).join(' and ')}` : '') +
+        `. Tell me which one you're ending${names.length ? `: \`/leave campaign:${names[0]}\`` : ''}, or run ` +
+        '`/leave` from inside the voice channel you want stopped. Nothing has been stopped.',
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   // Stopping a recording belongs to the table being recorded.
@@ -1155,7 +1346,6 @@ async function handleLeave(interaction, db, cfg) {
   // back. One table in the server and there is nothing to get wrong, so it
   // stays out of the way.
   const which = recording?.campaign_id ? db.getCampaign(recording.campaign_id) : null;
-  const asked = interaction.options.getString('campaign');
 
   if (which) {
     // The picker sends the id, so echoing what they asked for verbatim would
@@ -1184,7 +1374,7 @@ async function handleLeave(interaction, db, cfg) {
     }
   }
 
-  activeSessions.delete(interaction.guildId);
+  activeSessions.delete(session.meetingId);
 
   await interaction.reply(pick(LEAVE_START));
   session.handle.disconnect();

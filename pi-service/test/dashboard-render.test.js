@@ -497,15 +497,20 @@ test('the desk says what is true rather than asking where to go', async (t) => {
   assert.match(markup, /class="desk-say">[^<]*\w/, 'the verdict is written');
 });
 
-// A campaign is flagged recording when its DISCORD has a session open, and a
-// Discord may hold several tables. Counting the flags rather than the guilds
-// had Quill reporting two sessions off one /join.
+// A campaign is flagged recording when IT has a session open, not when its
+// Discord does. It used to be the Discord, which lit every table in the server
+// off one /join; the desk then had to count distinct guilds to get back to one.
+// Both halves have moved: the flag is per campaign, so the count is of flags.
 test('one session in a Discord with two tables is one session', async (t) => {
-  const live = new Map([['guild-1', {
-    startedAtMs: Date.now() - 60_000, channelName: 'The Cellar', capturedUtterances: [],
-  }]]);
-  const { db, cfg, base } = await world(t, { activeSessions: live });
+  const live = new Map();
+  const { db, cfg, base, campaignId } = await world(t, { activeSessions: live });
   db.createCampaign('guild-1', 'The second table', CREATOR);
+  // Keyed by meeting, and naming its own campaign — the shape handleJoin
+  // registers now that one Discord can hold two live sessions.
+  live.set(101, {
+    meetingId: 101, guildId: 'guild-1', campaignId,
+    startedAtMs: Date.now() - 60_000, channelName: 'The Cellar', capturedUtterances: [],
+  });
 
   const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
   const markup = page.body();

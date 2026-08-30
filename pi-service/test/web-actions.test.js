@@ -627,7 +627,10 @@ test('an import is refused without a plausible URL and a real campaign', async (
 test('an import will not start on top of a live recording', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
   const ctx = {
-    activeSessions: new Map([['guild-1', { meetingId: 1 }]]),
+    // The guard asks about the CAMPAIGN, not its Discord: with a second bot,
+    // another table in the same server being mid-session says nothing about
+    // whether this one's audio pipeline is free.
+    activeSessions: new Map([[1, { meetingId: 1, guildId: 'guild-1', campaignId }]]),
     startImport: () => assert.fail('two recordings would interleave into one audio pipeline'),
   };
 

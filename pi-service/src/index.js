@@ -7,6 +7,7 @@ import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
 import { recoverInterruptedMeetings } from './pipeline/recovery.js';
 import { migrateLedgerFolders } from './campaign/vault-migrate.js';
 import { describeOpusBackend } from './voice/opus-backend.js';
+import { voicePool, poolSize } from './voice/pool.js';
 import { startStatusServer } from './web/server.js';
 import { startRetentionTimer } from './maintenance/retention.js';
 import { startBackupTimer } from './maintenance/backup-check.js';
@@ -51,7 +52,29 @@ async function main() {
   // destroy()). Log and keep running instead of crashing mid-session.
   client.on('error', (err) => console.error('[client] error:', err));
 
-  registerCommandHandlers(client, db, config);
+  // The other microphones.
+  //
+  // One bot user gets one voice connection per server, so recording two tables
+  // in one Discord at the same time takes a second bot USER — not a second
+  // copy of this process, which would fight this one over the job queue. These
+  // clients register nothing and answer nothing; they exist to hold a voice
+  // connection. See voice/pool.js for the whole argument, and config/env.js
+  // for what DISCORD_VOICE_TOKENS expects.
+  //
+  // Built (and handed to the command handlers) BEFORE any of them has logged
+  // in, deliberately: registerCommandHandlers closes over the pool, and
+  // voice/pool.js asks each client whether it is really in a given guild at
+  // the moment somebody runs /join. A bot still connecting is simply not
+  // offered yet, which is the right answer rather than a race.
+  const voiceClients = config.voiceTokens.map(
+    () => new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] })
+  );
+  for (const extra of voiceClients) {
+    extra.on('error', (err) => console.error('[voice-client] error:', err));
+  }
+  const pool = voicePool(client, voiceClients);
+
+  registerCommandHandlers(client, db, config, pool);
 
   // 'ready' is deprecated in discord.js v14 and only fires as 'clientReady'
   // from v15 — the gateway READY event kept the old name, hence the rename.
@@ -61,6 +84,49 @@ async function main() {
     // is silent and limits how many people can speak at once — see
     // voice/opus-backend.js.
     console.log(describeOpusBackend());
+
+    // Bring the extra microphones up.
+    //
+    // A failure here is logged and survived rather than thrown. A bad extra
+    // token costs the SECOND simultaneous table and nothing else — the primary
+    // is already logged in and every recording that worked yesterday still
+    // works — and taking the whole bot down over it would turn "one of my
+    // three tokens expired" into "nobody can record anything tonight".
+    //
+    // Awaited one at a time so the logs read in order, but BOUNDED: everything
+    // after this block — the queue worker, the transcribe worker, the
+    // dashboard — is behind it, and a login that never settles would hold all
+    // of them hostage. A Pi that came up with no dashboard because one spare
+    // token was wrong is a far worse night than the second table it was for.
+    // Each client's own 'clientReady' is what says it is really usable, since
+    // the guild cache is what /join consults, and that can land after this
+    // loop has moved on.
+    const bounded = (promise, ms) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+          timer.unref?.();
+        }),
+      ]);
+
+    for (const [i, extra] of voiceClients.entries()) {
+      const label = `voice-${i + 1}`;
+      extra.once('clientReady', () =>
+        console.log(`[voice] ${label} ready as ${extra.user.tag} — in ${extra.guilds.cache.size} server(s)`)
+      );
+      await bounded(extra.login(config.voiceTokens[i]), 30_000).catch((err) => {
+        console.error(
+          `[voice] ${label} could not log in (${err.message}). ` +
+            'That token records nothing; the rest of the bot is unaffected.'
+        );
+      });
+    }
+    if (voiceClients.length) {
+      console.log(
+        `[voice] ${poolSize(pool)} bot(s) available — up to ${poolSize(pool)} table(s) recording at once per server.`
+      );
+    }
 
     // Runs after login (not before, like it used to) specifically so it can
     // resolve real Discord display names via the now-cached guilds — a

@@ -10,11 +10,15 @@ import { decideTranscribeAction } from '../src/pipeline/transcribe-schedule.js';
 import { buildWhisperPrompt } from '../src/stt/vocabulary.js';
 
 // One bot, several Discord servers, sessions running at the same time. The
-// recording path keeps everything per-guild (activeSessions, startingGuilds
-// and audioDir are all keyed by guild id, and startCapture closes over its
-// own connection/decoders), so what needs pinning here is everything AFTER
-// capture: that two campaigns cannot end up sharing a queue slot, an
-// approval, or each other's vocabulary.
+// recording path keeps every session apart on its own (activeSessions is keyed
+// by meeting, the in-flight latch by voice channel, audioDir by guild AND
+// channel, and startCapture closes over its own connection/decoders), so what
+// needs pinning here is everything AFTER capture: that two campaigns cannot end
+// up sharing a queue slot, an approval, or each other's vocabulary.
+//
+// Several servers at once was always possible with one bot. Several TABLES at
+// once inside one server is the newer case and needs a second bot user — see
+// two-tables.test.js, which pins the recording path itself.
 
 async function freshDb(t) {
   const dir = await mkdtemp(join(tmpdir(), 'scriber-mg-'));
@@ -47,9 +51,9 @@ const startSession = (db, guildId, n) =>
     channelId: `chan-${guildId}`,
     channelName: `Session ${n}`,
     startedAt: new Date().toISOString(),
-    // Mirrors handleJoin: guild id plus a timestamp, so two servers recording
-    // at the same moment cannot collide on disk.
-    audioDir: `/data/audio/${guildId}-${1785579484748 + n}`,
+    // Mirrors handleJoin: guild id, voice channel id and a timestamp, so
+    // neither two servers nor two tables in one server can collide on disk.
+    audioDir: `/data/audio/${guildId}-chan-${guildId}-${1785579484748 + n}`,
   });
 
 test('three servers recording at once produce three independent sessions', async (t) => {

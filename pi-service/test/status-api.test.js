@@ -86,9 +86,12 @@ test('a live recording reports where it is and how much it has captured', async 
   const id = meeting(db, 'g1', 'Table');
   const now = Date.now();
 
+  // Keyed by meeting rather than guild: a Discord can hold two live sessions
+  // once the install has a second bot user, and a guild key cannot say which.
   const activeSessions = new Map([
-    ['g1', {
+    [id, {
       meetingId: id,
+      guildId: 'g1',
       channelName: 'Voice Chat',
       startedAtMs: now - 90 * 60_000,
       capturedUtterances: [
@@ -108,6 +111,7 @@ test('a live recording reports where it is and how much it has captured', async 
   assert.equal(r.speakers, 2, 'three clips from two people is two speakers');
   assert.ok(r.recordingForMs >= 90 * 60_000);
   assert.equal(s.servers[0].recording, true);
+  assert.equal(s.servers[0].recordings, 1, 'and how many at once, which can now be more than one');
 });
 
 test('transcription in flight is reported with progress', async (t) => {

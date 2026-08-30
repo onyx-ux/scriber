@@ -63,6 +63,7 @@ pi-service/          # everything that runs on the Raspberry Pi
   src/
     config/env.js         # env var loading + validation
     voice/capture.js      # per-speaker PCM capture from Discord voice
+    voice/pool.js          # which bot user takes the next table (see DISCORD_VOICE_TOKENS)
     stt/whisper.js         # spawns whisper.cpp, parses output
     store/db.js            # SQLite: meetings, utterances, job queue
     pipeline/
@@ -266,17 +267,22 @@ touched.
 ### Stopping one
 
 `/leave` also takes a `campaign:`, and in a server holding more than one table
-it **insists** on it. That option is doing something different from every other
-one: there is only ever one recording to stop, so it names the session rather
-than finding it.
+it **insists** on it. That option names the session rather than finding it —
+it is a confirmation, not a lookup.
+
+If two tables are genuinely recording at once (see below), `/leave` works out
+*which* one you mean before it asks you to confirm it: the campaign you named
+if you named one, otherwise the voice channel you are sitting in. Run it from
+outside both channels without naming a campaign and it lists what is live
+rather than guessing.
 
 It is there because stopping cannot be taken back. `/join` afterwards opens a
 *new* session with a new number, so a `/leave` fired at the wrong table splits
 that game's evening in two and no command puts it back together. The condition
 is the same one `/join` announces the campaign on — if `/join` told you which
 game it was recording, `/leave` asks you to say it back. The picker offers
-exactly one entry, the campaign actually being recorded, so it can never offer
-a table that would then be refused.
+only the campaigns actually being recorded, so it can never offer a table that
+would then be refused.
 
 Stopping also belongs to the table being recorded: anyone on that campaign's
 roster can do it, plus the bot owner, so a session whose players have all left
@@ -313,9 +319,70 @@ Campaign names have to be unique across the whole bot, because the name *is*
 the vault folder and the session-reference prefix — two campaigns sharing
 either would interleave their notes or make `Cipher_02` ambiguous.
 
-The one thing that stays per-server is recording itself: a bot can hold only
-one voice connection per Discord, so two tables in one server cannot record at
-the same time whatever the bookkeeping says.
+Recording itself used to be the exception — one bot holds one voice connection
+per Discord, so two tables in one server could not record at the same time
+whatever the bookkeeping said. That is now a matter of how many bots you have
+given it; see the next section.
+
+### Two tables at once (a second bot)
+
+Discord gives **one bot user one voice connection per server**. Not one per
+channel — one per server. No permission, intent or setting changes it. So
+recording two voice channels in the same Discord simultaneously needs a second
+bot *user*: a second application, with its own token.
+
+That is what `DISCORD_VOICE_TOKENS` is. One extra token buys one extra
+simultaneous table, in every server you invite it to.
+
+    DISCORD_VOICE_TOKENS=<second bot token>,<third bot token>
+
+**Setting one up**, in the Discord Developer Portal:
+
+1. **New Application** → **Bot** → **Reset Token**, and put the token in
+   `DISCORD_VOICE_TOKENS` (comma separated if you add more than one).
+2. **OAuth2 → URL Generator**: scope `bot`, permissions **View Channel** and
+   **Connect**. Open the generated URL and add it to the same server.
+3. Nothing else. No user install, no message content, no commands, no
+   privileged intents. Restart the bot.
+
+Do **not** repeat `DISCORD_TOKEN` in the list. Two clients on one token are
+still one bot user, so the "second table" would drag the first one out of its
+channel. The bot warns about this at startup and ignores the duplicate.
+
+**What the extras are.** Not second copies of Quill — microphones. They
+register no slash commands, answer no interactions, run no queue and touch no
+database. They log in, hold a voice connection, and stream audio into the same
+pipeline. Everything else keeps running on the primary bot:
+
+- the table sees **one** Quill and **one** `/join` in the picker;
+- notes, DMs, approvals and the dashboard are unchanged, because the primary
+  posts all of them;
+- there is still one database, one queue, one GPU schedule — so two sessions
+  ending on a Friday become two queued jobs transcribed one at a time, exactly
+  as two sessions in two different servers always did.
+
+Running the whole bot twice would have done none of that, and would have had
+two processes claiming the same queue job out of one SQLite file — an evening
+summarised twice, at twice the API bill.
+
+**What it looks like in use.** `/join` picks the primary while it is free, so
+a server with one table sees no change at all. When a second table starts
+while the first is still recording, the extra bot walks into that channel and
+`/join` says so, since an unexplained second account sitting in a voice channel
+reads like something has gone wrong. When every bot is busy, `/join` refuses
+and says how many there are — it does not queue, because a `/join` that quietly
+succeeded forty minutes later would start recording mid-scene, with nobody
+aware and nobody asked.
+
+**One thing to check first.** Concurrent speakers now add up across *all* the
+tables in the process. `@discordjs/opus` has no practical ceiling, but the pure
+JavaScript fallback dies past roughly 19 at once, costing a clip each time.
+The bot prints which one it got at startup:
+
+    Opus: @discordjs/opus (native).
+
+If that line says "pure JavaScript fallback", fix it before running two
+five-person tables at the same time — see `src/voice/opus-backend.js`.
 
 ### Referring to a session
 

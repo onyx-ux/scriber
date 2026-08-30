@@ -52,7 +52,20 @@ export function scopeStatus(status, viewer) {
       uptimeMs: status.bot?.uptimeMs ?? null,
     },
     campaigns: campaigns.map((c) => scopeCampaignRow(c, viewer)),
-    recording: (status.recording ?? []).filter((r) => guildIds.has(r.guildId)),
+    // Filtered by CAMPAIGN rather than by Discord.
+    //
+    // Being able to see something in that server used to be reason enough,
+    // because a server could only hold one live session and it was the one you
+    // were being shown. Now that two tables in one Discord can record at once,
+    // that rule would hand a player at one table the other table's session —
+    // its channel, its clip count, how many people are speaking in it. A
+    // session belongs to a campaign, so it goes where that campaign goes.
+    //
+    // The guild test remains as the fallback for a session that names no
+    // campaign, which is the only shape older sessions could have.
+    recording: (status.recording ?? []).filter((r) =>
+      r.campaignId ? maySee(viewer, r.campaignId) : guildIds.has(r.guildId)
+    ),
     // Health without the machinery: whether the bot can currently turn speech
     // into notes at all is something a player is entitled to know, because it
     // explains why last night has not appeared. WHICH transcriber and WHICH
@@ -116,6 +129,10 @@ function scopeCampaignRow(campaign, viewer) {
     members: campaign.members,
     lastSessionAt: campaign.lastSessionAt,
     recording: campaign.recording,
+    // The session that is recording it, when one is. The page's live clock
+    // finds its session with this; matching on the guild picked an arbitrary
+    // one of two once a Discord could hold both.
+    meetingId: campaign.meetingId ?? null,
     claimed: campaign.claimed,
   };
 

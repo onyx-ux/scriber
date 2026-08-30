@@ -47,6 +47,39 @@ function tierMap(raw) {
   return out;
 }
 
+// The extra bot tokens, cleaned up. Order is kept — voice-1 is the first one
+// written — so a log line naming a bot means the same thing tomorrow.
+//
+// Two things are dropped rather than passed on, and both are dropped LOUDLY,
+// because both produce a bot that appears to work and then fights itself:
+//
+//   * the primary's own token. Two clients on one token are one bot USER, and
+//     one bot user still gets one voice connection per server — so the second
+//     "table" would evict the first from its channel, which is the exact
+//     failure this whole feature exists to prevent.
+//   * a duplicate of another extra, for the same reason.
+//
+// Silence would have been the wrong call here. A copy-pasted .env line is the
+// most likely way either of these happens, and the symptom — a recording that
+// ends when the other table starts — looks nothing like its cause.
+function voiceTokenList(raw, primaryToken) {
+  const out = [];
+  for (const part of String(raw ?? '').split(',')) {
+    const token = part.trim();
+    if (!token) continue;
+    if (primaryToken && token === primaryToken) {
+      console.warn('[config] DISCORD_VOICE_TOKENS: ignoring DISCORD_TOKEN repeated here — an extra table needs a SECOND bot application, not the same one twice');
+      continue;
+    }
+    if (out.includes(token)) {
+      console.warn('[config] DISCORD_VOICE_TOKENS: ignoring a duplicate token — each entry must be a different bot application');
+      continue;
+    }
+    out.push(token);
+  }
+  return out;
+}
+
 function validate(cfg) {
   if (cfg.summaryProvider === 'anthropic' && !cfg.anthropicApiKey) {
     throw new Error(
@@ -86,6 +119,31 @@ export const config = validate({
   // which is where the dashboard's nginx already proxies this API. Set it for
   // anything that is not that layout.
   discordRedirectUri: optional('DISCORD_REDIRECT_URI', null),
+
+  // Extra bot tokens, comma separated, so ONE Discord can have two tables
+  // recording at the same time.
+  //
+  // Discord gives one bot user one voice connection per server, and there is
+  // no setting anywhere that changes that. A second simultaneous recording in
+  // the same Discord needs a second bot USER: a second application in the
+  // developer portal, its own token here, invited to the server like the
+  // first. Each token past the first buys exactly one more concurrent table.
+  //
+  // These are NOT second copies of the bot. They register no commands, answer
+  // no interactions and run no queue — they log in, hold a voice connection
+  // and stream audio into the same pipeline, and everything else keeps running
+  // on the primary. The table still sees one Quill and one /join. The
+  // reasoning is written out at the top of voice/pool.js.
+  //
+  // Empty is the normal case and means what it always meant: one bot, one
+  // table at a time per server, and nothing in this feature does anything.
+  //
+  // WHAT THE EXTRAS NEED, in the developer portal:
+  //   * a bot user, with its token pasted here;
+  //   * an invite to the same server, with View Channel + Connect on the voice
+  //     channels you want recorded (they never speak and never post);
+  //   * nothing else. No user install, no message content, no commands.
+  voiceTokens: voiceTokenList(optional('DISCORD_VOICE_TOKENS', ''), optional('DISCORD_TOKEN', '')),
 
   dataDir: optional('DATA_DIR', '/data'),
 

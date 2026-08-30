@@ -35,6 +35,30 @@ export const JOIN_NO_CHANNEL = [
   '🧙‍♂️ Step into a voice channel, and the recording shall follow.',
 ];
 
+// Two different noes, since the day a second bot user made them different
+// things. THIS one is "that room is already being recorded" — a second /join
+// into a channel somebody is already recording, which is still one room
+// however many bots the install has, and says nothing about the rest of the
+// server. The list below is the other: every voice this install has is
+// already in a channel here.
+export const JOIN_CHANNEL_BUSY = [
+  "🧙 I'm already scribbling away in this very channel — no need to ask twice.",
+  '📜 The quill is already moving in this room.',
+  "🕯️ The candle's already lit in here — this channel is being recorded.",
+  '🔮 The crystal ball is already watching this room.',
+  "🧾 One scroll per room — I'm already recording this channel.",
+  '📖 This chapter is already being written, right here.',
+  "⚗️ Already distilling this room's session — can't start a second brew in it.",
+  '🎙️ Already rolling in this channel — no double recordings.',
+  '🗿 These stones are already echoing. This channel is being recorded.',
+  '🐉 One dragon, one ledger — this room already has mine.',
+  "🪶 The quill's already dancing in here.",
+  '⛩️ One shrine, one scribe — this room is already spoken for.',
+];
+
+// Every voice this install has is already in a channel in this Discord. With
+// one bot that is the whole of "I'm already recording in this server"; with
+// more, handleJoin adds the count, since the number is the thing to act on.
 export const JOIN_ALREADY_RECORDING = [
   "🧙 I'm already scribbling away in this server — one session at a time.",
   '📜 The quill is already moving. Already recording in this server.',
