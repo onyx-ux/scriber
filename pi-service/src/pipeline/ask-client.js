@@ -134,7 +134,7 @@ export function askAllowance(db, cfg, userId) {
       left > 0
         ? null
         : `You have asked ${limit} question${limit === 1 ? '' : 's'} today, which is the daily limit — ` +
-          'each one costs the person running the bot an API call. It resets at midnight, and `/campaign recap`, ' +
-          '`/campaign search` and `/campaign history` are free.',
+          'each one costs the person running the bot an API call. It resets at midnight, and `/campaign recap` ' +
+          'and `/campaign search` are free.',
   };
 }

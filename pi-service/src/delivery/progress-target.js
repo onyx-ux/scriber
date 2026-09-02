@@ -6,7 +6,7 @@
 // notes, so progress goes to the owner's DM instead.
 //
 // The session notes themselves are NOT routed through here — those are the
-// deliverable and stay public, along with the thematic /join and /leave lines.
+// deliverable and stay public, along with the thematic join and leave lines.
 //
 // Falls back to the channel when there is no owner to DM (or the DM cannot be
 // opened, which Discord allows anyone to arrange): a status line in the wrong

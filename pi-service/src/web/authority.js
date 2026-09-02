@@ -286,7 +286,18 @@ export const ACTION_NEEDS = {
   'corrections/remove': 'manage',
   'corrections/replay': 'manage',
   'campaign/output': 'manage',
-  'campaign/create': 'manage',
+  // Not 'manage', and the odd one out on this table for a reason.
+  //
+  // Every other entry here names an act ON something — a roster, a correction,
+  // a campaign that already exists — so "may you manage that thing" is the
+  // right question. Creating names nothing. There is no campaign yet to run,
+  // which made `manage` a requirement to already run one before you could make
+  // your first, and that is not a rule anybody chose: it is what you get from
+  // filing a create next to eight updates.
+  //
+  // The real gate is being in the server, and it is enforced where it can
+  // actually be checked — guildsCreatableBy, against Discord. See there.
+  'campaign/create': 'signed-in',
   // Deciding who runs a campaign, which is a question about WHO SOMEBODY IS
   // rather than about what a campaign does — the person it lands on resolves to
   // `creator` afterwards. Assigning that belongs with the Level and Tier
@@ -335,6 +346,23 @@ export function mayAct({ pathname, body, viewer, db }) {
   }
 
   const needs = ACTION_NEEDS[name] ?? 'machinery';
+
+  // Having a name is the whole of this one. Not a level — a level answers what
+  // somebody may see of what already exists, and this act brings a thing into
+  // being that nobody could have a claim on yet.
+  //
+  // It is not a hole. What may actually be created, and where, is settled by
+  // guildsCreatableBy against Discord's own answer to "are they in that
+  // server", and then by createCampaign's name rules and ceilings. This line
+  // only refuses the one case those cannot: nobody at all.
+  //
+  // The operator's console has no Discord session and passes on can.everything,
+  // acting as the id in actingUserId — the same way it does everywhere else.
+  if (needs === 'signed-in') {
+    return viewer.userId || viewer.can.everything
+      ? null
+      : { status: 403, message: 'Sign in first — a campaign has to belong to somebody.' };
+  }
 
   if (needs === 'restore') {
     return viewer.can.manage

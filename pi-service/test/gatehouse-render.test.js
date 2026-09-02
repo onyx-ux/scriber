@@ -236,6 +236,87 @@ test('a player is told whose page this is rather than shown an empty one', async
   assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
 });
 
+// The state this page could not previously be in. Until the htpasswd prompt
+// came off /gatehouse/ on 2026-08-31, the browser demanded a shared password
+// before any of this ran, so a visitor with no Discord session never arrived.
+// They do now, and the two noes have to stay apart: somebody who has not been
+// asked who they are is not the same as somebody who has been asked and is not
+// a dev. Telling the first "this is the owner's" describes a door they never
+// tried.
+test('a visitor with no session is offered the way in, not told off', async (t) => {
+  const { db, cfg, base } = await world(t, {
+    discordClientId: '1', discordClientSecret: 'shh', dashboardUrl: 'http://dash.test',
+  });
+  db.setInvited(FRIEND, { username: 'fenwick' });
+
+  const page = await render({ base, cookie: '' });
+  const markup = page.body();
+
+  assert.match(markup, /Continue with Discord/i, 'a way in');
+  assert.match(markup, /auth\/discord/, 'pointed at the real sign-in route');
+  assert.doesNotMatch(markup, /the bot owner's/i, 'that is the refusal for somebody who HAS signed in');
+  assert.doesNotMatch(markup, /fenwick/, 'and the roster is still nobody else’s business');
+  assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
+});
+
+// An install nobody can sign into must not draw a button that goes to Discord
+// and comes back with an error page mentioning none of this bot's settings.
+test('an install with no OAuth credentials names the one that is missing', async (t) => {
+  const { base } = await world(t);
+
+  const markup = (await render({ base, cookie: '' })).body();
+
+  assert.match(markup, /not set up for Discord sign-in/i);
+  assert.match(markup, /DISCORD_CLIENT_ID/, 'and says which setting');
+  assert.doesNotMatch(markup, /Continue with Discord/i, 'no button that cannot work');
+});
+
+// --- servers that have gone ---
+
+test('a server the bot was removed from is named, with its tables under it', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const stranded = db.createCampaign('guild-gone', 'Strahd', DEV);
+  db.rememberGuild('guild-gone', 'The Old Cellar');
+  db.markGuildLeft('guild-gone', '2026-08-12T10:00:00Z');
+
+  const markup = (await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') })).body();
+
+  assert.match(markup, /Servers that have gone/i);
+  assert.match(markup, /The Old Cellar/, 'the name, kept from while the bot could still read it');
+  assert.match(markup, /Strahd/, 'and the table stuck in it');
+  assert.match(markup, /Nothing has been thrown away/i, 'said plainly, because it is the question');
+  assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
+  assert.ok(stranded);
+});
+
+// It is a record, not a queue of work. Every other section of this page ends in
+// buttons; this one must not, because there is nothing to decide and the state
+// undoes itself if the bot is added back.
+test('the gone section offers no controls at all', async (t) => {
+  const { db, cfg, base } = await world(t);
+  db.createCampaign('guild-gone', 'Strahd', DEV);
+  db.rememberGuild('guild-gone', 'The Old Cellar');
+  db.markGuildLeft('guild-gone');
+
+  const markup = (await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') })).body();
+  // Just this section — the page footer follows it, and the point is what is
+  // inside the record rather than what comes after it.
+  const start = markup.indexOf('<section class="gone">');
+  const section = markup.slice(start, markup.indexOf('</section>', start));
+  assert.ok(start > -1, 'the section is drawn');
+
+  assert.doesNotMatch(section, /<button/, 'nothing to press');
+  assert.doesNotMatch(section, /data-do=/, 'and no action wired behind anything');
+});
+
+test('with no server gone the section is not drawn at all', async (t) => {
+  const { db, cfg, base } = await world(t);
+
+  const markup = (await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') })).body();
+
+  assert.doesNotMatch(markup, /Servers that have gone/i, 'an empty section is a question nobody asked');
+});
+
 test('with the door unlocked the page leads with that, not with the list', async (t) => {
   const { db, cfg, base } = await world(t, { dashboardRequireLogin: false });
   db.setInvited(FRIEND, { username: 'fenwick' });

@@ -131,6 +131,42 @@ export function accessRoster({ db, cfg, client = null, viewer = null }) {
   for (const p of people) byLevel[p.level] = (byLevel[p.level] ?? 0) + 1;
 
   return {
+    // Servers the bot is no longer in that still have tables filed under them,
+    // and the tables themselves.
+    //
+    // Here rather than on /status because /status is the campaign list, and
+    // the entire point is that these are not on it. They are an operator's
+    // problem — something happened to a Discord — so they ride behind the same
+    // capability as the roster and reach the gatehouse, which is the screen
+    // for facts about the install rather than facts about a game.
+    //
+    // Both halves are sent: the guilds so the screen can lead with what went,
+    // and the campaigns so it can name what is stuck rather than only counting
+    // it. Neither is large — a departed server is rare — and joining them on
+    // the page beats a second round trip.
+    // Renamed to camelCase here rather than passed through as the store
+    // spells it. The page joins these two lists on the guild id, and a
+    // `guild_id` on one side against a `guildId` on the other is a join that
+    // silently matches nothing — the servers still draw, with no tables under
+    // any of them, which looks like a real answer.
+    departedGuilds: (db.listDepartedGuilds?.() ?? []).map((g) => ({
+      guildId: g.guild_id,
+      name: g.name ?? null,
+      firstSeen: g.first_seen ?? null,
+      leftAt: g.left_at ?? null,
+      campaigns: g.campaigns ?? 0,
+    })),
+    strandedCampaigns: (db.listStrandedCampaigns?.() ?? []).map((c) => ({
+      id: c.id,
+      guildId: c.guild_id,
+      name: c.name ?? c.channel_name ?? `Campaign ${c.id}`,
+      sessions: c.sessions ?? 0,
+      lastSessionAt: c.last_session_at ?? null,
+      managerUserId: c.manager_user_id ?? null,
+      managerName: known.get(c.manager_user_id)?.name
+        ?? client?.users?.cache?.get?.(c.manager_user_id)?.username
+        ?? null,
+    })),
     // The headline fact. With login off, the roster below describes who WOULD
     // resolve to what -- but anyone who reaches the page is the operator
     // regardless, so saying otherwise would be a comforting lie.
@@ -179,5 +215,9 @@ export function accessRoster({ db, cfg, client = null, viewer = null }) {
     total: people.length,
     signedIn: people.filter((p) => p.signedIn).length,
     byLevel,
+    // The last few dozen sign-ins and sign-outs, terminal-plain, for the
+    // gatehouse's own log. See store/db.js auth_events for what is and is not
+    // kept here -- it is a convenience, not an audit trail.
+    log: db.listAuthEvents?.(40) ?? [],
   };
 }

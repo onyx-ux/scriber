@@ -34,6 +34,12 @@ import { ACTIONS } from '../src/web/actions.js';
 //
 // Everything above that line — managing, correcting, approving, metering,
 // admitting — may live on the dashboard alone.
+//
+// That line has since been walked further. Ten subcommands were cut in one
+// pass — the four corrections, delete, list, history, stats, npcs and
+// locations — on the reasoning that every one of them is a LIST being read or
+// edited, and a list is the one thing an ephemeral Discord reply is worst at
+// and a web page is best at. What is below the line did not move.
 
 const COMMANDS = fileURLToPath(new URL('../src/commands/index.js', import.meta.url));
 
@@ -58,16 +64,28 @@ test('everything a player does for themselves is in Discord', async () => {
   }
 });
 
-// The specific hole the retired file was written for, kept because it is still
-// true and still worth defending: correcting a misheard name is the most common
-// thing a DM does with a transcription bot, and it is a five-second act in the
-// middle of a session. Making somebody open a browser for it would be absurd
-// even in a world where the browser is the main tool.
-test('correcting a misheard name does not require a web browser', async () => {
-  const source = await readFile(COMMANDS, 'utf8');
+// Corrections used to be defended here, and the argument was good: correcting
+// a misheard name is the most common thing a DM does with a transcription bot,
+// and it is a five-second act in the middle of a session.
+//
+// It was withdrawn deliberately, so the counter-argument is written down rather
+// than the test simply vanishing. Adding one correction is five seconds; every
+// other thing you do with corrections is reading the list — checking whether a
+// rule already exists, seeing which ones are doing nothing, deciding what to
+// drop. Discord answers that with an ephemeral message that cannot be sorted,
+// cannot show how many lines each rule touches, and is gone on the next reload.
+// The dashboard's corrections tab shows all of it at once. So the cost is a
+// browser tab at the moment of correcting, and the gain is that corrections are
+// somewhere you can actually look at them.
+//
+// What must NOT come back from that trade is the guard: a correction rewrites
+// transcripts irreversibly, and the confirmation step lives with the action, not
+// with the surface that calls it.
+test('the correction guard survived the move to the dashboard', async () => {
+  const { ACTIONS: acts } = await import('../src/web/actions.js');
 
-  for (const sub of ['correct', 'uncorrect', 'corrections', 'replay']) {
-    assert.match(source, new RegExp(`setName\\('${sub}'\\)`), `/campaign ${sub} is missing`);
+  for (const action of ['corrections/add', 'corrections/remove', 'corrections/replay']) {
+    assert.ok(acts[action], `${action} is the only way to correct a name now, and is missing`);
   }
 });
 
@@ -102,11 +120,7 @@ const ALSO_IN_DISCORD = {
   'roster/forget': '/campaign remove',
   'campaign/output': '/campaign output',
   'campaign/create': '/campaign create',
-  'campaign/delete': '/campaign delete',
   'campaign/restore': '/campaign restore',
-  'corrections/add': '/campaign correct',
-  'corrections/remove': '/campaign uncorrect',
-  'corrections/replay': '/campaign replay',
 };
 
 test('every Discord shortcut named here is really registered', async () => {

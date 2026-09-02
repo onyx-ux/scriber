@@ -37,24 +37,34 @@ const EQUIVALENT = {
 // true.
 const COMMANDS = {
   create: { tier: 'open', dashboard: null, why: 'an unclaimed campaign has to be claimable by somebody' },
-  list: { tier: 'open', dashboard: 'player', why: 'seeing what is here is not a privilege' },
+
+  // The two acts that cannot be done from a web page at all, at either end:
+  // they are run from inside the voice channel they are about.
+  join: { tier: 'member', dashboard: null, why: 'no browser is sitting in the voice channel' },
+
+  // `leave` is the one subcommand in no tier at all — not because it is open,
+  // but because a resolver would answer the wrong question. It checks the live
+  // session in the channel you are standing in, and then who may stop it:
+  // anyone on that campaign's roster, plus the operator, so a session whose
+  // table has all left can still be ended. See mayStop in commands/index.js.
+  leave: { tier: 'open', dashboard: null, why: 'checked against the live session, not against a resolver' },
 
   rename: { tier: 'manager', dashboard: null, why: 'Discord only — no dashboard control exists' },
   invite: { tier: 'manager', dashboard: 'creator', why: 'roster/invite' },
   remove: { tier: 'manager', dashboard: null, why: 'Discord only' },
   output: { tier: 'manager', dashboard: 'creator', why: 'campaign/output' },
-  delete: { tier: 'manager', dashboard: 'creator', why: 'campaign/delete' },
 
-  // `restore` sits at no tier, like `create` and `list`. It cannot: the
-  // resolver finds campaigns, and an archived campaign is invisible to it by
-  // design. The handler looks through the archive itself and shows only what
-  // the caller deleted, so being open costs nothing.
+  // `restore` sits at no tier, like `create`. It cannot: the resolver finds
+  // campaigns, and an archived campaign is invisible to it by design. The
+  // handler looks through the archive itself and shows only what the caller was
+  // at the table for, so being open costs nothing.
+  //
+  // Its opposite number, deleting, is deliberately NOT here any more: it is the
+  // dashboard's alone, because the typed-name confirmation wants to sit next to
+  // the thing being typed about. Asking for one back stayed, because the person
+  // who needs to ask is often a player, and a player has no reason to have been
+  // admitted to the dashboard.
   restore: { tier: 'open', dashboard: 'creator', why: 'campaign/restore' },
-
-  correct: { tier: 'manager', dashboard: 'creator', why: 'corrections/add' },
-  uncorrect: { tier: 'manager', dashboard: 'creator', why: 'corrections/remove' },
-  corrections: { tier: 'manager', dashboard: 'creator', why: 'the corrections tab' },
-  replay: { tier: 'manager', dashboard: 'creator', why: 'corrections/replay' },
 
   setchar: { tier: 'member', dashboard: 'player', why: 'roster/character, on yourself' },
   whoami: { tier: 'member', dashboard: null, why: 'the dashboard shows this without asking' },
@@ -62,19 +72,10 @@ const COMMANDS = {
 
   recap: { tier: 'player', dashboard: 'player', why: 'the notes reader' },
   funny: { tier: 'player', dashboard: 'player', why: 'the notes reader' },
-  history: { tier: 'player', dashboard: 'player', why: 'the session list' },
-  npcs: { tier: 'player', dashboard: 'player', why: 'the facts rail' },
-  locations: { tier: 'player', dashboard: 'player', why: 'the facts rail' },
   archive: { tier: 'player', dashboard: 'player', why: 'the exported site' },
 
-  // The four that do NOT line up, each for a stated reason rather than an
+  // The three that do NOT line up, each for a stated reason rather than an
   // oversight. Listed here so the disagreement is a decision on the record.
-  stats: {
-    tier: 'player',
-    dashboard: 'owner',
-    aligned: false,
-    why: 'hours and line counts are capacity numbers; the dashboard keeps them for whoever runs the server',
-  },
   search: {
     tier: 'player',
     dashboard: 'creator',

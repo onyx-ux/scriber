@@ -37,6 +37,7 @@ import {
 } from './auth.js';
 import { authorizeUrl, identifyByCode, oauthReady } from './discord-oauth.js';
 import { maySignIn } from './authority.js';
+import { dashboardHome } from '../delivery/dashboard-link.js';
 
 export async function handleAuthRoute({ pathname, method = 'POST', url, body, req, db, cfg, secure, fetchImpl }) {
   if (method === 'GET' && pathname === '/auth/discord') return start({ cfg, secure });
@@ -197,15 +198,10 @@ function logout({ body, req, db, cfg, secure }) {
 // it without a round trip; the page maps it to a sentence, because these are
 // five words for a machine and none of them is an explanation.
 function dashboard(cfg, hash = '') {
-  const home = (() => {
-    if (!cfg?.dashboardUrl) return '/app/';
-    try {
-      return new URL('/app/', cfg.dashboardUrl).toString();
-    } catch {
-      return '/app/';
-    }
-  })();
-  return `${home}${hash}`;
+  // The relative form is the right fallback HERE and only here — this redirect
+  // is handed to a browser that is already on the site. See dashboard-link.js
+  // for why a message sent anywhere else must not accept it.
+  return `${dashboardHome(cfg)}${hash}`;
 }
 
 function refuse(cfg, reason, { secure = false } = {}) {

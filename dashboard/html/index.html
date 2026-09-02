@@ -3159,9 +3159,9 @@ function firstRun() {
           <span class="mark">3</span>
           <div style="flex:1">
             <div class="what" style="color:var(--dim)">Point it at a voice channel</div>
-            <div class="sub" style="font-family:var(--sans);font-size:13px">Quill joins when two of you are in it, and leaves when the last one goes.</div>
+            <div class="sub" style="font-family:var(--sans);font-size:13px">Run it from the channel you are playing in. Quill records until somebody ends the session with <code>/campaign leave</code>.</div>
           </div>
-          <code>/join</code>
+          <code>/campaign join</code>
         </div>
         <div>
           <span class="mark">4</span>
@@ -3911,7 +3911,7 @@ function recordingPane(s) {
       Audio is being written to the Pi and nothing has left your network. Transcription starts when the
       last person leaves the channel${status?.schedule?.requireApproval ? ' — and Quill will ask before it uses the PC' : ''}.
     </div>
-    <div class="quiet" style="margin-top:20px">End it from Discord with <code>/leave</code>.</div>`;
+    <div class="quiet" style="margin-top:20px">End it from Discord with <code>/campaign leave</code>.</div>`;
 }
 
 function failedPane(s) {
@@ -5076,6 +5076,24 @@ function createDialog() {
         <div class="say-2" style="font-size:14.5px;margin-top:12px">
           One per game. It holds the roster, the corrections, and every session you record.
           You will run it.
+          ${
+            // How many places are left, said BEFORE the button rather than
+            // after it. A ceiling somebody only meets as a refusal is a
+            // ceiling they had no way to plan around, and this one is small
+            // enough to reach in an afternoon of setting tables up.
+            //
+            // Only when a limit applies: 0 is unlimited, which is what the
+            // operator and anybody on the house tier have, and telling them
+            // they have "unlimited of unlimited left" is noise.
+            me?.campaignLimit > 0 ? `
+            <div class="mono" style="font-size:11px;color:var(--dim);margin-top:10px">
+              ${esc(String(me.campaignsHeld))} of ${esc(String(me.campaignLimit))} used${
+                me.campaignsHeld >= me.campaignLimit
+                  ? ' — delete one you have finished with to free a place'
+                  : ''
+              }. Tables you only play at never count.
+            </div>` : ''
+          }
         </div>
 
         <form data-act="campaign/create">
@@ -5287,7 +5305,7 @@ function renderModal() {
             the session.
           </div>
           ${busy ? `<div class="warnbox" style="border-color:var(--red)">
-            That server is recording right now. Stop it with <code>/leave</code> before importing, or the
+            That server is recording right now. Stop it with <code>/campaign leave</code> before importing, or the
             two sessions will interleave.</div>` : ''}
           <div class="foot">
             <button class="btn go big" type="submit" ${busy || !can() ? 'disabled' : ''}>Start the import</button>

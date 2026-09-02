@@ -1,15 +1,20 @@
 // Who may run what.
 //
-// Three tiers, and none of them is a Discord permission:
+// Two tiers in Discord, and neither of them is a Discord permission:
 //
-//   ANYONE      — /join, /leave, /setcharacter, /whoami, and the read-only
-//                 player commands. These are the table using the bot.
-//   MANAGER     — the person who named the campaign. Renaming it, setting the
-//                 roster, and correcting transcripts all reshape that
-//                 campaign's records, so they belong to whoever runs the game.
-//   BOT OWNER   — the pipeline. Transcribing, summarising, importing and
-//                 pausing spend the owner's GPU, API budget and disk. Nobody
-//                 else has a reason to touch them, in any server.
+//   THE TABLE   — /campaign join, leave, setchar, whoami, consent, plus the
+//                 reads. These are the people playing, using the bot.
+//   MANAGER     — the person who named the campaign. Renaming it and setting
+//                 its roster reshape that campaign's records, so they belong
+//                 to whoever runs the game.
+//
+// There used to be a third, BOT OWNER, holding the pipeline: transcribing,
+// summarising, importing and pausing all spend the owner's GPU, API budget and
+// disk. It is empty now rather than deleted, and that is worth saying plainly
+// — every one of those moved to the dashboard under ADR-0004, and no slash
+// command reaches any of them. isOwner below survives because the owner still
+// WIDENS things rather than gating them: they resolve every campaign, and they
+// can stop a session whose table has all left the server.
 //
 // Manage Server was the obvious gate and is the wrong one: the person running
 // the game is often not the person administering the Discord, and in a server

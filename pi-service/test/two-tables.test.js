@@ -160,7 +160,7 @@ function command(name, { user, sub = null, options = {}, inVoice = null } = {}) 
   };
 }
 
-function autocomplete(name, { user } = {}) {
+function autocomplete(name, { user, sub = null } = {}) {
   const got = { choices: null };
   return {
     got,
@@ -171,7 +171,7 @@ function autocomplete(name, { user } = {}) {
     isAutocomplete: () => true,
     isChatInputCommand: () => false,
     options: {
-      getSubcommand: () => null,
+      getSubcommand: () => sub,
       getString: () => null,
       getFocused: (withType) => (withType ? { name: 'campaign', value: '' } : ''),
     },
@@ -192,7 +192,7 @@ test('a second /join into a channel already being recorded is refused', async (t
   const { db, dispatch, cipher } = await harness(t, { extras: [botClient({ username: 'Quill II' })] });
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
 
-  const said = await run(dispatch, command('join', { user: PLAYER_A, inVoice: CELLAR }));
+  const said = await run(dispatch, command('campaign', { sub: 'join', user: PLAYER_A, inVoice: CELLAR }));
 
   // One of a dozen flavour lines, picked at random — so this asserts WHICH
   // refusal it is, not how that refusal happens to be worded today. The room
@@ -207,7 +207,7 @@ test('with one bot, a second table in the same server is refused', async (t) => 
   const { db, dispatch, cipher } = await harness(t);
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
 
-  const said = await run(dispatch, command('join', { user: PLAYER_B, inVoice: SOLAR, options: { campaign: 'Strahd' } }));
+  const said = await run(dispatch, command('campaign', { sub: 'join', user: PLAYER_B, inVoice: SOLAR, options: { campaign: 'Strahd' } }));
 
   assert.ok(JOIN_ALREADY_RECORDING.includes(said), `unexpected refusal: ${said}`);
   assert.equal(sessionsInGuild(GUILD).length, 1);
@@ -223,7 +223,7 @@ test('with a second bot, a second table is allowed and routed to it', async (t) 
   });
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
 
-  const said = await run(dispatch, command('join', { user: PLAYER_B, inVoice: SOLAR, options: { campaign: 'Strahd' } }));
+  const said = await run(dispatch, command('campaign', { sub: 'join', user: PLAYER_B, inVoice: SOLAR, options: { campaign: 'Strahd' } }));
 
   assert.match(said, /second voice/, 'the mule was chosen, and said so when it could not reach the channel');
   assert.ok(!JOIN_ALREADY_RECORDING.some((line) => said.startsWith(line)), 'the other table is no longer a reason to refuse');
@@ -239,7 +239,7 @@ test('when every bot is busy the refusal says how many there are', async (t) => 
   onAir(db, { campaignId: strahd, voiceChannelId: SOLAR, botId: 'voice-1' });
   db.setConsent(cipher, PLAYER_B, true); // so the roster gate is not what answers
 
-  const said = await run(dispatch, command('join', { user: PLAYER_B, inVoice: SNUG, options: { campaign: 'Cipher' } }));
+  const said = await run(dispatch, command('campaign', { sub: 'join', user: PLAYER_B, inVoice: SNUG, options: { campaign: 'Cipher' } }));
 
   assert.match(said, /All 2 of my voices/, 'and says how many, since that is the number to act on');
   assert.match(said, /DISCORD_VOICE_TOKENS/, 'and where another one would come from');
@@ -253,7 +253,7 @@ test('two live sessions and a bare /leave from outside names both, and stops nei
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
   onAir(db, { campaignId: strahd, voiceChannelId: SOLAR, botId: 'voice-1' });
 
-  const said = await run(dispatch, command('leave', { user: PLAYER_A }));
+  const said = await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A }));
 
   assert.match(said, /\*\*2\*\* tables/);
   assert.match(said, /Cipher/);
@@ -266,7 +266,7 @@ test('naming one of two live tables ends exactly that one', async (t) => {
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
   const strahdMeeting = onAir(db, { campaignId: strahd, voiceChannelId: SOLAR, botId: 'voice-1' });
 
-  await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: 'Cipher' } }));
+  await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A, options: { campaign: 'Cipher' } }));
 
   const left = sessionsInGuild(GUILD);
   assert.equal(left.length, 1);
@@ -283,7 +283,7 @@ test('a bare /leave from inside a recorded channel asks about that table', async
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
   onAir(db, { campaignId: strahd, voiceChannelId: SOLAR, botId: 'voice-1' });
 
-  const said = await run(dispatch, command('leave', { user: PLAYER_B, inVoice: SOLAR }));
+  const said = await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_B, inVoice: SOLAR }));
 
   assert.match(said, /more than one table/);
   assert.match(said, /I'm recording \*\*Strahd\*\*/, 'the room they are sitting in, not whichever came first');
@@ -297,7 +297,7 @@ test("a player at one table cannot end the other table's session", async (t) => 
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
   onAir(db, { campaignId: strahd, voiceChannelId: SOLAR, botId: 'voice-1' });
 
-  const said = await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: 'Strahd' } }));
+  const said = await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A, options: { campaign: 'Strahd' } }));
 
   assert.match(said, /you're not at that table/);
   assert.equal(sessionsInGuild(GUILD).length, 2);
@@ -308,7 +308,7 @@ test('the picker offers every table that is actually recording', async (t) => {
   onAir(db, { campaignId: cipher, voiceChannelId: CELLAR });
   onAir(db, { campaignId: strahd, voiceChannelId: SOLAR, botId: 'voice-1' });
 
-  const choices = await run(dispatch, autocomplete('leave', { user: PLAYER_A }));
+  const choices = await run(dispatch, autocomplete('campaign', { sub: 'leave', user: PLAYER_A }));
 
   // The label carries a session count after the name, so match rather than
   // compare — the value is the id, and that is what has to be exactly right.

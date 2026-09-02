@@ -10,11 +10,10 @@ import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { isSummariserReachable, summariserLabel } from '../pipeline/model-client.js';
 import { askCampaign, askAllowance, gatherContext } from '../pipeline/ask-client.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
-import { campaignFolder, campaignFolderFor } from '../export/naming.js';
+import { campaignFolderFor } from '../export/naming.js';
 import { TRANSCRIBE_PREFIX } from '../pipeline/transcribe-schedule.js';
 import { notifyTranscribeReady } from '../delivery/transcribe-notify.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
-import { readLedgerFile } from '../campaign/ledger.js';
 import {
   resolveReadableCampaign,
   resolveMemberCampaign,
@@ -26,12 +25,13 @@ import {
 } from '../campaign/resolve.js';
 import { isOwner } from '../campaign/permissions.js';
 import { createCampaign } from '../campaign/create.js';
-import { handleCorrect, handleUncorrect, handleCorrections, handleReplay } from './corrections.js';
+import { campaignAllowance } from '../access/tiers.js';
+import { deskInvitation } from '../delivery/dashboard-link.js';
 // Naming a character is a rule, not a write: it decides what the name is, and
 // whether that name will appear in anything. Both callers go through here so
 // the dashboard and /setchar cannot drift — see pipeline/job-actions.js.
 import { setCharacter } from '../pipeline/job-actions.js';
-import { handleCampaignDelete, handleCampaignRestore } from './archive.js';
+import { handleCampaignRestore } from './archive.js';
 import { handleRestoreModal } from './restore-request.js';
 import { notifyRestoreRequested } from '../delivery/restore-notify.js';
 import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
@@ -62,6 +62,7 @@ import {
 } from '../delivery/approval-notify.js';
 import {
   pick,
+  CAMPAIGN_CREATED,
   JOIN_NO_CHANNEL,
   JOIN_CHANNEL_BUSY,
   JOIN_ALREADY_RECORDING,
@@ -69,7 +70,6 @@ import {
   JOIN_FAILED,
   LEAVE_NOT_RECORDING,
   LEAVE_START,
-  HISTORY_EMPTY,
   SUMMARIZE_UNREACHABLE,
   EXPORT_INTRO,
   SETCHARACTER_CONFIRM,
@@ -81,12 +81,6 @@ import {
   SEARCH_HEADER,
   WHOAMI_SET,
   WHOAMI_UNSET,
-  STATS_HEADER,
-  STATS_EMPTY,
-  NPCS_EMPTY,
-  NPCS_HEADER,
-  LOCATIONS_EMPTY,
-  LOCATIONS_HEADER,
   ARCHIVE_SENT,
   GENERIC_ERROR,
 } from '../flavor.js';
@@ -101,7 +95,7 @@ import {
 //
 // The meeting id rather than the voice channel's, because a meeting is what
 // the rest of this bot already calls a session: it is what the queue names,
-// what the dashboard names, and what /leave ends. A channel can also be left
+// what the dashboard names, and what `leave` ends. A channel can also be left
 // and rejoined in an evening, which would make its id ambiguous across two
 // sessions; a meeting id never is.
 //
@@ -177,7 +171,7 @@ const InteractionContext = { GUILD: 0, BOT_DM: 1, PRIVATE_CHANNEL: 2 };
 // anywhere, and the resolver restricts them to campaigns the caller has
 // actually played in.
 const PLAYER_SUBCOMMANDS = new Set([
-  'recap', 'funny', 'search', 'ask', 'history', 'stats', 'npcs', 'locations', 'archive', 'export',
+  'recap', 'funny', 'search', 'ask', 'archive', 'export',
   // `consent` sits at this tier rather than MEMBER on purpose. It has to work
   // in a DM — the invitation arrived in one, and someone withdrawing may
   // reasonably not want to do it in front of the table — and MEMBER refuses
@@ -188,30 +182,38 @@ const PLAYER_SUBCOMMANDS = new Set([
 
 // MEMBER. Acts on the table you are sitting at, so it needs a campaign you are
 // on the roster for, in this server.
-const MEMBER_SUBCOMMANDS = new Set(['setchar', 'whoami']);
+//
+// `join` is the reason this tier exists at all. Recording people is earned at
+// the table, and membership here means the bot's OWN roster rather than
+// Discord's member list: in a server the bot was merely invited to, being able
+// to see a voice channel is not permission to record the game happening in it.
+const MEMBER_SUBCOMMANDS = new Set(['join', 'setchar', 'whoami']);
 
 // MANAGE. Reshaping a campaign's records belongs to whoever runs the game —
 // held by whoever created it, not by a Discord permission.
 //
-// `create` and `list` are absent on purpose: creating has to work for someone
-// who runs nothing yet, and listing shows what is here. Both resolve for
-// themselves.
-export const MANAGER_SUBCOMMANDS = new Set([
-  'rename', 'invite', 'remove', 'output',
-  // Corrections reshape the record itself, which makes them the same
-  // authority as renaming the campaign rather than a lesser one.
-  'correct', 'uncorrect', 'corrections', 'replay',
-  // Deleting is the manager tier too. Restoring is deliberately absent: an
-  // archived campaign cannot be resolved -- that is what archiving it means
-  // -- so its handler finds its own and scopes to what the caller ran.
-  'delete',
-]);
+// Four, where there were nine. Corrections and deletion have gone to the
+// dashboard, and neither was a loss: a correction is a rule in a list, best
+// read and revoked next to the other rules, and deleting a campaign wants a
+// confirmation box that a slash command has no way to draw. What is left are
+// the four that are genuinely mid-session errands — the name is wrong, someone
+// new sat down, someone left, the notes are going to the wrong channel.
+//
+// `create` is absent on purpose: it has to work for someone who runs nothing
+// yet, so it resolves for itself.
+export const MANAGER_SUBCOMMANDS = new Set(['rename', 'invite', 'remove', 'output']);
 
-// /join and /leave are the only commands left outside /campaign, because they
-// are the only two that must be run from inside the voice channel being
-// recorded. /join needs a campaign you are on the roster for; /leave does its
-// own check against the session actually running (see handleLeave).
-const MEMBER_COMMANDS = new Set(['join']);
+// `leave` sits in no tier at all, and is the only subcommand that does not.
+// It asks a narrower question than "which of your tables is this": what is
+// actually recording in the channel you are standing in — see handleLeave. Its
+// own check is against the live session rather than against a resolver, so
+// putting it in MEMBER_SUBCOMMANDS would resolve a campaign it then ignores,
+// and refuse people the live check would have let through.
+//
+// It and `join` were the last two commands outside /campaign, both for the
+// same reason: they are run from inside the voice channel. That stopped being
+// a reason to live in the picker's top level the moment everything else moved,
+// and one door beats three.
 
 // How many campaigns one Discord may hold, and how many one person may run.
 //
@@ -252,43 +254,21 @@ function campaignCommand(builder) {
 }
 
 export const commandDefs = [
-  // Recording someone requires being at their table. Membership is the
-  // bot's own roster, not Discord's member list — in a server the bot was
-  // invited to, being able to see a voice channel is not permission to
-  // record the game happening in it.
-  new SlashCommandBuilder()
-    .setName('join')
-    .setDescription('Start recording this voice channel')
-    .addStringOption((o) =>
-      o
-        .setName('campaign')
-        .setDescription("Which campaign this session belongs to (only needed if you're in more than one here)")
-        .setRequired(false)
-        .setAutocomplete(true)
-    ),
-  // The campaign option here confirms the session as much as it finds it — see
-  // handleLeave. Being made to say which table you are ending is what stops a
-  // /leave meant for the game next door, and it is asked for whenever the
-  // server holds more than one campaign, whether or not two are live at once.
-  new SlashCommandBuilder()
-    .setName('leave')
-    .setDescription('Stop recording, transcribe, and queue the summary')
-    .addStringOption((o) =>
-      o
-        .setName('campaign')
-        .setDescription("Which campaign you're ending (needed when the server holds more than one)")
-        .setRequired(false)
-        .setAutocomplete(true)
-    ),
-  // Everything else, under one command.
+  // One command. Everything Quill does in Discord is a subcommand of it.
   //
   // There used to be twenty-seven top-level commands. A player who installed
   // the app, or anyone opening the picker in a server the bot was invited to,
   // saw the lot — including `approve`, `pause`, `import`, `transcribe` and the
   // rest of the pipeline, which spends the owner's GPU and API budget and has
   // nothing to do with playing D&D. Those have moved to the dashboard, and
-  // what remains is the game: one command, and the two that start and stop a
-  // recording.
+  // what remains is the game.
+  //
+  // `join` and `leave` held out longest, on the argument that they are the two
+  // that must be run from inside the voice channel. True, and not a reason to
+  // sit in the top level: what a player types is `/campaign`, and what they
+  // then want is a list of the things they can do to their campaign. Two of
+  // those things happening to be spoken into a voice channel does not make them
+  // a different command.
   //
   // Subcommands rather than a pile of optional flags, because a server can now
   // hold several campaigns and "create" and "rename" are very different acts
@@ -308,17 +288,47 @@ export const commandDefs = [
       .setDescription('Your campaign — its notes, its people, and its records')
       .setDMPermission(true)
 
+      // --- the night itself ---
+      //
+      // The only subcommand that has to be run from inside the voice channel it
+      // is about, and the only one in this file that spends anything. It takes
+      // the MEMBER tier: a campaign you are on the roster for, in this server.
+      .addSubcommand((s) =>
+        s
+          .setName('join')
+          .setDescription('Start recording the voice channel you are in')
+          .addStringOption((o) =>
+            o
+              .setName('campaign')
+              .setDescription("Which campaign this session belongs to (only needed if you're in more than one here)")
+              .setRequired(false)
+              .setAutocomplete(true)
+          )
+      )
+      // The campaign option here confirms the session as much as it finds it —
+      // see handleLeave. Being made to say which table you are ending is what
+      // stops a `leave` meant for the game next door, and it is asked for
+      // whenever the server holds more than one campaign, whether or not two
+      // are live at once.
+      .addSubcommand((s) =>
+        s
+          .setName('leave')
+          .setDescription('Stop recording, transcribe, and queue the summary')
+          .addStringOption((o) =>
+            o
+              .setName('campaign')
+              .setDescription("Which campaign you're ending (needed when the server holds more than one)")
+              .setRequired(false)
+              .setAutocomplete(true)
+          )
+      )
+
       // --- running a campaign ---
       .addSubcommand((s) =>
         s
           .setName('create')
           .setDescription('Start a new campaign in this server — you become its DM')
           .addStringOption((o) => o.setName('name').setDescription('e.g. "Sunless Citadel"').setRequired(true))
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('list')
-          .setDescription('Show the campaigns in this server, who runs them, and where their notes go')
       )
       .addSubcommand((s) =>
         s
@@ -365,26 +375,17 @@ export const commandDefs = [
           .addStringOption(campaignOption)
       )
 
-      // --- deleting one, and changing your mind ---
+      // --- changing your mind about a deletion ---
       //
-      // `confirm` is a required option rather than a yes/no, because typing the
-      // name is the safety mechanism: it makes the hand slow down and look at
-      // which campaign this actually is. `restore` resolves nothing, like
-      // `create` and `list` — an archived campaign is invisible to the resolver
-      // by design, so a subcommand that goes looking for one has to do it
-      // itself.
-      .addSubcommand((s) =>
-        s
-          .setName('delete')
-          .setDescription('Delete a campaign you run — recoverable for 30 days')
-          .addStringOption((o) =>
-            o
-              .setName('confirm')
-              .setDescription('Type the campaign’s name exactly, to be sure this is the one')
-              .setRequired(true)
-          )
-          .addStringOption(campaignOption)
-      )
+      // Deleting itself is the dashboard's, which is where the typed-name
+      // confirmation belongs. Asking for one back stays here, because the
+      // person who needs it is often not the person who deleted it, and a
+      // player should not have to be admitted to a web page to petition for
+      // the record of their own game.
+      //
+      // `restore` resolves nothing, unlike `create` — an archived campaign is
+      // invisible to the resolver by design, so a subcommand that goes looking
+      // for one has to do it itself. See askableBy in commands/archive.js.
       .addSubcommand((s) =>
         s
           .setName('restore')
@@ -392,52 +393,6 @@ export const commandDefs = [
           .addStringOption((o) =>
             o.setName('campaign').setDescription('Which one — leave empty to see what is waiting').setRequired(false)
           )
-      )
-
-      // --- what Whisper keeps getting wrong ---
-      //
-      // Flat rather than a `correction` subcommand group: the dispatcher and
-      // both permission tiers key off the bare subcommand name, so a group
-      // would put `correction list` and `correction remove` through the routes
-      // and tiers belonging to the top-level `list` and `remove`.
-      .addSubcommand((s) =>
-        s
-          .setName('correct')
-          .setDescription('Teach Quill a name it keeps mishearing — applies to old transcripts and new')
-          .addStringOption((o) =>
-            o.setName('heard').setDescription('What it writes, e.g. "Kaylen"').setRequired(true)
-          )
-          .addStringOption((o) =>
-            o.setName('write').setDescription('What it should write, e.g. "Kaelen"').setRequired(true)
-          )
-          .addBooleanOption((o) =>
-            o
-              .setName('confirm')
-              .setDescription('Apply it even if it would rewrite a large share of the campaign')
-              .setRequired(false)
-          )
-          .addStringOption(campaignOption)
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('uncorrect')
-          .setDescription('Drop a correction — lines already rewritten stay rewritten')
-          .addStringOption((o) =>
-            o.setName('heard').setDescription('The wrong text it was matching on').setRequired(true)
-          )
-          .addStringOption(campaignOption)
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('corrections')
-          .setDescription('List the corrections saved for this campaign')
-          .addStringOption(campaignOption)
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('replay')
-          .setDescription('Re-apply every correction over this campaign’s existing transcripts')
-          .addStringOption(campaignOption)
       )
 
       // --- your own name at the table ---
@@ -507,36 +462,11 @@ export const commandDefs = [
       )
       .addSubcommand((s) =>
         s
-          .setName('history')
-          .setDescription('List recent sessions')
-          .addIntegerOption((o) => o.setName('count').setDescription('How many to show').setRequired(false))
-          .addStringOption(campaignOption)
-      )
-      .addSubcommand((s) =>
-        s
           .setName('export')
           .setDescription('Get the transcript for a session as a file')
           .addStringOption((o) =>
             o.setName('session').setDescription('e.g. Cipher_02').setRequired(true).setAutocomplete(true)
           )
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('stats')
-          .setDescription('Campaign-wide totals: sessions, hours, lines, and who talks the most')
-          .addStringOption(campaignOption)
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('npcs')
-          .setDescription('List every NPC the campaign has met so far')
-          .addStringOption(campaignOption)
-      )
-      .addSubcommand((s) =>
-        s
-          .setName('locations')
-          .setDescription('List every location the campaign has visited so far')
-          .addStringOption(campaignOption)
       )
       .addSubcommand((s) =>
         s
@@ -606,15 +536,14 @@ function campaignChoices(campaigns, typed) {
 // is the same one its handler will accept, so the picker can never offer
 // something that is then refused.
 function campaignsToOffer(interaction, db, cfg) {
-  const name = interaction.commandName;
   const sub = interaction.options.getSubcommand(false);
   const userId = interaction.user.id;
 
-  if (MEMBER_COMMANDS.has(name) || MEMBER_SUBCOMMANDS.has(sub)) {
+  if (MEMBER_SUBCOMMANDS.has(sub)) {
     return db.listCampaignsForMember(userId).filter((c) => c.guild_id === interaction.guildId);
   }
 
-  // /leave can only stop what is actually being recorded, so the campaigns
+  // `leave` can only stop what is actually being recorded, so the campaigns
   // with a session open are the entire list — offering the caller's other
   // tables would be offering a choice that is then refused. It also means the
   // picker names the live sessions before you commit to ending one, which is
@@ -623,7 +552,7 @@ function campaignsToOffer(interaction, db, cfg) {
   // A list rather than the single campaign it used to be: with a second bot a
   // Discord can hold two live sessions, and the picker is where somebody
   // choosing between them will look first.
-  if (name === 'leave') {
+  if (sub === 'leave') {
     return sessionsInGuild(interaction.guildId)
       .map((live) => sessionCampaignId(db, live))
       .filter(Boolean)
@@ -653,9 +582,10 @@ async function handleCampaignAutocomplete(interaction, db, cfg) {
     return interaction.respond(campaignChoices(campaignsToOffer(interaction, db, cfg), typed));
   }
 
-  // The session picker for /summarise, /transcribe and /export. Showing the
-  // date alongside the reference is what makes it usable — nobody remembers
-  // whether the one that failed was 02 or 03.
+  // The session picker for /campaign export, the one subcommand that names a
+  // session rather than a campaign. Showing the date alongside the reference is
+  // what makes it usable — nobody remembers whether the one that failed was 02
+  // or 03.
   if (focused.name === 'session') {
     const lower = typed.toLowerCase();
     const reachable = isOwner(interaction.user.id, cfg, db)
@@ -685,30 +615,24 @@ async function handleCampaignAutocomplete(interaction, db, cfg) {
   return interaction.respond([]);
 }
 
-// The whole surface, minus the two commands that have to be run from inside a
-// voice channel.
+// The whole surface.
 //
 // The campaign is already resolved by the dispatcher for every subcommand that
 // needs one, through the tier that subcommand sits in — so these handlers read
 // interaction.quillCampaign and do not re-check anything. The exceptions are
-// the two at the top, which deliberately resolve nothing: `create` has to work
-// for someone who runs no campaign yet, and `list` says what is here.
+// the two that deliberately resolve nothing: `create` has to work for someone
+// who runs no campaign yet, and `restore` goes looking through the archive,
+// which the resolver cannot see into.
 const CAMPAIGN_ROUTES = {
-  create: (i, db, cfg) => handleCampaignCreate(i, db, cfg),
-  list: (i, db, cfg) => handleCampaignList(i, db, cfg),
+  join: (i, db, cfg, pool) => handleJoin(i, db, cfg, pool),
+  leave: (i, db, cfg) => handleLeave(i, db, cfg),
 
+  create: (i, db, cfg) => handleCampaignCreate(i, db, cfg),
   rename: (i, db, cfg) => handleCampaignRename(i, db, cfg, campaign(i)),
   output: (i, db) => handleCampaignOutput(i, db, campaign(i)),
   invite: (i, db, cfg) => handleCampaignInvite(i, db, cfg, campaign(i)),
   remove: (i, db) => handleCampaignRemove(i, db, campaign(i)),
-
-  delete: (i, db, cfg) => handleCampaignDelete(i, db, cfg, campaign(i)),
   restore: (i, db, cfg) => handleCampaignRestore(i, db, cfg),
-
-  correct: (i, db) => handleCorrect(i, db, campaign(i)),
-  uncorrect: (i, db) => handleUncorrect(i, db, campaign(i)),
-  corrections: (i, db) => handleCorrections(i, db, campaign(i)),
-  replay: (i, db) => handleReplay(i, db, campaign(i)),
 
   setchar: (i, db) => handleSetCharacter(i, db),
   whoami: (i, db) => handleWhoAmI(i, db),
@@ -718,15 +642,11 @@ const CAMPAIGN_ROUTES = {
   funny: (i, db) => handleFunny(i, db),
   search: (i, db) => handleSearch(i, db),
   ask: (i, db, cfg) => handleAsk(i, db, cfg),
-  history: (i, db) => handleHistory(i, db),
   export: (i, db, cfg) => handleExport(i, db, cfg),
-  stats: (i, db) => handleStats(i, db),
-  npcs: (i, db, cfg) => handleNpcs(i, db, cfg),
-  locations: (i, db, cfg) => handleLocations(i, db, cfg),
   archive: (i, db, cfg) => handleArchive(i, db, cfg),
 };
 
-async function handleCampaign(interaction, db, cfg) {
+async function handleCampaign(interaction, db, cfg, pool) {
   const route = CAMPAIGN_ROUTES[interaction.options.getSubcommand()];
   // Unreachable through Discord, which only sends subcommands the bot
   // registered — but a route missing from the table above would otherwise fail
@@ -734,7 +654,7 @@ async function handleCampaign(interaction, db, cfg) {
   if (!route) {
     return interaction.reply({ content: "⚠️ I don't know that subcommand.", flags: MessageFlags.Ephemeral });
   }
-  return route(interaction, db, cfg);
+  return route(interaction, db, cfg, pool);
 }
 
 // Asking someone to join, which is also asking whether they may be recorded.
@@ -842,51 +762,55 @@ async function handleCampaignCreate(interaction, db, cfg) {
     return interaction.reply({ content: made.message, flags: MessageFlags.Ephemeral });
   }
 
+  // Three questions, answered in the order somebody actually asks them: is it
+  // mine, what will you write down, and what do I do now. The old reply
+  // answered the first and third and skipped the second entirely — so the one
+  // thing a new DM is deciding, whether this is worth a session of their game,
+  // was the one thing it never said.
   return interaction.reply({
     content:
-      `📖 **${made.name}** exists. You run it.\n` +
-      `Session notes are filed in \`${made.folder}/\` as \`Session 01.md\`, \`Session 02.md\`, and referred to as \`${sessionRef(made.name, 1)}\`.\n\n` +
-      '**Next:** add your players with `/dm add player:@them name:<their character>` — they need to be on the roster ' +
-      "before they can `/join`, and a character name keeps them from being written up as an NPC. " +
-      'Then `/campaign output` if you want the recaps somewhere other than the channel you record in.',
+      `${pick(CAMPAIGN_CREATED, { name: made.name })}\n` +
+      '**You run it.** Its name, its roster and its records answer to you.\n\n' +
+
+      '**What ends up written down**\n' +
+      `📜 Every night becomes \`Session 01.md\`, \`Session 02.md\`… filed under \`${made.folder}/\`, and called ` +
+      `\`${sessionRef(made.name, 1)}\` everywhere you go looking for it.\n` +
+      '🗺️ What the party decided, every NPC met and place visited, the loot, the threads left hanging — ' +
+      'and the lines that made everyone laugh.\n' +
+      '🔇 Nothing at all from anyone who has not agreed. Each player is asked in a DM, and silence is not a yes.\n\n' +
+
+      '**Before your first session**\n' +
+      '**1.** `/campaign invite player:@them name:<their character>` — asks them, and gives them a name. ' +
+      'Without one they get written up as an NPC in their own story.\n' +
+      '**2.** `/campaign output` — where the write-up lands, if not the channel you record in.\n\n' +
+
+      'Then `/campaign join` from the voice channel when you sit down, and `/campaign leave` when you are done. ' +
+      'That is the whole ritual — I take it from there.' +
+      deskInvitation({ cfg, db, userId: interaction.user.id, campaignName: made.name }) +
+      placesLeft(db, cfg, interaction.user.id),
     flags: MessageFlags.Ephemeral,
   });
 }
 
-async function handleCampaignList(interaction, db, cfg) {
-  const campaigns = interaction.guildId
-    ? db.listCampaignsInGuild(interaction.guildId)
-    : campaignsToOffer(interaction, db, cfg);
+// How much room is left, mentioned only when it is nearly out.
+//
+// Naming the ceiling on somebody's FIRST campaign is noise — five is not a
+// number anybody needs while they have four spare. It becomes worth saying
+// when it is about to stop them, and saying it here rather than only in the
+// refusal is the difference between planning around a limit and walking into
+// one. An uncapped tier is passed over in silence, since "unlimited" is not
+// news either.
+function placesLeft(db, cfg, userId) {
+  const purse = campaignAllowance(db, cfg, userId);
+  if (purse.limit <= 0 || purse.left > 2) return '';
 
-  if (campaigns.length === 0) {
-    return interaction.reply({
-      content: interaction.guildId
-        ? "No campaigns here yet. `/campaign create name:...` starts one and makes you its DM."
-        : "You don't run or play in any campaigns yet.",
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  const lines = campaigns.map((c) => {
-    const folder = campaignFolderFor(c);
-    const who = c.manager_user_id ? `<@${c.manager_user_id}>` : '_unclaimed_';
-    const where =
-      c.output_mode === 'dm'
-        ? "DM'd to the DM"
-        : c.output_mode === 'channel' && c.output_channel_id
-          ? `<#${c.output_channel_id}>`
-          : 'the default';
-    return (
-      `• **${campaignLabel(c)}** — run by ${who}\n` +
-      `  ${c.sessions} session${c.sessions === 1 ? '' : 's'} · notes in \`${folder}/\` → ${where}` +
-      (c.name ? ` · sessions read \`${refSlug(c.name)}_01\`` : '')
-    );
-  });
-
-  return interaction.reply({
-    content: `📚 **Campaigns${interaction.guildId ? ' here' : ''}**\n${lines.join('\n')}`,
-    flags: MessageFlags.Ephemeral,
-  });
+  return (
+    `\n\n_That is ${purse.held} of the ${purse.limit} campaigns your tier lets you run at once — ` +
+    (purse.left === 0
+      ? 'your last place. Deleting one you have finished with frees another straight away.'
+      : `${purse.left} left. Deleting one you have finished with frees a place straight away.`) +
+    '_'
+  );
 }
 
 async function handleCampaignRename(interaction, db, cfg, target) {
@@ -1016,9 +940,9 @@ export function registerCommandHandlers(client, db, cfg, pool = voicePool(client
     if (!interaction.isChatInputCommand()) return;
 
     const name = interaction.commandName;
-    // Everything but /join and /leave is a subcommand now, so the subcommand
-    // is what decides the tier and the handler. getSubcommand(false) rather
-    // than the throwing form: /join and /leave have none.
+    // Everything is a subcommand now, so the subcommand is what decides the
+    // tier and the handler. getSubcommand(false) rather than the throwing form:
+    // an autocomplete or a malformed interaction may carry none.
     const sub = interaction.options.getSubcommand(false);
 
     // Resolve which campaign this is about BEFORE the handler runs, so every
@@ -1029,14 +953,14 @@ export function registerCommandHandlers(client, db, cfg, pool = voicePool(client
     // subcommand you may run. There is no separate gate to fall out of step
     // with — see campaign/resolve.js.
     //
-    // `create` and `list` resolve nothing here: creating has to work for
-    // someone who runs no campaign yet, and listing shows what is here. The
-    // read subcommands that take an explicit session reference carry their own
-    // campaign, so `export` resolves through the READ tier for its candidate
-    // list and then narrows by reference.
+    // `create` and `restore` resolve nothing here: creating has to work for
+    // someone who runs no campaign yet, and an archived campaign is invisible
+    // to every resolver by design. The read subcommands that take an explicit
+    // session reference carry their own campaign, so `export` resolves through
+    // the READ tier for its candidate list and then narrows by reference.
     const resolver = MANAGER_SUBCOMMANDS.has(sub)
       ? resolveManagedCampaign
-      : MEMBER_COMMANDS.has(name) || MEMBER_SUBCOMMANDS.has(sub)
+      : MEMBER_SUBCOMMANDS.has(sub)
         ? resolveMemberCampaign
         : PLAYER_SUBCOMMANDS.has(sub) && sub !== 'export'
           ? resolveReadableCampaign
@@ -1056,9 +980,7 @@ export function registerCommandHandlers(client, db, cfg, pool = voicePool(client
       // on the stack, so a rejection later on (e.g. the voice connection
       // timing out well after the initial reply) would silently become an
       // unhandled rejection instead of being caught below.
-      if (name === 'join') return await handleJoin(interaction, db, cfg, pool);
-      if (name === 'leave') return await handleLeave(interaction, db, cfg);
-      if (name === 'campaign') return await handleCampaign(interaction, db, cfg);
+      if (name === 'campaign') return await handleCampaign(interaction, db, cfg, pool);
     } catch (err) {
       console.error(`[command:${interaction.commandName}] error:`, err);
       const reply = { content: pick(GENERIC_ERROR, { message: err.message }), flags: MessageFlags.Ephemeral };
@@ -1070,7 +992,7 @@ export function registerCommandHandlers(client, db, cfg, pool = voicePool(client
 
 async function handleJoin(interaction, db, cfg, pool = voicePool(interaction.client)) {
   // The campaign is resolved and the roster checked by the dispatcher — see
-  // MEMBER_COMMANDS. That check is the point: /join starts recording people's
+  // MEMBER_SUBCOMMANDS. That check is the point: this starts recording people's
   // voices, and in a server the bot was merely invited to, being able to see a
   // voice channel is not permission to record the game happening in it.
   const target = campaign(interaction);
@@ -1108,7 +1030,7 @@ async function handleJoin(interaction, db, cfg, pool = voicePool(interaction.cli
     // whether to add a fourth token actually needs.
     const many =
       poolSize(pool) > 1
-        ? `\n_All ${poolSize(pool)} of my voices are in channels here. One of those tables has to \`/leave\` ` +
+        ? `\n_All ${poolSize(pool)} of my voices are in channels here. One of those tables has to \`/campaign leave\` ` +
           'before I can sit down at another — or add another bot token to `DISCORD_VOICE_TOKENS`._'
         : '';
     return interaction.reply({
@@ -1269,6 +1191,19 @@ async function handleJoin(interaction, db, cfg, pool = voicePool(interaction.cli
 }
 
 async function handleLeave(interaction, db, cfg) {
+  // /campaign carries USER_INSTALL for its reads, so every subcommand is now
+  // offered in a DM and in servers the bot is not in. Ending a recording is
+  // meaningless in both, and "nothing is being recorded right now" would be a
+  // true sentence that answers the wrong question — the session is running
+  // fine, it is just not running HERE.
+  if (!interaction.guildId) {
+    return interaction.reply({
+      content:
+        'Run this in the server the game is being recorded in — a DM has no voice channel for me to be sitting in.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   const live = sessionsInGuild(interaction.guildId);
   if (live.length === 0) {
     return interaction.reply({ content: pick(LEAVE_NOT_RECORDING), flags: MessageFlags.Ephemeral });
@@ -1320,15 +1255,15 @@ async function handleLeave(interaction, db, cfg) {
       content:
         `🎲 There are **${live.length}** tables recording in this server right now` +
         (names.length ? ` — ${names.map((n) => `**${n}**`).join(' and ')}` : '') +
-        `. Tell me which one you're ending${names.length ? `: \`/leave campaign:${names[0]}\`` : ''}, or run ` +
-        '`/leave` from inside the voice channel you want stopped. Nothing has been stopped.',
+        `. Tell me which one you're ending${names.length ? `: \`/campaign leave campaign:${names[0]}\`` : ''}, or run ` +
+        '`/campaign leave` from inside the voice channel you want stopped. Nothing has been stopped.',
       flags: MessageFlags.Ephemeral,
     });
   }
 
   // Stopping a recording belongs to the table being recorded.
   //
-  // /leave has always been open to anyone in the server, which was near enough
+  // Stopping has always been open to anyone in the server, which was near enough
   // while a server meant a campaign. With two tables it is not: the other
   // group's DM could end this one's session mid-scene, and the recording
   // cannot be resumed — /join starts a new one with a new session number.
@@ -1354,12 +1289,12 @@ async function handleLeave(interaction, db, cfg) {
   // Unlike every other campaign option, this one does not RESOLVE anything —
   // there is only ever one session to stop, so the name is a confirmation
   // rather than a lookup. It earns its place because stopping cannot be taken
-  // back: /join afterwards opens a NEW session with a new number, so a /leave
+  // back: `join` afterwards opens a NEW session with a new number, so a `leave`
   // fired at the wrong table splits that game's evening in two and there is no
   // command that puts it back together.
   //
   // Demanded on exactly the condition /join announces the campaign on: if
-  // /join told you which game it was recording, /leave asks you to say it
+  // `join` told you which game it was recording, `leave` asks you to say it
   // back. One table in the server and there is nothing to get wrong, so it
   // stays out of the way.
   const which = recording?.campaign_id ? db.getCampaign(recording.campaign_id) : null;
@@ -1374,7 +1309,7 @@ async function handleLeave(interaction, db, cfg) {
       return interaction.reply({
         content:
           `🎲 I'm not recording **${wanted}** — this session belongs to **${campaignLabel(which)}**.\n` +
-          `\`/leave campaign:${campaignLabel(which)}\` ends it. Nothing has been stopped.`,
+          `\`/campaign leave campaign:${campaignLabel(which)}\` ends it. Nothing has been stopped.`,
         flags: MessageFlags.Ephemeral,
       });
     }
@@ -1384,7 +1319,7 @@ async function handleLeave(interaction, db, cfg) {
         content:
           `🎲 There's more than one table in this server, so tell me which one you're ending — I'm recording ` +
           `**${campaignLabel(which)}** right now.\n` +
-          `Re-run as \`/leave campaign:${campaignLabel(which)}\`. This can't be undone: \`/join\` afterwards starts ` +
+          `Re-run as \`/campaign leave campaign:${campaignLabel(which)}\`. This can't be undone: \`/campaign join\` afterwards starts ` +
           'a new session rather than resuming this one.',
         flags: MessageFlags.Ephemeral,
       });
@@ -1415,10 +1350,12 @@ async function handleLeave(interaction, db, cfg) {
   // operational detail for whoever runs the bot — the table just played a
   // session and does not need the plumbing narrated at them in their own
   // channel. The owner gets all of this, with buttons, in the DM below.
-  // Only the thematic /join and /leave lines are public.
+  // Only the thematic join and leave lines are public.
+  const ref = which ? sessionRef(campaignLabel(which), meeting?.session_number) : null;
+
   await interaction.followUp({
     content:
-      `📼 Recorded **${clipCount}** clips for session #${session.meetingId}.\n` +
+      `📼 Recorded **${clipCount}** clip${clipCount === 1 ? '' : 's'}${ref ? ` for \`${ref}\`` : ''}.\n` +
       (cfg.transcribeRequireApproval
         ? `Transcription is queued — I've DMed you to ask when it can use the PC. Nothing touches the GPU until then.`
         : `Transcription is queued and will start when the PC is available.`),
@@ -1442,8 +1379,9 @@ async function handleLeave(interaction, db, cfg) {
 // campaign, so there was nothing to check and /export 16 returned whatever
 // session 16 happened to be, on anyone's server.
 //
-// The owner reaches every campaign, since these are all owner-tier commands
-// and unsticking someone else's stuck session is the job.
+// One caller left, /campaign export, which is a READ. The owner still reaches
+// every campaign — somebody has to be able to pull the transcript out of a
+// session whose table has all left the server.
 function resolveSession(interaction, db, cfg) {
   const reachable = isOwner(interaction.user.id, cfg, db)
     ? db.listCampaigns()
@@ -1451,42 +1389,34 @@ function resolveSession(interaction, db, cfg) {
   return resolveSessionRef(interaction.options.getString('session'), reachable, db);
 }
 
-async function handleHistory(interaction, db) {
-  const target = campaign(interaction);
-  const count = interaction.options.getInteger('count') || 10;
-  const meetings = db.listRecentMeetings(target.id, count);
-  if (meetings.length === 0) {
-    return interaction.reply({ content: pick(HISTORY_EMPTY), flags: MessageFlags.Ephemeral });
-  }
-  // The session reference, not the meeting id: the reference is what the vault
-  // calls the file and what every other command takes.
-  const lines = meetings.map((m) => {
-    const ref = sessionRef(campaignLabel(target), m.session_number);
-    return `**${ref ?? `#${m.id}`}** — ${m.channel_name} — ${(m.started_at || '').slice(0, 10)} — _${m.status}_`;
-  });
-  await interaction.reply({
-    content: `**${campaignLabel(target)}**\n${lines.join('\n')}`,
-    flags: MessageFlags.Ephemeral,
-  });
-}
-
 async function handleExport(interaction, db, cfg) {
-  const { meeting, error } = resolveSession(interaction, db, cfg);
+  const { meeting, campaign: from, error } = resolveSession(interaction, db, cfg);
   if (error) return interaction.reply({ content: error, flags: MessageFlags.Ephemeral });
   const meetingId = meeting.id;
+
+  // The reference they typed, given back to them — on the message and on the
+  // file. Falling back to the id only when a session has no number to make one
+  // from, which is the one case where there is nothing better to say.
+  const ref = from ? sessionRef(campaignLabel(from), meeting.session_number) : null;
 
   const utterances = db.listUtterances(meetingId);
   const transcriptText = buildTranscriptText(utterances);
   const buf = Buffer.from(transcriptText, 'utf8');
-  const attachment = new AttachmentBuilder(buf, { name: `meeting-${meetingId}-transcript.txt` });
+  const attachment = new AttachmentBuilder(buf, {
+    name: ref ? `${ref}-transcript.txt` : `meeting-${meetingId}-transcript.txt`,
+  });
 
   const intro = pick(EXPORT_INTRO, {
-    meetingId,
+    session: ref ?? `session #${meetingId}`,
     channel: meeting.channel_name,
     date: (meeting.started_at || '').slice(0, 10),
   });
+  const rawAudio = meeting.audio_dir
+    ? `The source audio is still on the Pi at \`${meeting.audio_dir}\`.`
+    : 'The source audio has been cleaned up by the retention policy, so this transcript is what is left of that night.';
+
   await interaction.reply({
-    content: `${intro} Raw audio lives on the Pi at \`${meeting.audio_dir}\` if you need the source files (or \`null\` if it's already been cleaned up by the retention policy).`,
+    content: `${intro} ${rawAudio}`,
     files: [attachment],
     flags: MessageFlags.Ephemeral,
   });
@@ -1577,7 +1507,7 @@ async function handleRecap(interaction, db, cfg) {
     return interaction.reply({
       content:
         `⏸️ Summarising is paused, so I'm not calling ${summariserLabel(cfg)}. ` +
-        'Run `/resume` first, or ask for the stored notes.',
+        'Whoever runs the bot can start it again from the dashboard — the stored note still works in the meantime.',
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -1623,66 +1553,6 @@ async function handleWhoAmI(interaction, db) {
   await interaction.reply({ content, flags: MessageFlags.Ephemeral });
 }
 
-async function handleStats(interaction, db) {
-  const target = campaign(interaction);
-  const stats = db.campaignStats(target.id);
-  if (stats.totalSessions === 0) {
-    return interaction.reply({ content: pick(STATS_EMPTY), flags: MessageFlags.Ephemeral });
-  }
-
-  const hours = (stats.totalMs / 3_600_000).toFixed(1);
-  const header = pick(STATS_HEADER, { sessions: stats.totalSessions, hours, lines: stats.totalLines });
-
-  const talkLines = stats.talkative.map((t, i) => `${i + 1}. **${t.display_name}** — ${t.lines} lines`).join('\n');
-  const longestRef = sessionRef(campaignLabel(target), stats.longestSessionNumber);
-  const longest =
-    stats.longestMeetingId !== null
-      ? `${(stats.longestMs / 3_600_000).toFixed(1)}h (${longestRef ?? `session #${stats.longestMeetingId}`})`
-      : 'unknown';
-
-  const content = [
-    `**${campaignLabel(target)}**`,
-    header,
-    '',
-    '**Most talkative:**',
-    talkLines,
-    '',
-    `**Longest session:** ${longest}`,
-  ].join('\n');
-  await interaction.reply({ content, flags: MessageFlags.Ephemeral });
-}
-
-// The ledger of the campaign this command resolved to. Reads the folder from
-// the campaign itself rather than from its last session, so a campaign whose
-// notes exist but whose sessions were all deleted still answers.
-async function ledgerEntries(db, cfg, campaignRow, filename) {
-  if (!campaignRow) return null;
-  const folder = campaignFolderFor(campaignRow);
-  const raw = await readLedgerFile(cfg, folder, filename);
-  return (raw || '').split('\n').filter((l) => l.trim().startsWith('-'));
-}
-
-function ledgerReply(entries, emptyPick, headerPick) {
-  if (!entries || entries.length === 0) {
-    return { content: pick(emptyPick), flags: MessageFlags.Ephemeral };
-  }
-  let content = pick(headerPick, { list: entries.join('\n') });
-  if (content.length > 1900) {
-    content = `${content.slice(0, 1900)}\n… _(truncated — see the full ledger in Obsidian)_`;
-  }
-  return { content, flags: MessageFlags.Ephemeral };
-}
-
-async function handleNpcs(interaction, db, cfg) {
-  const entries = await ledgerEntries(db, cfg, campaign(interaction), 'NPCs.md');
-  await interaction.reply(ledgerReply(entries, NPCS_EMPTY, NPCS_HEADER));
-}
-
-async function handleLocations(interaction, db, cfg) {
-  const entries = await ledgerEntries(db, cfg, campaign(interaction), 'Locations.md');
-  await interaction.reply(ledgerReply(entries, LOCATIONS_EMPTY, LOCATIONS_HEADER));
-}
-
 async function handleArchive(interaction, db, cfg) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const path = await exportCampaignSite(db, campaignId(interaction), cfg);
@@ -1695,7 +1565,9 @@ async function handleAsk(interaction, db, cfg) {
 
   if (db.getSetting('summarize_paused') === 'true') {
     return interaction.reply({
-      content: `⏸️ Summarising is paused, so I'm not calling ${summariserLabel(cfg)}. Run \`/resume\` first.`,
+      content:
+        `⏸️ Summarising is paused, so I'm not calling ${summariserLabel(cfg)}. ` +
+        'Whoever runs the bot can start it again from the dashboard.',
       flags: MessageFlags.Ephemeral,
     });
   }
@@ -1908,14 +1780,20 @@ async function handleSearch(interaction, db) {
     byMeeting.get(row.meeting_id).push(row);
   }
 
+  // Headed by the session REFERENCE, not the meeting id. The reference is what
+  // the vault calls the file, what /campaign export asks for, and what somebody
+  // reading a hit will want to go and look at next — a bare "#16" is a number
+  // they cannot use anywhere.
+  const label = campaignLabel(campaign(interaction));
   const blocks = [];
   for (const [meetingId, hits] of byMeeting) {
     const date = (hits[0].started_at || '').slice(0, 10);
+    const ref = sessionRef(label, hits[0].session_number);
     const lines = hits.map((h) => {
       const text = h.text.length > 160 ? `${h.text.slice(0, 157)}…` : h.text;
       return `\`[${timestamp(h.start_ms)}]\` **${h.display_name}:** ${text}`;
     });
-    blocks.push(`**#${meetingId} — ${hits[0].channel_name} (${date})**\n${lines.join('\n')}`);
+    blocks.push(`**${ref ?? `#${meetingId}`} — ${hits[0].channel_name} (${date})**\n${lines.join('\n')}`);
   }
 
   let content = `${pick(SEARCH_HEADER, { query, count: rows.length })}\n\n${blocks.join('\n\n')}`;

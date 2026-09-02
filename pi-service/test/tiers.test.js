@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
-import { TIERS, TOP_TIER, FREE_TIER, isTier, tierOf, askLimitFor, allowanceFor } from '../src/access/tiers.js';
+import {
+  TIERS, TOP_TIER, FREE_TIER, isTier, tierOf, askLimitFor, allowanceFor,
+  campaignLimitFor, campaignAllowance,
+} from '../src/access/tiers.js';
 import { askAllowance } from '../src/pipeline/ask-client.js';
 import { runAction } from '../src/web/actions.js';
 import { OPERATOR } from '../src/web/viewer.js';
@@ -139,8 +142,112 @@ test('allowanceFor is the tier and its limit together, which is what a caller wa
   const { db, cfg } = await world(t, { tierAskLimits: { 0: 5, 1: 20, 2: 60, 3: 200, 4: 0 } });
   db.setTier(FRIEND, 3);
 
-  assert.deepEqual(allowanceFor(db, cfg, FRIEND), { tier: 3, askLimit: 200 });
-  assert.deepEqual(allowanceFor(db, cfg, OWNER), { tier: TOP_TIER, askLimit: 0 });
+  // Tier 3 writes no campaign limit of its own, so it inherits tier 1's ten.
+  assert.deepEqual(allowanceFor(db, cfg, FRIEND),
+                   { tier: 3, askLimit: 200, campaignLimit: 10, campaignsHeld: 0 });
+  // The house is unmetered on both counts. 0 is unlimited in each.
+  assert.deepEqual(allowanceFor(db, cfg, OWNER),
+                   { tier: TOP_TIER, askLimit: 0, campaignLimit: 0, campaignsHeld: 0 });
+});
+
+// --- how many campaigns a tier is worth -----------------------------------
+
+test('the free tier holds five and tier one holds ten', async (t) => {
+  const { cfg } = await world(t);
+
+  assert.equal(campaignLimitFor(cfg, 0), 5);
+  assert.equal(campaignLimitFor(cfg, 1), 10);
+});
+
+// The one place this file breaks its own "invent no numbers" rule, so it is
+// worth a test that says so: unset does not mean unlimited here.
+test('with nothing configured the campaign ceiling is still a number', async (t) => {
+  const { cfg } = await world(t);
+
+  assert.equal(cfg.tierCampaignLimits ?? undefined, undefined, 'nothing written');
+  assert.equal(campaignLimitFor(cfg, 0), 5, 'and yet a ceiling, unlike the ask limit');
+});
+
+test('tiers nobody wrote a number for inherit from the one below', async (t) => {
+  const { cfg } = await world(t);
+
+  // 2, 3 and 4 are not in the default table, so they take tier 1's ten.
+  assert.equal(campaignLimitFor(cfg, 2), 10);
+  assert.equal(campaignLimitFor(cfg, 4), 10);
+});
+
+test('the house is never metered on campaigns either', async (t) => {
+  const { cfg } = await world(t);
+
+  assert.equal(campaignLimitFor(cfg, TOP_TIER), 0, '0 is unlimited');
+});
+
+test('a written ladder replaces the built-in table outright', async (t) => {
+  const { cfg } = await world(t, { tierCampaignLimits: { 0: 2, 4: 0 } });
+
+  assert.equal(campaignLimitFor(cfg, 0), 2);
+  assert.equal(campaignLimitFor(cfg, 1), 2, 'inherited from 0, not from the defaults');
+  assert.equal(campaignLimitFor(cfg, 4), 0, 'unlimited');
+});
+
+test('an unrecognised tier is answered as the free one', async (t) => {
+  const { cfg } = await world(t);
+
+  assert.equal(campaignLimitFor(cfg, 'nonsense'), 5);
+  assert.equal(campaignLimitFor(cfg, 7), 5, 'a tier in the deliberate 5-8 hole');
+});
+
+// --- what the allowance counts, and what it must never count --------------
+
+test('the allowance counts campaigns run, and says how many are left', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(FRIEND, 0);
+  db.createCampaign('g1', 'Cipher', FRIEND);
+  db.createCampaign('g1', 'Strahd', FRIEND);
+
+  const purse = campaignAllowance(db, cfg, FRIEND);
+  assert.equal(purse.limit, 5);
+  assert.equal(purse.held, 2);
+  assert.equal(purse.left, 3);
+  assert.equal(purse.full, false);
+});
+
+// The line the operator drew: creating is metered, sitting at a table is not.
+test('playing at somebody else’s table never counts against the ceiling', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(FRIEND, 0);
+
+  // Six campaigns, none of them theirs, all of which they are a member of.
+  for (let i = 0; i < 6; i += 1) {
+    const id = db.createCampaign('g1', `Table ${i}`, OWNER);
+    db.forTests.addCampaignMember(id, FRIEND);
+  }
+
+  const purse = campaignAllowance(db, cfg, FRIEND);
+  assert.equal(purse.held, 0, 'they run none of them');
+  assert.equal(purse.full, false, 'and joining is unlimited on every tier');
+});
+
+test('deleting one frees its place immediately', async (t) => {
+  const { db, cfg } = await world(t);
+  db.setTier(FRIEND, 0);
+  const ids = [];
+  for (let i = 0; i < 5; i += 1) ids.push(db.createCampaign('g1', `Table ${i}`, FRIEND));
+
+  assert.equal(campaignAllowance(db, cfg, FRIEND).full, true);
+
+  db.archiveCampaign(ids[0], FRIEND);
+  assert.equal(campaignAllowance(db, cfg, FRIEND).full, false,
+               'an allowance spent on campaigns that no longer exist is a trap, not a ceiling');
+});
+
+test('the house holds as many as it likes', async (t) => {
+  const { db, cfg } = await world(t);
+  for (let i = 0; i < 12; i += 1) db.createCampaign('g1', `Table ${i}`, OWNER);
+
+  const purse = campaignAllowance(db, cfg, OWNER);
+  assert.equal(purse.full, false);
+  assert.equal(purse.left, null, 'there is no number to count down from');
 });
 
 // --- the one place it is enforced ----------------------------------------

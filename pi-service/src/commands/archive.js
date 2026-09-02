@@ -1,37 +1,26 @@
-// Deleting and restoring a campaign, from Discord.
+// Asking for a deleted campaign back, from Discord.
 //
-// Deleting calls the same function the dashboard's button calls, including the
-// rule that makes it safe: the campaign's name has to be typed out. A slash
-// command has no dialog to type it into, so the name is a required option —
-// which has the same effect, because you cannot submit the command without
-// having looked at what you are naming.
+// Deleting itself is the dashboard's now. It wants a typed-name confirmation
+// and a screen that shows what is about to go — a slash command can demand the
+// typed name but cannot show you the thing you are typing it about.
 //
-// Restoring does NOT do the reverse. It opens a ticket. Deleting is the
-// creator's decision, restoring is not, and the difference is the whole point:
-// the sessions in a campaign belong to everybody who sat at that table, so a
-// table deleted in a temper should not be restorable by that same temper, and
-// should not be lost forever because the person holding it is still angry.
+// Restoring stayed, and the asymmetry is deliberate rather than left over.
+// Deleting is the creator's decision; restoring is not. The sessions in a
+// campaign belong to everybody who sat at that table, so a table deleted in a
+// temper should not be restorable by that same temper — and should not be lost
+// forever because the person holding it is still angry. That makes restoring
+// something a PLAYER needs to be able to start, and a player has no reason to
+// have been admitted to the dashboard at all.
 
 import { MessageFlags } from 'discord.js';
 
-import { archiveCampaign, restoreArchivedCampaign, RESTORE_WINDOW_DAYS, daysLeftToRestore } from '../campaign/archive.js';
+import { restoreArchivedCampaign, RESTORE_WINDOW_DAYS, daysLeftToRestore } from '../campaign/archive.js';
 import { pendingRestoreRequests } from '../campaign/restore-request.js';
 import { runsThisBot } from '../access/operators.js';
 import { openRestoreRequest } from './restore-request.js';
 import { campaignLabel } from '../campaign/resolve.js';
 
 const say = (interaction, content) => interaction.reply({ content, flags: MessageFlags.Ephemeral });
-
-export async function handleCampaignDelete(interaction, db, cfg, target) {
-  const result = archiveCampaign({
-    db,
-    cfg,
-    campaignId: target.id,
-    userId: interaction.user.id,
-    typedName: interaction.options.getString('confirm'),
-  });
-  return say(interaction, result.message);
-}
 
 // Everything this person could ask about: campaigns they were at the table for,
 // still inside the window. Not the whole archive — a campaign somebody never

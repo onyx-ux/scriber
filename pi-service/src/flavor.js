@@ -12,6 +12,42 @@ export function pick(list, vars = {}) {
   return fmt(template, vars);
 }
 
+// {name}
+//
+// The opening line of a new campaign, and the first sentence Quill says to
+// somebody who has just decided to try it. Only the OPENING is cycled — what
+// follows it in commands/index.js is a fixed set of facts, because the reply
+// that tells you where your notes will live is not a place for twenty
+// phrasings of the same sentence. The thematic half varies; the load-bearing
+// half does not.
+//
+// Every one of these names the campaign, on purpose: the name was typed
+// seconds ago and getting it back, spelled the way it will be spelled in the
+// vault folder forever, is the one check somebody can make before their first
+// session rather than after their eleventh.
+export const CAMPAIGN_CREATED = [
+  '📖 **{name}** — the spine cracks, and the first page is blank.',
+  '🕯️ A candle is lit over an empty ledger. **{name}** begins here.',
+  '🪶 The quill is cut and the ink is fresh. **{name}** has its first blank page.',
+  '📜 A new scroll, unrolled and weighted at the corners: **{name}**.',
+  '🗝️ A shelf is cleared in the archive, and a key cut for it. **{name}**.',
+  '🧙 The scribe accepts the commission. **{name}** it is.',
+  '🐦 The familiar has been given a new name to answer to: **{name}**.',
+  '🧾 A fresh ledger, opened and headed **{name}**.',
+  '⚗️ Clean bench, empty vessels. **{name}** is ready to be distilled.',
+  "🌙 The first night of **{name}** hasn't happened yet. I'm ready for it.",
+  '🕰️ The clock is wound and set back to nothing. **{name}** starts here.',
+  '🐉 The hoard has a new vault, and it is called **{name}**.',
+  '🗿 The first stone is set. **{name}** begins.',
+  '📯 Let the record show that **{name}** exists, and that it is yours.',
+  '🧝 The chronicler sharpens a nib and writes **{name}** at the top of the page.',
+  '⛩️ A new shrine, swept and empty. **{name}** is ready.',
+  '🔮 The crystal ball clouds, clears, and shows **{name}** — nothing in it yet.',
+  '🧠 A new memory, entirely empty. **{name}** starts filling the moment you sit down.',
+  '🎙️ Levels checked, tape threaded. **{name}** is ready to roll.',
+  '🕸️ The loom is strung for **{name}**. Not a thread woven yet.',
+];
+
 export const JOIN_NO_CHANNEL = [
   "🧙 I can't record a voice channel you're not in. Join one first.",
   '🕯️ Quill needs a room to sit in — hop into a voice channel first.',
@@ -158,100 +194,6 @@ export const LEAVE_START = [
   '⏳ Recording stopped. Tonight is safely on the shelf.',
 ];
 
-// {failCount}
-export const LEAVE_NOTHING_USABLE = [
-  '😶 Nothing but silence and static came through — {failCount} clip(s) failed to transcribe.',
-  "🕸️ Quill's notes came back blank. {failCount} recording(s) couldn't be read.",
-  '📜 An empty scroll — transcription produced nothing usable ({failCount} failure(s)).',
-  "🧙 'I... didn't catch any of that.' Transcription failed on {failCount} clip(s).",
-  "🔇 The session was recorded, but the words didn't survive the journey ({failCount} failure(s)).",
-  '🗝️ The vault opened onto an empty room — {failCount} clip(s) failed to transcribe.',
-  '🐦 The familiar came back with nothing but scribbles ({failCount} failure(s)).',
-  '📖 A blank page where a chapter should be — {failCount} clip(s) unreadable.',
-  "🧾 The scroll came back smudged beyond reading ({failCount} failure(s)).",
-  '🕯️ The candle burned out before the words could be caught ({failCount} failure(s)).',
-  '🔮 The crystal ball only showed static — {failCount} clip(s) failed to transcribe.',
-  '🌙 The night kept its secrets — {failCount} clip(s) came back unusable.',
-  "⚗️ The distillation failed — nothing usable came through ({failCount} failure(s)).",
-  '🕰️ Time swallowed those words whole — {failCount} clip(s) unreadable.',
-  '🪶 The quill snapped mid-sentence — {failCount} clip(s) failed to transcribe.',
-  "🧠 My memory of that session is a blank — {failCount} clip(s) unusable.",
-  '🐉 Even the dragon shrugged — {failCount} clip(s) came through unreadable.',
-  '🗿 The stones stayed silent — {failCount} clip(s) failed to transcribe.',
-  '📯 The herald has nothing to announce — {failCount} clip(s) unusable.',
-  '😶 Transcription produced nothing usable ({failCount} failure(s)).',
-];
-
-// {count}
-export const LEAVE_SUMMARIZING_NOW = [
-  '✅ {count} lines transcribed. The wizard is drafting your recap now.',
-  '✅ {count} lines captured for posterity. Summoning the summary as we speak.',
-  '✅ Transcribed {count} lines. A more learned mind is now distilling it into a proper recap.',
-  '✅ {count} lines of glory (and rambling) recorded. Summarising now.',
-  '✅ {count} lines saved to the annals. The recap-conjuring begins immediately.',
-  '✅ {count} lines transcribed — handing this off to the Oracle for summarising.',
-  '✅ Captured {count} lines of dialogue. Weaving them into a recap now.',
-  "✅ {count} lines down. Quill's apprentice is writing the summary.",
-  '✅ Transcription complete — {count} lines. Recap incoming shortly.',
-  '✅ {count} lines of session recorded. The summary spell is already being cast.',
-  '✅ {count} lines transcribed. Turning chaos into a coherent recap now...',
-  '✅ {count} lines saved. Your friendly neighbourhood AI is drafting the recap.',
-  '✅ {count} lines of transcript ready. Summarising as we speak.',
-  '✅ {count} lines archived. A recap is being conjured right now.',
-  '✅ {count} lines transcribed successfully. Recap generation underway.',
-  '✅ {count} lines of session lore captured. Summarising now, stand by.',
-  '✅ Transcribed {count} lines — the summarising oracle is already at work.',
-  '✅ {count} lines recorded for the ages. Summary coming right up.',
-  '✅ {count} lines transcribed. The tale is being polished into a recap now.',
-  '✅ Transcribed {count} lines. Summarising now...',
-];
-
-// {count}, {meetingId}, {label}
-export const LEAVE_SUMMARY_QUEUED = [
-  "✅ {count} lines transcribed, but {label} isn't answering right now. The recap is queued — or run `/summarise meeting_id:{meetingId}` once it's back.",
-  '✅ {count} lines captured. Alas, {label} is unreachable. It\'ll retry automatically, or use `/summarise meeting_id:{meetingId}`.',
-  "✅ {count} lines transcribed. {label} is elsewhere for now — the summary will wait patiently in the queue.",
-  "✅ Transcription done ({count} lines) — but {label}'s tower is dark. It's queued for when it comes back.",
-  "✅ {count} lines recorded. {label} appears to be powered down; I'll keep trying.",
-  '✅ {count} lines saved. {label} isn\'t answering — queued for automatic retry, or `/summarise meeting_id:{meetingId}` manually.',
-  "✅ {count} lines transcribed. No answer from {label} — it's queued until it returns.",
-  '✅ {count} lines of dialogue captured. The summary awaits {label} waking up.',
-  '✅ {count} lines down. {label} seems to be resting — the recap will follow once it stirs.',
-  "✅ {count} lines transcribed successfully, but {label} isn't home. Queued for later.",
-  "✅ {count} lines recorded. Summoning failed — {label} isn't reachable. It'll auto-retry.",
-  "✅ {count} lines transcribed. {label}'s workshop is closed for now — queued.",
-  '✅ {count} lines saved to the archive. Recap pending on {label}.',
-  '✅ {count} lines of transcript ready, but no reply from {label}. Retrying automatically.',
-  "✅ {count} lines transcribed. It seems {label} has wandered off — the summary awaits its return.",
-  "✅ {count} lines captured. Recap queued; {label} isn't reachable right now.",
-  '✅ {count} lines transcribed. {label} is currently offline — try `/summarise meeting_id:{meetingId}` later.',
-  '✅ {count} lines recorded for the ages. Summary delayed — {label} sleeps.',
-  '✅ {count} lines transcribed. Waiting on {label} to come back online for the recap.',
-  "✅ Transcribed {count} lines. {label} isn't reachable right now — the summary is queued and will run automatically once it's back, or run `/summarise meeting_id:{meetingId}` to retry sooner.",
-];
-
-export const HISTORY_EMPTY = [
-  '📭 The archive is bare — no sessions recorded yet.',
-  "📜 An empty shelf — nothing's been recorded yet.",
-  '🗝️ The vault has nothing in it yet. No sessions recorded.',
-  '🧾 The ledger has yet to be opened. No sessions recorded yet.',
-  "📖 This campaign's first chapter hasn't been written yet.",
-  '🕯️ No candles have been lit for a session yet.',
-  '🐦 The familiar has nothing to report — no sessions yet.',
-  "🔮 The crystal ball shows nothing — no history to speak of yet.",
-  '🧙 Not a single tale has been told yet. No sessions recorded.',
-  '🌙 No nights have been chronicled yet.',
-  "⚗️ Nothing's been distilled into history yet.",
-  '🕸️ No threads have been woven into this archive yet.',
-  '🧠 My memory is blank — no sessions recorded yet.',
-  '🎙️ Nothing on the tape yet — no sessions recorded.',
-  '🐉 The dragon\'s hoard of stories is empty so far.',
-  '🗿 The stones have nothing carved into them yet.',
-  '📯 No proclamations to make — no sessions yet.',
-  "🧝 The chronicle begins with you — no sessions recorded yet.",
-  '🕰️ Time has yet to record anything here.',
-  '📭 No sessions recorded yet.',
-];
 
 // {label}
 export const SUMMARIZE_UNREACHABLE = [
@@ -277,52 +219,29 @@ export const SUMMARIZE_UNREACHABLE = [
   "{label} still isn't reachable. It'll retry automatically in the background too.",
 ];
 
-// {meetingId}
-export const SUMMARIZE_QUEUED = [
-  '🔮 Queued meeting #{meetingId} for an immediate retry — check back shortly.',
-  '🧙 Meeting #{meetingId} has been shoved to the front of the queue. Check back shortly.',
-  '📜 Meeting #{meetingId} is up next for summarising — check back shortly.',
-  "⚗️ Re-distilling meeting #{meetingId} right now — check back shortly.",
-  '🕯️ Meeting #{meetingId} moves to the top of the pile. Check back shortly.',
-  '🐦 The familiar has been sent to fetch a summary for meeting #{meetingId}. Check back shortly.',
-  '🗝️ Meeting #{meetingId} queued for immediate retry — check back shortly.',
-  '🧾 Meeting #{meetingId} is next on the scribe\'s desk. Check back shortly.',
-  '📖 Reopening meeting #{meetingId} for a fresh summary attempt. Check back shortly.',
-  '🌙 Meeting #{meetingId} gets another chance tonight — check back shortly.',
-  '🕰️ Meeting #{meetingId} bumped up the queue. Check back shortly.',
-  '🧠 Recalling meeting #{meetingId} once more — check back shortly.',
-  '🎙️ Re-queued meeting #{meetingId} for summarising — check back shortly.',
-  '🐉 Meeting #{meetingId} goes back into the furnace for another attempt.',
-  '🗿 Meeting #{meetingId} carved back into the queue. Check back shortly.',
-  '📯 Meeting #{meetingId} announced for another summarising attempt.',
-  '🧝 Meeting #{meetingId} handed back to the chronicler. Check back shortly.',
-  '⛩️ Meeting #{meetingId} placed back on the altar for summarising.',
-  '🪶 Meeting #{meetingId} queued once more — check back shortly.',
-  'Queued meeting #{meetingId} for immediate retry — check back shortly.',
-];
 
-// {meetingId}, {channel}, {date}
+// {session}, {channel}, {date}
 export const EXPORT_INTRO = [
-  "📜 Here's the full transcript for meeting #{meetingId} ({channel}, {date}).",
-  "🗝️ Unsealing the archive for meeting #{meetingId} ({channel}, {date}).",
-  '📖 Pulling meeting #{meetingId} ({channel}, {date}) off the shelf for you.',
-  "🧾 The scroll for meeting #{meetingId} ({channel}, {date}), delivered.",
-  "🕯️ Dusting off the record of meeting #{meetingId} ({channel}, {date}).",
-  '🐦 The familiar fetches the transcript for meeting #{meetingId} ({channel}, {date}).',
-  "🔮 Replaying meeting #{meetingId} ({channel}, {date}) from the archive.",
-  '🧙 Here is what was said in meeting #{meetingId} ({channel}, {date}).',
-  "🌙 The record of that night — meeting #{meetingId} ({channel}, {date}).",
-  '⚗️ The distilled transcript of meeting #{meetingId} ({channel}, {date}).',
-  '🕰️ Turning back the clock to meeting #{meetingId} ({channel}, {date}).',
-  '🧠 Everything recalled from meeting #{meetingId} ({channel}, {date}).',
-  '🎙️ The full tape of meeting #{meetingId} ({channel}, {date}).',
-  '🐉 The hoard yields the transcript for meeting #{meetingId} ({channel}, {date}).',
-  '🗿 Carved in full: meeting #{meetingId} ({channel}, {date}).',
-  '📯 Announcing the transcript for meeting #{meetingId} ({channel}, {date}).',
-  '🧝 The chronicle of meeting #{meetingId} ({channel}, {date}), retrieved.',
-  '⛩️ Retrieved from the shrine: meeting #{meetingId} ({channel}, {date}).',
-  '🪶 The full quill-work of meeting #{meetingId} ({channel}, {date}).',
-  "Transcript for meeting #{meetingId} ({channel}, {date}).",
+  "📜 Here's the full transcript for {session} ({channel}, {date}).",
+  "🗝️ Unsealing the archive for {session} ({channel}, {date}).",
+  '📖 Pulling {session} ({channel}, {date}) off the shelf for you.',
+  "🧾 The scroll for {session} ({channel}, {date}), delivered.",
+  "🕯️ Dusting off the record of {session} ({channel}, {date}).",
+  '🐦 The familiar fetches the transcript for {session} ({channel}, {date}).',
+  "🔮 Replaying {session} ({channel}, {date}) from the archive.",
+  '🧙 Here is what was said in {session} ({channel}, {date}).',
+  "🌙 The record of that night — {session} ({channel}, {date}).",
+  '⚗️ The distilled transcript of {session} ({channel}, {date}).',
+  '🕰️ Turning back the clock to {session} ({channel}, {date}).',
+  '🧠 Everything recalled from {session} ({channel}, {date}).',
+  '🎙️ The full tape of {session} ({channel}, {date}).',
+  '🐉 The hoard yields the transcript for {session} ({channel}, {date}).',
+  '🗿 Carved in full: {session} ({channel}, {date}).',
+  '📯 Announcing the transcript for {session} ({channel}, {date}).',
+  '🧝 The chronicle of {session} ({channel}, {date}), retrieved.',
+  '⛩️ Retrieved from the shrine: {session} ({channel}, {date}).',
+  '🪶 The full quill-work of {session} ({channel}, {date}).',
+  "Transcript for {session} ({channel}, {date}).",
 ];
 
 // {name}
@@ -349,53 +268,6 @@ export const SETCHARACTER_CONFIRM = [
   "Got it — you'll show up as **{name}** in transcripts and notes from now on.",
 ];
 
-// {reachable}, {label}
-export const STATUS_IDLE = [
-  '😴 Nothing queued for summarising right now. {label} is currently {reachable}.',
-  '🧙 All caught up — nothing waiting to be summarised. {label} is currently {reachable}.',
-  '📜 The desk is clear — no sessions queued. {label} is currently {reachable}.',
-  '🕯️ Nothing left to distill right now. {label} is currently {reachable}.',
-  '🗝️ The queue is empty. {label} is currently {reachable}.',
-  '🐦 No errands for the familiar right now. {label} is currently {reachable}.',
-  '🔮 The crystal ball shows an empty queue. {label} is currently {reachable}.',
-  '🧾 Nothing pending in the ledger. {label} is currently {reachable}.',
-  '🌙 A quiet night — nothing queued. {label} is currently {reachable}.',
-  "⚗️ Nothing's brewing right now. {label} is currently {reachable}.",
-  '🕰️ No time being spent waiting right now. {label} is currently {reachable}.',
-  '🧠 Nothing on my mind right now. {label} is currently {reachable}.',
-  '🎙️ Nothing queued. {label} is currently {reachable}.',
-  "🐉 The dragon's ledger is empty for now. {label} is currently {reachable}.",
-  '🗿 No inscriptions pending. {label} is currently {reachable}.',
-  '📯 Nothing to announce right now. {label} is currently {reachable}.',
-  '🧝 All quiet on the chronicle front. {label} is currently {reachable}.',
-  '⛩️ The altar is clear. {label} is currently {reachable}.',
-  '🪶 The quill rests idle. {label} is currently {reachable}.',
-  'No sessions currently queued for summarisation. {label} is currently {reachable}.',
-];
-
-// {reachable}, {label}
-export const STATUS_QUEUED_HEADER = [
-  '🔮 {label} is currently {reachable}.\n\n**Queued:**',
-  "🧙 {label} is currently {reachable}. Here's what's waiting:\n\n**Queued:**",
-  '📜 {label} is currently {reachable}. The queue so far:\n\n**Queued:**',
-  '🕯️ {label} status: {reachable}.\n\n**Queued:**',
-  '🗝️ {label} is currently {reachable}. Waiting in the vault:\n\n**Queued:**',
-  '🐦 {label} is currently {reachable}. Errands pending:\n\n**Queued:**',
-  '🧾 {label} is currently {reachable}. On the ledger:\n\n**Queued:**',
-  '🌙 {label} is currently {reachable}. Still to be told:\n\n**Queued:**',
-  '⚗️ {label} is currently {reachable}. Still brewing:\n\n**Queued:**',
-  '🕰️ {label} is currently {reachable}. Waiting on time:\n\n**Queued:**',
-  '🧠 {label} is currently {reachable}. On my mind:\n\n**Queued:**',
-  '🎙️ {label} is currently {reachable}. On the tape, unsummarised:\n\n**Queued:**',
-  "🐉 {label} is currently {reachable}. In the dragon's ledger:\n\n**Queued:**",
-  '🗿 {label} is currently {reachable}. Awaiting inscription:\n\n**Queued:**',
-  '📯 {label} is currently {reachable}. To be announced:\n\n**Queued:**',
-  '🧝 {label} is currently {reachable}. Awaiting the chronicler:\n\n**Queued:**',
-  '⛩️ {label} is currently {reachable}. Upon the altar:\n\n**Queued:**',
-  '🪶 {label} is currently {reachable}. Awaiting ink:\n\n**Queued:**',
-  '🔮 {label} is currently {reachable}.\n\n**Queued:**',
-  '{label} is currently {reachable}.\n\n**Queued:**',
-];
 
 export const RECAP_NONE = [
   '📭 No completed sessions yet — nothing to recap.',
@@ -559,7 +431,7 @@ export const JOIN_FAILED = [
   "🧝 The chronicler got turned away at the door — connection failed: {error}",
   '⛩️ The shrine remained sealed — connection failed: {error}',
   '🪶 The quill never touched parchment — connection failed: {error}',
-  "😬 Couldn't actually start recording — the voice connection failed: {error}. Nothing was recorded — try `/join` again.",
+  "😬 Couldn't actually start recording — the voice connection failed: {error}. Nothing was recorded — try `/campaign join` again.",
 ];
 
 // {query}
@@ -610,208 +482,30 @@ export const SEARCH_HEADER = [
   '🪶 {count} line(s) of ink mention "{query}":',
 ];
 
-// {meetingId}, {channel}, {date}, {count}
+// {session}, {channel}, {date}, {count}
 export const APPROVAL_REQUEST = [
-  '📜 The transcript for **{channel}** ({date}) is written — {count} lines, session #{meetingId}. The oracle awaits your word before it starts thinking.',
-  '🧙 Session #{meetingId} (**{channel}**, {date}) is transcribed: {count} lines. Say when, and I\'ll wake the summarising wizard.',
-  '🕯️ {count} lines copied out from **{channel}** ({date}). Session #{meetingId} is ready whenever your machine is.',
-  '🐦 The familiar has finished its scribbling for **{channel}** ({date}) — {count} lines. Shall I send it to the oracle? (session #{meetingId})',
-  '⏳ Session #{meetingId} (**{channel}**, {date}) is transcribed and waiting — {count} lines. Nothing will touch your GPU until you say so.',
-  '🗝️ The vault holds {count} fresh lines from **{channel}** ({date}). Session #{meetingId} awaits your approval.',
-  '📖 Session #{meetingId} — **{channel}** ({date}), {count} lines — is ready to be turned into a recap. Your call.',
-  '🔮 The crystal ball has recorded {count} lines from **{channel}** ({date}). Summoning the summary is up to you (session #{meetingId}).',
-  '🧾 The ledger for **{channel}** ({date}) is complete: {count} lines. Session #{meetingId} is parked until you approve.',
-  '🌙 {count} lines from **{channel}** ({date}) are safely written down. Session #{meetingId} waits on your word.',
-  '⚗️ The raw ingredients are ready — {count} lines from **{channel}** ({date}). Say the word and I\'ll start distilling session #{meetingId}.',
-  '🕰️ Session #{meetingId} (**{channel}**, {date}) transcribed: {count} lines. Held back so it doesn\'t steal your GPU mid-fight.',
-  '🧠 I\'ve memorised {count} lines from **{channel}** ({date}). Session #{meetingId} is ready when you are.',
-  '🎙️ The tape is cut — {count} lines from **{channel}** ({date}). Approve session #{meetingId} when your machine is free.',
-  '🐉 The hoard has grown by {count} lines (**{channel}**, {date}). Session #{meetingId} awaits your blessing.',
-  '🗿 {count} lines carved from **{channel}** ({date}). Session #{meetingId} is parked, awaiting approval.',
-  '📯 Hear ye: session #{meetingId} (**{channel}**, {date}) is transcribed — {count} lines — and awaiting your go-ahead.',
-  '🧝 The chronicler has finished **{channel}** ({date}) — {count} lines. Session #{meetingId} needs your nod before summarising.',
-  '⛩️ {count} lines offered at the shrine from **{channel}** ({date}). Session #{meetingId} rests until you approve.',
-  '🪶 The ink is dry on {count} lines from **{channel}** ({date}). Session #{meetingId} is ready for the summariser — your call.',
+  '📜 The transcript for **{channel}** ({date}) is written — {count} lines, {session}. The oracle awaits your word before it starts thinking.',
+  '🧙 {session} (**{channel}**, {date}) is transcribed: {count} lines. The summarising wizard sleeps until you say so.',
+  '🕯️ {count} lines copied out from **{channel}** ({date}). {session} is ready whenever your machine is.',
+  '🐦 The familiar has finished its scribbling for **{channel}** ({date}) — {count} lines. {session} is waiting to go to the oracle.',
+  '⏳ {session} (**{channel}**, {date}) is transcribed and waiting — {count} lines. Nothing will touch your GPU until you say so.',
+  '🗝️ The vault holds {count} fresh lines from **{channel}** ({date}). {session} awaits your approval.',
+  '📖 {session} — **{channel}** ({date}), {count} lines — is ready to be turned into a recap. Your call.',
+  '🔮 The crystal ball has recorded {count} lines from **{channel}** ({date}). Summoning the summary is up to you ({session}).',
+  '🧾 The ledger for **{channel}** ({date}) is complete: {count} lines. {session} is parked until you approve.',
+  '🌙 {count} lines from **{channel}** ({date}) are safely written down. {session} waits on your word.',
+  '⚗️ The raw ingredients are ready — {count} lines from **{channel}** ({date}). {session} is waiting to be distilled.',
+  '🕰️ {session} (**{channel}**, {date}) transcribed: {count} lines. Held back so it doesn\'t steal your GPU mid-fight.',
+  '🧠 I\'ve memorised {count} lines from **{channel}** ({date}). {session} is ready when you are.',
+  '🎙️ The tape is cut — {count} lines from **{channel}** ({date}). Approve {session} when your machine is free.',
+  '🐉 The hoard has grown by {count} lines (**{channel}**, {date}). {session} awaits your blessing.',
+  '🗿 {count} lines carved from **{channel}** ({date}). {session} is parked, awaiting approval.',
+  '📯 Hear ye: {session} (**{channel}**, {date}) is transcribed — {count} lines — and awaiting your go-ahead.',
+  '🧝 The chronicler has finished **{channel}** ({date}) — {count} lines. {session} needs your nod before summarising.',
+  '⛩️ {count} lines offered at the shrine from **{channel}** ({date}). {session} rests until you approve.',
+  '🪶 The ink is dry on {count} lines from **{channel}** ({date}). {session} is ready for the summariser — your call.',
 ];
 
-// {count}, {meetingId}
-export const LEAVE_AWAITING_APPROVAL = [
-  '✅ {count} lines transcribed. Parked awaiting your approval — I won\'t touch your GPU until you say so (session #{meetingId}).',
-  '✅ {count} lines captured. The summary is held back until you approve it (session #{meetingId}).',
-  '✅ Transcription done — {count} lines. Waiting on your word before summoning the oracle (session #{meetingId}).',
-  '✅ {count} lines saved. The summarising wizard stays asleep until you wake him (session #{meetingId}).',
-  '✅ {count} lines written down. Nothing goes to the summariser until you approve session #{meetingId}.',
-  '✅ {count} lines archived. Summary parked — approve session #{meetingId} whenever your machine is free.',
-  '✅ {count} lines transcribed and waiting. Your GPU stays untouched until you approve session #{meetingId}.',
-  '✅ {count} lines down. The recap is on hold pending your approval (session #{meetingId}).',
-  '✅ {count} lines recorded. I\'ll wait for your go-ahead before summarising session #{meetingId}.',
-  '✅ {count} lines captured, summary deliberately not started. Approve session #{meetingId} when ready.',
-  '✅ {count} lines transcribed. Holding the summary back so it doesn\'t cook your framerate (session #{meetingId}).',
-  '✅ {count} lines safe on disk. Session #{meetingId} awaits your approval to summarise.',
-  '✅ {count} lines noted. The oracle sleeps until summoned — approve session #{meetingId}.',
-  '✅ {count} lines transcribed successfully. Summary parked for session #{meetingId}.',
-  '✅ {count} lines of session captured. Awaiting your approval before the AI does anything (session #{meetingId}).',
-  '✅ {count} lines stored. The summarising step is yours to trigger (session #{meetingId}).',
-  '✅ {count} lines transcribed. Nothing further happens until you approve session #{meetingId}.',
-  '✅ {count} lines in the archive. Approve session #{meetingId} to generate the recap.',
-  '✅ {count} lines ready. The recap waits on your command (session #{meetingId}).',
-  '✅ {count} lines transcribed — summary parked pending approval (session #{meetingId}).',
-];
-
-// {meetingId}
-export const APPROVED_CONFIRM = [
-  '🔮 Approved — session #{meetingId} is off to the oracle now.',
-  '🧙 The wizard stirs. Summarising session #{meetingId} now.',
-  '⚗️ Distillation begins on session #{meetingId}.',
-  '🕯️ Candle lit — session #{meetingId} is being summarised.',
-  '🐦 The familiar flies to the oracle with session #{meetingId}.',
-  '📜 Session #{meetingId} approved and queued for summarising.',
-  '🗝️ Unlocked — session #{meetingId} is being summarised now.',
-  '🧾 Session #{meetingId} released to the summariser.',
-  '📖 Writing the recap for session #{meetingId} now.',
-  '🌙 Session #{meetingId} approved — the recap is being conjured.',
-  '🕰️ Session #{meetingId} is on the clock now.',
-  '🧠 Thinking hard about session #{meetingId}...',
-  '🎙️ Session #{meetingId} sent off for summarising.',
-  '🐉 The dragon wakes for session #{meetingId}.',
-  '🗿 Session #{meetingId} approved — carving the recap now.',
-  '📯 Session #{meetingId} announced to the oracle.',
-  '🧝 The chronicler takes up session #{meetingId}.',
-  '⛩️ Session #{meetingId} accepted at the shrine.',
-  '🪶 Quill to parchment for session #{meetingId}.',
-  '✅ Approved — summarising session #{meetingId} now.',
-];
-
-// {meetingId}
-export const PARKED_CONFIRM = [
-  '💤 Left parked. Session #{meetingId} will wait as long as you need.',
-  '🕯️ Understood — session #{meetingId} stays on the shelf.',
-  '📜 Session #{meetingId} remains rolled up and waiting.',
-  '🧙 The wizard goes back to sleep. Session #{meetingId} is still parked.',
-  '🌙 Session #{meetingId} rests until you say otherwise.',
-  '🗝️ Still locked away — session #{meetingId} awaits a later moment.',
-  '🐦 The familiar settles back down. Session #{meetingId} is parked.',
-  '🧾 Session #{meetingId} stays on the ledger, unprocessed.',
-  '⏳ No rush — session #{meetingId} will keep.',
-  '📖 Session #{meetingId} stays closed for now.',
-  '⚗️ Ingredients kept fresh — session #{meetingId} is still waiting.',
-  '🕰️ Session #{meetingId} is in no hurry.',
-  '🧠 Filed away — session #{meetingId} remains pending.',
-  '🎙️ Session #{meetingId} stays on the shelf.',
-  '🐉 The dragon dozes on. Session #{meetingId} is parked.',
-  '🗿 Session #{meetingId} remains uncarved for now.',
-  '🧝 The chronicler waits. Session #{meetingId} is parked.',
-  '⛩️ Session #{meetingId} rests at the shrine.',
-  '🪶 Quill down — session #{meetingId} still waiting.',
-  '💤 Fine by me — session #{meetingId} stays parked until you approve it.',
-];
-
-export const QUEUE_PAUSED = [
-  '⏸️ Summarising paused. Safe to restart your summariser — nothing will try to reach it.',
-  '🛑 The oracle will not be disturbed. Summarising is paused.',
-  '🕯️ Candles snuffed — no summaries will run until you resume.',
-  '🧙 The wizard has been told to stand down. Summarising paused.',
-  '💤 Summarising paused. Restart or reconfigure freely; the queue keeps everything safe.',
-  '🗝️ Queue locked. Nothing will be sent to the summariser until you resume.',
-  '📜 The quill rests. Summarising is paused.',
-  '⚗️ Distillation halted. Nothing will run until you resume.',
-  '🌙 All quiet — summarising paused.',
-  '🐦 The familiar has been recalled. No summaries will run.',
-  '🕰️ Time stopped for the summariser. Paused.',
-  '🧠 I\'ll stop thinking for now. Summarising paused.',
-  '🎙️ Summarising paused — nothing queued will run.',
-  '🐉 The dragon sleeps. Summarising paused.',
-  '🗿 The stones are still. Summarising paused.',
-  '📯 Let it be known: summarising is paused.',
-  '🧝 The chronicler downs tools. Summarising paused.',
-  '⛩️ The shrine is closed. Summarising paused.',
-  '🪶 Ink stoppered — summarising paused.',
-  '⏸️ Paused. Nothing will be summarised until you run `/resume`.',
-];
-
-export const QUEUE_RESUMED = [
-  '▶️ Summarising resumed — the queue is moving again.',
-  '🔮 The oracle is back on duty. Summarising resumed.',
-  '🕯️ Candles relit. Summarising resumed.',
-  '🧙 The wizard returns to his desk. Summarising resumed.',
-  '📜 The quill moves again — summarising resumed.',
-  '⚗️ Distillation restarted. Summarising resumed.',
-  '🌙 Back to work — summarising resumed.',
-  '🐦 The familiar takes flight again. Summarising resumed.',
-  '🗝️ Queue unlocked. Summarising resumed.',
-  '🕰️ Time flows again for the summariser. Resumed.',
-  '🧠 Thinking resumed.',
-  '🎙️ Summarising resumed — anything queued will run shortly.',
-  '🐉 The dragon wakes. Summarising resumed.',
-  '🗿 The stones stir. Summarising resumed.',
-  '📯 Summarising resumed, by proclamation.',
-  '🧝 The chronicler picks up the quill. Summarising resumed.',
-  '⛩️ The shrine reopens. Summarising resumed.',
-  '🪶 Ink flowing again — summarising resumed.',
-  '📖 The tome reopens. Summarising resumed.',
-  '▶️ Resumed. Queued sessions will be summarised shortly.',
-];
-
-export const PENDING_EMPTY = [
-  '📭 The pipeline is completely clear — nothing recording, transcribing, or waiting.',
-  '🧙 Nothing in flight. The workshop is empty.',
-  '📜 No scrolls in progress. The pipeline is clear.',
-  '🕯️ Nothing burning — the pipeline is empty.',
-  '🗝️ The vault is quiet. Nothing pending.',
-  '🐦 The familiar has nothing to report. Pipeline clear.',
-  '🔮 The crystal ball shows an empty pipeline.',
-  '🧾 Nothing on the ledger. All clear.',
-  '📖 No chapters in progress.',
-  '🌙 A quiet night — nothing in the pipeline.',
-  '⚗️ Nothing brewing at all.',
-  '🕸️ No threads in progress.',
-  '🧠 Nothing on my mind — pipeline clear.',
-  '🎙️ Nothing rolling, nothing queued.',
-  '🐉 The dragon\'s desk is clear.',
-  '🗿 Nothing being carved. Pipeline empty.',
-  '📯 Nothing to announce — pipeline clear.',
-  '🧝 The chronicler is idle. Nothing pending.',
-  '⛩️ The shrine is empty. Nothing pending.',
-  '🪶 Quill idle — nothing in the pipeline.',
-];
-
-// {wrong}, {right}, {count}
-export const CORRECT_APPLIED = [
-  '✏️ Noted — "{wrong}" is really **{right}**. Fixed {count} line(s), and I\'ll correct it automatically from now on.',
-  '🧙 Ah, **{right}** — not "{wrong}". Corrected {count} line(s) and remembered it for future sessions.',
-  '📜 The scribe amends the record: "{wrong}" → **{right}**. {count} line(s) rewritten, and it\'ll stick.',
-  '🪶 Struck through "{wrong}", written **{right}**. {count} line(s) fixed; future sessions will match.',
-  '🗝️ "{wrong}" now reads **{right}** throughout the archive — {count} line(s) — and stays that way.',
-  '🧾 Ledger amended: "{wrong}" is **{right}**. {count} line(s) updated, correction saved.',
-  '📖 Every "{wrong}" is now **{right}** — {count} line(s) — and I\'ll keep it that way.',
-  '🐦 The familiar went back through the archive: "{wrong}" → **{right}**, {count} line(s) fixed.',
-  '🔮 The record clears: "{wrong}" was always **{right}**. {count} line(s) corrected.',
-  '🕯️ By candlelight the error is mended — "{wrong}" → **{right}**, {count} line(s).',
-  '⚗️ Refined "{wrong}" into **{right}** across {count} line(s). It\'ll hold for future sessions.',
-  '🕰️ History rewritten (for the better): "{wrong}" → **{right}**, {count} line(s).',
-  '🧠 Re-remembered: **{right}**, not "{wrong}". {count} line(s) corrected and saved.',
-  '🎙️ The tape is patched — "{wrong}" → **{right}** on {count} line(s).',
-  '🐉 Even the dragon agrees it\'s **{right}**, not "{wrong}". {count} line(s) fixed.',
-  '🗿 Re-carved: "{wrong}" → **{right}**, across {count} line(s).',
-  '📯 Let the record show **{right}**, not "{wrong}" — {count} line(s) amended.',
-  '🧝 The chronicler corrects themselves: **{right}**. {count} line(s) updated.',
-  '⛩️ The name **{right}** replaces "{wrong}" on {count} line(s), now and hereafter.',
-  '✏️ Corrected "{wrong}" → **{right}** on {count} line(s), and saved so future transcripts match.',
-];
-
-// {wrong}
-export const UNCORRECT_APPLIED = [
-  '🧙 Undone — "{wrong}" will go back to transcribing as whisper actually hears it.',
-  '📜 Struck from the ledger — the correction for "{wrong}" is removed.',
-  '🗝️ Unlocked "{wrong}" from its old fix. Future transcripts are unaffected by it now.',
-  '🪶 Erased — "{wrong}" is no longer auto-corrected.',
-  '🧾 Removed "{wrong}" from the saved corrections.',
-  '⚗️ Reversed the distillation — "{wrong}" corrects to nothing now.',
-  '🕯️ The old fix for "{wrong}" has been snuffed out.',
-  '🌙 "{wrong}" is free again — no correction applies to it anymore.',
-  "🐦 The familiar forgets that one — \"{wrong}\" is no longer corrected.",
-  '✏️ Correction for "{wrong}" removed. Past transcripts are unchanged; only future ones stop applying it.',
-];
 
 // {name}
 export const WHOAMI_SET = [
@@ -829,62 +523,15 @@ export const WHOAMI_SET = [
 
 // {discordName}
 export const WHOAMI_UNSET = [
-  "🧙 No character name set — you'll show up as your Discord name, **{discordName}**. Set one with `/setcharacter`.",
-  "📜 Nothing inscribed yet — transcripts use **{discordName}** until you `/setcharacter`.",
-  "🗝️ No true name on file. Currently recorded as **{discordName}** — `/setcharacter` to change that.",
-  "🧾 The ledger has you as **{discordName}** (your Discord name). Use `/setcharacter` to set something else.",
-  "🕯️ Unset — you appear as **{discordName}** for now. `/setcharacter` to give yourself a proper name.",
-  "🐦 The familiar only knows your Discord name, **{discordName}**. `/setcharacter` fixes that.",
-  "🧝 No character name yet — **{discordName}** it is, until you `/setcharacter`.",
+  "🧙 No character name set — you'll show up as your Discord name, **{discordName}**. Set one with `/campaign setchar`.",
+  "📜 Nothing inscribed yet — transcripts use **{discordName}** until you `/campaign setchar`.",
+  "🗝️ No true name on file. Currently recorded as **{discordName}** — `/campaign setchar` to change that.",
+  "🧾 The ledger has you as **{discordName}** (your Discord name). Use `/campaign setchar` to set something else.",
+  "🕯️ Unset — you appear as **{discordName}** for now. `/campaign setchar` to give yourself a proper name.",
+  "🐦 The familiar only knows your Discord name, **{discordName}**. `/campaign setchar` fixes that.",
+  "🧝 No character name yet — **{discordName}** it is, until you `/campaign setchar`.",
 ];
 
-// {sessions}, {hours}, {lines}
-export const STATS_HEADER = [
-  '📊 **{sessions}** session(s), **{hours}h** recorded, **{lines}** lines transcribed.',
-  '🧾 The ledger totals **{sessions}** session(s) — **{hours}h**, **{lines}** lines.',
-  '📜 Across **{sessions}** session(s): **{hours}h** of tape, **{lines}** lines transcribed.',
-  '🗝️ The vault holds **{sessions}** session(s) — **{hours}h**, **{lines}** lines.',
-  '🕰️ **{hours}h** across **{sessions}** session(s), **{lines}** lines all told.',
-  '🐉 The hoard: **{sessions}** session(s), **{hours}h**, **{lines}** lines.',
-  '🎙️ **{lines}** lines on tape across **{sessions}** session(s) (**{hours}h** total).',
-];
-
-export const STATS_EMPTY = [
-  '📭 No completed sessions yet — nothing to count.',
-  "📜 The ledger is blank so far — no finished sessions.",
-  '🗝️ Nothing in the vault yet. Finish a session first.',
-  "🧾 No totals to report — no completed sessions yet.",
-];
-
-export const NPCS_EMPTY = [
-  '📭 No NPCs recorded yet.',
-  "🧙 Nobody worth writing down has shown up yet.",
-  '🗝️ The NPC ledger is empty so far.',
-  "🐦 The familiar hasn't met anyone worth noting yet.",
-];
-
-// {list}
-export const NPCS_HEADER = [
-  '🧙 **NPCs met so far:**\n{list}',
-  '📜 **The cast so far:**\n{list}',
-  '🗝️ **Faces on file:**\n{list}',
-  '🧾 **The NPC ledger:**\n{list}',
-];
-
-export const LOCATIONS_EMPTY = [
-  '📭 No locations recorded yet.',
-  "🗺️ Nowhere worth marking on the map yet.",
-  '🗝️ The locations ledger is empty so far.',
-  "🐦 The familiar hasn't scouted anywhere worth noting yet.",
-];
-
-// {list}
-export const LOCATIONS_HEADER = [
-  '🗺️ **Places visited so far:**\n{list}',
-  '📜 **The map so far:**\n{list}',
-  '🗝️ **Marked locations:**\n{list}',
-  '🧾 **The locations ledger:**\n{list}',
-];
 
 export const ARCHIVE_SENT = [
   '🗺️ The full campaign archive — download and open in any browser.',

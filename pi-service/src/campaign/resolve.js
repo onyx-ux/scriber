@@ -33,9 +33,9 @@ export function campaignLabel(campaign) {
 // and into the session reference people type. "🎲" survives neither —
 // safeFolderName strips emoji and falls back to a generic "Campaign", and
 // refSlug is left with nothing. Allowed through, that campaign could never
-// refer to its own sessions (`/summarise`, `/export` and `/transcribe` all
-// take a reference) and its notes would land in a folder that every other
-// vanishing name also claims.
+// refer to its own sessions (`/campaign export` takes a reference, and so
+// does the dashboard's session list) and its notes would land in a folder that
+// every other vanishing name also claims.
 //
 // Discord names are full of emoji, so this is not hypothetical: the channel
 // this bot was built against is called "🎲Session".
@@ -155,9 +155,9 @@ export function resolveReadableCampaign(interaction, db) {
   };
 }
 
-// MEMBER tier — /join, /setcharacter, /whoami. Always scoped to the server the
-// command was run in: these act on a table that is playing right now, and the
-// bot has to be in that server for any of them to mean anything.
+// MEMBER tier — /campaign join, setchar, whoami. Always scoped to the server
+// the command was run in: these act on a table that is playing right now, and
+// the bot has to be in that server for any of them to mean anything.
 export function resolveMemberCampaign(interaction, db) {
   const asked = interaction.options?.getString?.('campaign') || null;
   if (!interaction.guildId) {
@@ -169,7 +169,7 @@ export function resolveMemberCampaign(interaction, db) {
   return pickCampaign(mine, asked, {
     none:
       "🎲 You're not on the roster for a campaign in this server, so I can't do that for you.\n" +
-      'Whoever runs the game adds you with `/dm add` — or claims a campaign with `/campaign create` if nobody has yet.',
+      'Whoever runs the game invites you with `/campaign invite` — or claims a campaign with `/campaign create` if nobody has yet.',
     unknown: "That isn't a campaign you're on the roster for here.",
     many: "You're at more than one table in this server, so I don't know which this is. Re-run with the `campaign` option:",
   });

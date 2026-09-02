@@ -204,6 +204,49 @@ test('/campaign create makes a campaign and hands it to whoever ran it', async (
   assert.equal(h.db.isCampaignMember(c.id, DM_A), true);
 });
 
+// The reply a new DM reads before they have decided whether this is worth a
+// session of their game. It is the one message that has to answer "what will
+// you actually do for me", and for a long time it did not — it said where the
+// files go and then listed two commands.
+test('the welcome says what gets written down, and what to do next', async (t) => {
+  const h = await harness(t);
+  const said = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: 'Cipher' } }));
+
+  assert.match(said, /\bCipher\b/, 'the name back, spelled the way the vault will spell it');
+  assert.match(said, /Session 01\.md/, 'what a night turns into');
+  assert.match(said, /NPC|loot|decided/, 'and what is in it');
+  assert.match(said, /not agreed|silence is not a yes/, 'consent, before they invite anybody');
+
+  // Both halves of the ritual, named as they are actually typed. These were
+  // /join and /leave until they moved under /campaign, and this reply is where
+  // somebody learns the pair for the first time.
+  assert.match(said, /\/campaign invite/);
+  assert.match(said, /\/campaign join/);
+  assert.match(said, /\/campaign leave/);
+  assert.doesNotMatch(said, /`\/join`|`\/leave`/, 'no command that no longer exists');
+
+  assert.ok(said.length <= 2000, `Discord caps a message at 2000 characters; this is ${said.length}`);
+});
+
+// The ceiling, mentioned when it is nearly reached and not before. Naming it
+// on somebody's first campaign is noise; naming it only in the refusal is a
+// wall they walk into.
+test('the welcome stays quiet about the campaign limit until it is nearly spent', async (t) => {
+  const h = await harness(t);
+  const made = [];
+  for (const name of ['One', 'Two', 'Three', 'Four', 'Five']) {
+    made.push(await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name } })));
+  }
+
+  assert.doesNotMatch(made[0], /tier lets you run/, 'nothing on the first');
+  assert.doesNotMatch(made[1], /tier lets you run/, 'nothing on the second');
+  assert.match(made[2], /3 of the 5 campaigns your tier lets you run at once — 2 left/);
+  assert.match(made[4], /5 of the 5 campaigns your tier lets you run at once — your last place/);
+
+  const refused = await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: 'Six' } }));
+  assert.match(refused, /all your tier allows/);
+});
+
 test('/campaign create refuses a name already in use', async (t) => {
   const h = await harness(t);
   await run(h.dispatch, command('campaign', { user: DM_A, sub: 'create', options: { name: 'Cipher' } }));
@@ -376,25 +419,44 @@ test('/search cannot reach the other table in the same server', async (t) => {
   played(db, cipher.id, { speaker: PLAYER_A, text: 'the marrowgate opens' });
   played(db, strahd.id, { speaker: PLAYER_B, text: 'the mists close in' });
 
-  assert.match(await run(dispatch, command('campaign', { sub: 'search', user: PLAYER_A, options: { query: 'marrowgate' } })), /marrowgate/);
+  const found = await run(dispatch, command('campaign', { sub: 'search', user: PLAYER_A, options: { query: 'marrowgate' } }));
+  assert.match(found, /marrowgate/);
+  assert.match(found, /Cipher_01/, 'a hit says which session it came from, by the name that session has');
   const crossed = await run(dispatch, command('campaign', { sub: 'search', user: PLAYER_A, options: { query: 'mists' } }));
   assert.doesNotMatch(crossed, /mists close in/, "one table's player cannot search the other's transcripts");
 });
 
-test('/stats and /history are per campaign and quote its own session refs', async (t) => {
+// /stats and /history went to the dashboard, which shows both per campaign
+// without being asked. What survives that move is the session REFERENCE — the
+// name a night is filed and asked for under — so it is checked here against the
+// two commands that still quote one.
+test('a session reference names the campaign it belongs to, not the other one', async (t) => {
   const { dispatch, db, cipher, strahd } = await twoTables(t);
   played(db, cipher.id, { speaker: PLAYER_A, text: 'one' });
   played(db, cipher.id, { speaker: PLAYER_A, text: 'two' });
   played(db, strahd.id, { speaker: PLAYER_B, text: 'elsewhere' });
 
-  const stats = await run(dispatch, command('campaign', { sub: 'stats', user: PLAYER_A }));
-  assert.match(stats, /2 session|sessions.*2|2\b/, stats);
-  assert.match(stats, /Cipher/);
+  assert.deepEqual(
+    db.listRecentMeetings(cipher.id, 10).map((m) => m.session_number).sort(),
+    [1, 2],
+    'the sessions are numbered within their own campaign'
+  );
 
-  const history = await run(dispatch, command('campaign', { sub: 'history', user: PLAYER_A }));
-  assert.match(history, /Cipher_01/);
-  assert.match(history, /Cipher_02/);
-  assert.doesNotMatch(history, /Strahd/);
+  const exported = await run(
+    dispatch,
+    command('campaign', { sub: 'export', user: PLAYER_A, options: { session: 'Cipher_02' } })
+  );
+  // Asked for by reference, answered by reference. It used to reply about
+  // "meeting #2" and attach meeting-2-transcript.txt — three names for one
+  // night, none of them the one that was typed.
+  assert.match(exported, /Cipher_02/, exported);
+  assert.doesNotMatch(exported, /meeting #/, 'a raw database id is not a name anybody can use');
+
+  const crossed = await run(
+    dispatch,
+    command('campaign', { sub: 'export', user: PLAYER_A, options: { session: 'Strahd_01' } })
+  );
+  assert.match(crossed, /isn't a session in a campaign you/, "one table's player cannot export the other's session");
 });
 
 test('/funny draws only from the campaign it resolved to', async (t) => {
@@ -478,7 +540,7 @@ async function oneTable(t) {
 
 test("the other table's DM cannot stop this table's recording", async (t) => {
   const { dispatch } = await recording(t);
-  const said = await run(dispatch, command('leave', { user: DM_B }));
+  const said = await run(dispatch, command('campaign', { sub: 'leave', user: DM_B }));
 
   assert.match(said, /you're not at that table/);
   assert.equal(activeSessions.size, 1, 'and the session is still running');
@@ -486,13 +548,13 @@ test("the other table's DM cannot stop this table's recording", async (t) => {
 
 test('a player at the table can stop it, by naming it', async (t) => {
   const { dispatch, cipher } = await recording(t);
-  await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: cipher.id } }));
+  await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A, options: { campaign: cipher.id } }));
   assert.equal(activeSessions.size, 0);
 });
 
 test('the bot owner can stop it, so a session cannot be stranded', async (t) => {
   const { dispatch, cipher } = await recording(t);
-  await run(dispatch, command('leave', { user: OWNER, options: { campaign: cipher.id } }));
+  await run(dispatch, command('campaign', { sub: 'leave', user: OWNER, options: { campaign: cipher.id } }));
   assert.equal(activeSessions.size, 0);
 });
 
@@ -506,7 +568,7 @@ test('the bot owner can stop it, so a session cannot be stranded', async (t) => 
 
 test('a bare /leave in a server with two tables refuses, and says which is recording', async (t) => {
   const { dispatch } = await recording(t);
-  const said = await run(dispatch, command('leave', { user: PLAYER_A }));
+  const said = await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A }));
 
   assert.match(said, /more than one table/);
   assert.match(said, /Cipher/, 'and answers its own question, or it cannot be acted on');
@@ -515,7 +577,7 @@ test('a bare /leave in a server with two tables refuses, and says which is recor
 
 test('naming the other table stops nothing', async (t) => {
   const { dispatch, strahd } = await recording(t);
-  const said = await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: strahd.id } }));
+  const said = await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A, options: { campaign: strahd.id } }));
 
   assert.match(said, /not recording \*\*Strahd\*\*/, 'the id they picked is answered with a name');
   assert.match(said, /belongs to \*\*Cipher\*\*/);
@@ -524,19 +586,19 @@ test('naming the other table stops nothing', async (t) => {
 
 test('a name typed by hand is accepted, not just the picker value', async (t) => {
   const { dispatch } = await recording(t);
-  await run(dispatch, command('leave', { user: PLAYER_A, options: { campaign: 'cipher' } }));
+  await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A, options: { campaign: 'cipher' } }));
   assert.equal(activeSessions.size, 0, 'people fill the box before the list loads');
 });
 
 test('one table in the server means /leave still needs no argument', async (t) => {
   const { dispatch } = await recording(t, { setup: oneTable });
-  await run(dispatch, command('leave', { user: PLAYER_A }));
+  await run(dispatch, command('campaign', { sub: 'leave', user: PLAYER_A }));
   assert.equal(activeSessions.size, 0, 'there is nothing to get wrong, so nothing to ask');
 });
 
 test("the picker offers only the campaign that's actually recording", async (t) => {
   const { dispatch } = await recording(t);
-  const choices = await run(dispatch, autocomplete('leave', { user: PLAYER_A }));
+  const choices = await run(dispatch, autocomplete('campaign', { sub: 'leave', user: PLAYER_A }));
 
   assert.equal(choices.length, 1, 'offering a table that would then be refused is worse than offering none');
   assert.match(choices[0].name, /Cipher/);
@@ -544,14 +606,14 @@ test("the picker offers only the campaign that's actually recording", async (t) 
 
 test('the picker is empty when nothing is being recorded', async (t) => {
   const { dispatch } = await twoTables(t);
-  assert.deepEqual(await run(dispatch, autocomplete('leave', { user: PLAYER_A })), []);
+  assert.deepEqual(await run(dispatch, autocomplete('campaign', { sub: 'leave', user: PLAYER_A })), []);
 });
 
 // The membership gate answers first: someone who is not at the table learns
 // which campaign is recording and no more, whether or not they named one.
 test('not being at the table is answered before which table you named', async (t) => {
   const { dispatch, strahd } = await recording(t);
-  const said = await run(dispatch, command('leave', { user: DM_B, options: { campaign: strahd.id } }));
+  const said = await run(dispatch, command('campaign', { sub: 'leave', user: DM_B, options: { campaign: strahd.id } }));
 
   assert.match(said, /you're not at that table/);
   assert.equal(activeSessions.size, 1);
@@ -720,11 +782,11 @@ test('every subcommand that resolves a campaign lets you name one', async () => 
   const { commandDefs, MANAGER_SUBCOMMANDS } = await import('../src/commands/index.js');
 
   // The tiers that resolve a campaign, and so can refuse with "which one?".
-  // `create` and `list` are absent because they resolve nothing; `export`
+  // `create` and `restore` are absent because they resolve nothing; `export`
   // takes a session reference, which carries its own campaign.
   const resolves = new Set([
     ...MANAGER_SUBCOMMANDS,
-    'setchar', 'whoami', 'recap', 'funny', 'search', 'ask', 'history', 'stats', 'npcs', 'locations', 'archive',
+    'join', 'setchar', 'whoami', 'recap', 'funny', 'search', 'ask', 'archive',
   ]);
 
   const campaign = commandDefs.find((c) => c.name === 'campaign');
@@ -772,14 +834,16 @@ test('/whoami answers per campaign', async (t) => {
   );
 });
 
-test('/campaign list names both tables and who runs them', async (t) => {
+// /campaign list went to the dashboard, which is a campaign list by
+// construction. What it used to be relied on for — the autocomplete knowing
+// both tables belong to this server — is checked directly.
+test('the picker offers both tables to whoever runs them', async (t) => {
   const { dispatch } = await twoTables(t);
-  const said = await run(dispatch, command('campaign', { user: DM_A, sub: 'list' }));
+  const offered = await run(dispatch, autocomplete('campaign', { user: DM_A, sub: 'rename' }));
+  const names = offered.map((c) => c.name).join(' ');
 
-  assert.match(said, /Cipher/);
-  assert.match(said, /Strahd/);
-  assert.match(said, new RegExp(DM_A));
-  assert.match(said, new RegExp(DM_B));
+  assert.match(names, /Cipher/);
+  assert.doesNotMatch(names, /Strahd/, 'a manager picker offers only the tables you run');
 });
 
 // --- consent to be recorded ---

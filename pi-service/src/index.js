@@ -7,6 +7,9 @@ import { startQueueWorker } from './pipeline/queue-worker.js';
 import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
 import { recoverInterruptedMeetings } from './pipeline/recovery.js';
 import { migrateLedgerFolders } from './campaign/vault-migrate.js';
+import {
+  rememberVisibleGuilds, reconcileGuilds, installGuildPresence,
+} from './campaign/guild-presence.js';
 import { describeOpusBackend } from './voice/opus-backend.js';
 import { voicePool, poolSize } from './voice/pool.js';
 import { startStatusServer } from './web/server.js';
@@ -127,6 +130,26 @@ async function main() {
       console.log(
         `[voice] ${poolSize(pool)} bot(s) available — up to ${poolSize(pool)} table(s) recording at once per server.`
       );
+    }
+
+    // Which Discords this bot is actually in, before anything reads the
+    // campaign list.
+    //
+    // Order matters twice over. It is after login because `guilds.cache` is
+    // empty until the GUILD_CREATE burst that follows it, and it is before the
+    // recovery pass and the dashboard because both list campaigns — and a
+    // campaign filed under a server the bot was removed from should already be
+    // out of that list by the time they look.
+    //
+    // Wrapped like every other startup step: being unable to work out which
+    // servers are gone is not a reason to fail to come up.
+    try {
+      const seen = rememberVisibleGuilds(db, client);
+      console.log(`In ${seen} Discord server(s).`);
+      reconcileGuilds(db, client);
+      installGuildPresence(db, client);
+    } catch (err) {
+      console.error('[startup] guild reconciliation failed:', err.message);
     }
 
     // Runs after login (not before, like it used to) specifically so it can

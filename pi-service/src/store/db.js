@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 
+-- A short, plain record of who signed in and out, for the gatehouse's own
+-- terminal-style log. Not an audit trail -- it is bounded, see
+-- pruneAuthEvents, because its whole job is answering "did that admission
+-- just take" and "who was that a minute ago", not standing up to a
+-- compliance review months later.
+CREATE TABLE IF NOT EXISTS auth_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  username TEXT,
+  event TEXT NOT NULL,   -- 'in' | 'out'
+  reason TEXT,           -- null, or why: 'everywhere', 'revoked', 'removed'
+  at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_auth_events_at ON auth_events(at);
+
 -- What the operator has said about a person, as opposed to what is true of
 -- them.
 --
@@ -257,6 +272,32 @@ CREATE TABLE IF NOT EXISTS ask_quota (
   asks INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, day)
 );
+
+-- The Discords this bot has been in, and which of them it is not in any more.
+--
+-- It exists for one thing the bot could not otherwise do: SAY THE NAME. A
+-- campaign carries a guild_id, and the name that goes with it lives in
+-- discord.js's cache — which holds only servers the bot is currently in. The
+-- moment it is removed from one, every campaign filed under that id becomes a
+-- row about an eighteen-digit number, and no amount of asking Discord later
+-- will get the name back: a bot cannot read a server it is not in.
+--
+-- So the name is written down while it is still knowable, on every boot and
+-- every join, and it is the last one seen rather than the current one, because
+-- there is no current one any more.
+--
+-- left_at is the whole state. NULL means the bot is in that server as far as
+-- anyone knows; a timestamp means it is not, and when it noticed. It is set
+-- and cleared rather than inserted and deleted, so a server the bot is added
+-- back to keeps the date it was first seen and reads as one server over time
+-- rather than two.
+CREATE TABLE IF NOT EXISTS guilds (
+  guild_id   TEXT PRIMARY KEY,
+  name       TEXT,
+  first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+  left_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_guilds_left ON guilds(left_at);
 `;
 
 // CREATE TABLE IF NOT EXISTS won't add a column to a table that already
@@ -645,7 +686,28 @@ const CAMPAIGN_COLUMNS = `
 // starting one. CAMPAIGN_VIEW_ALL is for the two places that must see through
 // the archive: restoring, and checking a new name against folders that still
 // exist on disk.
-const CAMPAIGN_VIEW = `${CAMPAIGN_COLUMNS} WHERE c.archived_at IS NULL`;
+// A campaign whose Discord the bot has been removed from is hidden by exactly
+// the same argument, in exactly the same place.
+//
+// It is not archived — nobody deleted it, and the person who ran it did not
+// decide anything. The server simply went, and a table that cannot be recorded
+// in, joined, or posted to is not a table any more. Left in the list it is a
+// row whose every control fails: /join finds no channel, the roster names
+// people the bot can no longer see, and the write-up has nowhere to go.
+//
+// Filtering here rather than at the call sites, for the reason written above:
+// five listing methods, forty callers, and the one that forgets is the one that
+// puts a dead server in a picker.
+//
+// STRANDED is the same set inverted, and it is what the gatehouse reads. ALL
+// still sees through both, and has to: a stranded campaign's folder is still on
+// disk, so a new campaign claiming that name would still interleave its notes
+// with it. The name clash check is not a permission question.
+const IN_A_LIVE_GUILD =
+  `c.guild_id NOT IN (SELECT guild_id FROM guilds WHERE left_at IS NOT NULL)`;
+
+const CAMPAIGN_VIEW = `${CAMPAIGN_COLUMNS} WHERE c.archived_at IS NULL AND ${IN_A_LIVE_GUILD}`;
+const CAMPAIGN_VIEW_STRANDED = `${CAMPAIGN_COLUMNS} WHERE c.archived_at IS NULL AND NOT (${IN_A_LIVE_GUILD})`;
 const CAMPAIGN_VIEW_ALL = `${CAMPAIGN_COLUMNS} WHERE 1 = 1`;
 
 export function openDb(path) {
@@ -802,8 +864,22 @@ function wrap(db) {
       return db.prepare(`SELECT COUNT(*) AS n FROM campaigns WHERE guild_id = ?`).get(guildId).n;
     },
 
+    // How many campaigns this person actually holds.
+    //
+    // Archived ones are not counted, and that is a fix rather than a
+    // preference. This feeds the ceilings in campaign/create.js, and counting
+    // deleted campaigns meant somebody who made five and deleted five had used
+    // their whole allowance on nothing — permanently, with no way back that
+    // did not involve the operator and an SSH session. Every other limit in
+    // this codebase refuses to become that kind of trap.
+    //
+    // A campaign whose server has gone IS still counted. Nothing was deleted,
+    // the transcripts are all still on disk, and if the bot is added back to
+    // that Discord the table returns — so it is genuinely still held.
     countCampaignsManagedBy(userId) {
-      return db.prepare(`SELECT COUNT(*) AS n FROM campaigns WHERE manager_user_id = ?`).get(userId).n;
+      return db.prepare(
+        `SELECT COUNT(*) AS n FROM campaigns WHERE manager_user_id = ? AND archived_at IS NULL`
+      ).get(userId).n;
     },
 
     isCampaignMember(campaignId, userId) {
@@ -1088,6 +1164,73 @@ function wrap(db) {
 
     listCampaigns() {
       return db.prepare(`${CAMPAIGN_VIEW} ORDER BY c.guild_id, c.id`).all();
+    },
+
+    // --- the Discords, and which of them are gone ---
+
+    // Write down a server the bot can currently see, and clear any record of
+    // it having left.
+    //
+    // Called for every guild on boot and on every join, so the name is always
+    // the freshest one anybody could have known. Clearing left_at here is what
+    // makes this heal itself: a bot removed and re-added comes back with its
+    // campaigns intact and no operator involved, because the only thing that
+    // hid them was a column that is now NULL again.
+    //
+    // COALESCE on the name so a join event that arrives without one cannot
+    // blank a name already written down. A stale name beats an id.
+    rememberGuild(guildId, name = null) {
+      if (!guildId) return;
+      db.prepare(
+        `INSERT INTO guilds (guild_id, name, left_at) VALUES (?, ?, NULL)
+         ON CONFLICT(guild_id) DO UPDATE SET
+           name = COALESCE(excluded.name, guilds.name),
+           left_at = NULL`
+      ).run(String(guildId), name ?? null);
+    },
+
+    // Note that the bot is no longer in a server.
+    //
+    // Idempotent on the DATE as well as the row: re-marking a guild that is
+    // already gone must not move left_at forward, or every restart would reset
+    // "when did this happen" to the restart. The gatehouse shows that date and
+    // it is the only clue anybody gets about which week the server went.
+    markGuildLeft(guildId, at = new Date().toISOString()) {
+      if (!guildId) return false;
+      const done = db.prepare(
+        `INSERT INTO guilds (guild_id, left_at) VALUES (?, ?)
+         ON CONFLICT(guild_id) DO UPDATE SET left_at = COALESCE(guilds.left_at, excluded.left_at)`
+      ).run(String(guildId), at);
+      return done.changes > 0;
+    },
+
+    // Servers the bot is no longer in that still have something filed under
+    // them. A guild with no campaigns is not worth a line on any screen — it
+    // is just somewhere the bot used to be.
+    listDepartedGuilds() {
+      return db.prepare(
+        `SELECT g.guild_id, g.name, g.first_seen, g.left_at,
+                (SELECT COUNT(*) FROM campaigns c
+                  WHERE c.guild_id = g.guild_id AND c.archived_at IS NULL) AS campaigns
+           FROM guilds g
+          WHERE g.left_at IS NOT NULL
+            AND campaigns > 0
+          ORDER BY g.left_at DESC`
+      ).all();
+    },
+
+    // The campaigns stranded in them, so the gatehouse can name what is
+    // actually stuck rather than only how many.
+    listStrandedCampaigns() {
+      return db.prepare(`${CAMPAIGN_VIEW_STRANDED} ORDER BY c.guild_id, c.id`).all();
+    },
+
+    // Every guild_id that has a live campaign filed under it. The question
+    // boot reconciliation asks: of these, which can Discord no longer see?
+    guildIdsWithCampaigns() {
+      return db.prepare(
+        `SELECT DISTINCT guild_id FROM campaigns WHERE archived_at IS NULL AND guild_id IS NOT NULL`
+      ).all().map((r) => r.guild_id);
     },
 
     setMeetingStatus(meetingId, status) {
@@ -1563,6 +1706,48 @@ function wrap(db) {
     sweepAuth(nowIso = new Date().toISOString()) {
       const sessions = db.prepare(`DELETE FROM auth_sessions WHERE expires_at <= ?`).run(nowIso).changes;
       return { sessions };
+    },
+
+    // --- the sign-on/off log ---
+    //
+    // Deliberately dumb, same as the sessions above: what counts as "in" or
+    // "out" and which reason to write is decided in web/auth.js, not here.
+
+    recordAuthEvent(userId, username, event, reason = null) {
+      db.prepare(
+        `INSERT INTO auth_events (user_id, username, event, reason) VALUES (?, ?, ?, ?)`
+      ).run(userId, username || null, event, reason);
+    },
+
+    listAuthEvents(limit = 40) {
+      return db
+        .prepare(
+          `SELECT user_id AS userId, username, event, reason, at
+             FROM auth_events ORDER BY id DESC LIMIT ?`
+        )
+        .all(Math.max(1, Math.min(200, limit)));
+    },
+
+    // A best-effort name for somebody whose sessions are about to be deleted --
+    // asked before the delete, because auth_sessions is one of the two places
+    // that hold it.
+    usernameForUser(userId) {
+      return db
+        .prepare(
+          `SELECT COALESCE(
+             (SELECT username FROM auth_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1),
+             (SELECT username FROM dashboard_access WHERE user_id = ?)
+           ) AS username`
+        )
+        .get(userId, userId)?.username ?? null;
+    },
+
+    // Keeps the log a convenience rather than an ever-growing table. Run on
+    // the same hourly timer as sweepAuth and the model usage prune.
+    pruneAuthEvents(keep = 300) {
+      db.prepare(
+        `DELETE FROM auth_events WHERE id NOT IN (SELECT id FROM auth_events ORDER BY id DESC LIMIT ?)`
+      ).run(keep);
     },
 
     // --- what the operator has said about a person ---

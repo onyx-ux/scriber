@@ -1,4 +1,6 @@
 import { pick, APPROVAL_REQUEST } from '../flavor.js';
+import { sessionLabel } from '../export/naming.js';
+import { dashboardLink } from './dashboard-link.js';
 import { configuredProviders, summariserLabel, withProvider } from '../pipeline/model-client.js';
 
 // Kept only so the buttons already sitting in DM scrollback can be recognised
@@ -34,8 +36,15 @@ export function providerChoiceNote(cfg) {
 // half is useful on its own — it just cannot say where to go, so it says that
 // rather than pretending there is nowhere to go.
 export function dashboardPointer(cfg) {
-  return cfg.dashboardUrl
-    ? `\n\n👉 Approve it on the dashboard: ${cfg.dashboardUrl}`
+  // dashboardLink, not cfg.dashboardUrl. Two corrections in one line: the root
+  // is the LANDING page — the two were split so a stranger and an operator meet
+  // different things — so this used to send the owner to the marketing copy and
+  // leave them to find the desk from there; and a DASHBOARD_URL that will not
+  // parse now falls to the "set it and I can link you" sentence rather than
+  // interpolating a broken address. See delivery/dashboard-link.js.
+  const desk = dashboardLink(cfg);
+  return desk
+    ? `\n\n👉 Approve it on the dashboard: ${desk}`
     : '\n\n👉 Approve it on the dashboard (set `DASHBOARD_URL` and I can link you straight to it).';
 }
 
@@ -65,7 +74,10 @@ export async function notifyApprovalNeeded({ discordClient, cfg, meeting, jobId,
     await user.send({
       content:
         pick(APPROVAL_REQUEST, {
-          meetingId: meeting.id,
+          // "Session 02 (#16)" — the number the table counts in, and the id
+          // the logs and the dashboard use. Both, because this DM is the one
+          // message read by somebody who has to find it in each.
+          session: sessionLabel(meeting),
           channel: meeting.channel_name,
           date: (meeting.started_at || '').slice(0, 10),
           count: utteranceCount,

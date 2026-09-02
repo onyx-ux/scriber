@@ -267,7 +267,7 @@ export async function tick(db, discordClient, cfg) {
       console.error(`[queue] meeting ${meeting.id} failed permanently after ${attempts} attempts: ${err.message}`);
       await progress?.finish(
         `❌ ${sessionLabel(meeting)}: summarising failed after ${attempts} attempts — \`${err.message.slice(0, 200)}\`\n` +
-          `The transcript is safe. Use \`/summarise meeting_id:${meeting.id}\` to try again.`
+          'The transcript is safe. Sending it round again is a button on the dashboard.'
       );
       return;
     }

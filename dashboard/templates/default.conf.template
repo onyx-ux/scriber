@@ -378,21 +378,38 @@ server {
     # so that four out of five people with the dashboard open are never shown a
     # door they cannot go through.
     #
-    # Gated exactly like /app/, so it is reachable from wherever the dashboard
-    # is. If you would rather it never answered through the tunnel at all,
-    # delete `satisfy any;` from this block alone: the allow-list then becomes
-    # a requirement rather than an alternative, the LAN keeps working, and a
-    # visitor arriving from outside is refused whatever password they know.
+    # OPEN, exactly like /app/, and the password is gone — 2026-08-31.
+    #
+    # It used to carry the same five gate lines as `location /`: an allow-list
+    # of addresses, OR an htpasswd prompt. Both were answering "is this the
+    # right PLACE or the right SHARED SECRET", and neither could answer the
+    # question that actually matters here, which is "is this the right PERSON".
+    # A basic-auth password is one string that everybody who has it shares; it
+    # cannot be granted to a named account, cannot be taken back from one, and
+    # says nothing about which Discord account is on the other end.
+    #
+    # The real gate is one level down and always was. `/api/access` answers 403
+    # to anybody below `dev`, and access/invite, access/uninvite, access/level,
+    # access/tier and access/revoke are all `everything` in ACTION_NEEDS. So a
+    # stranger reaching this HTML gets a page that asks the bot who they are
+    # and is told nothing — the same shape as /app/, where the page is public
+    # and the data is not.
+    #
+    # What the password was actually costing: the operator had to hold a
+    # password AS WELL AS a Discord identity to administer their own bot, and
+    # anybody they wanted to hand the gatehouse to had to be handed that shared
+    # string. Being a dev is already derived — OWNER_USER_ID, OPERATOR_USER_IDS
+    # or the house tier, per docs/adr/0003 — so the identity was sitting right
+    # there, unused, behind a prompt that knew nothing about it.
+    #
+    # NOTE what is deliberately NOT open: /gatehouse.html, the raw path, still
+    # falls to the gated `location /` below — the same asymmetry /app/ has with
+    # /index.html. Nothing depends on that; it is simply not a door worth
+    # opening twice.
     location = /gatehouse  { return 301 /gatehouse/; }
     location = /gatehouse/ {
         limit_req zone=quill_gate burst=10 nodelay;
         limit_conn quill_conn 8;
-
-        satisfy any;
-        include /etc/nginx/allowed-ips.conf;
-        deny all;
-        auth_basic "Scriber";
-        auth_basic_user_file /etc/nginx/.htpasswd;
 
         root /usr/share/nginx/html;
         try_files /gatehouse.html =404;

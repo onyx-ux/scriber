@@ -344,9 +344,10 @@ test('the operator restores directly, being the person who decides these', async
 
 // --- and through the real dispatcher ---
 //
-// The handlers are the easy part. What needed proving is the routing: `delete`
-// resolves a campaign the normal way, and `restore` deliberately does not,
-// because the resolver cannot see an archived campaign at all.
+// Only `restore` reaches Discord now — deleting is the dashboard's, where the
+// typed name can be asked for next to the thing being deleted. What needed
+// proving is the routing: `restore` resolves NOTHING, because the resolver
+// cannot see an archived campaign at all, so the handler goes looking itself.
 
 async function dispatcher(t) {
   const dir = await mkdtemp(join(tmpdir(), 'quill-arch-cmd-'));
@@ -393,19 +394,27 @@ function say({ user, sub, options = {} }) {
 
 const fire = async (dispatch, i) => { await dispatch(i); return i.said.content ?? ''; };
 
-test('/campaign delete needs the name, then works', async (t) => {
-  const { db, dispatch, cipher } = await dispatcher(t);
+// Deleting is not reachable from Discord at all any more, and that has to be
+// asserted rather than assumed: a route left behind in the table would still
+// answer, silently, with no subcommand registered to reach it.
+test('there is no way to delete a campaign from Discord', async () => {
+  process.env.DISCORD_TOKEN ||= 'x';
+  process.env.DISCORD_CLIENT_ID ||= 'x';
+  process.env.GEMINI_API_KEY ||= 'x';
+  const { commandDefs } = await import('../src/commands/index.js');
 
-  await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'nope', campaign: cipher } }));
-  assert.ok(db.getCampaign(cipher), 'a wrong name deletes nothing');
+  const subs = commandDefs
+    .find((c) => c.name === 'campaign')
+    .options.filter((o) => o.type === 1)
+    .map((o) => o.name);
 
-  await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'Cipher', campaign: cipher } }));
-  assert.equal(db.getCampaign(cipher), null);
+  assert.equal(subs.includes('delete'), false, 'deleting a campaign is the dashboard\'s');
+  assert.equal(subs.includes('restore'), true, 'asking for one back is not');
 });
 
 test('/campaign restore lists what is waiting, and opens a form rather than restoring', async (t) => {
   const { db, dispatch, cipher } = await dispatcher(t);
-  await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'Cipher', campaign: cipher } }));
+  archiveCampaign({ db, cfg, campaignId: cipher, userId: CREATOR, typedName: 'Cipher' });
 
   const listed = await fire(dispatch, say({ user: CREATOR, sub: 'restore' }));
   assert.match(listed, /Cipher/);
@@ -420,7 +429,7 @@ test('/campaign restore lists what is waiting, and opens a form rather than rest
 
 test('/campaign restore brings it straight back for the operator', async (t) => {
   const { db, dispatch, cipher } = await dispatcher(t);
-  await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'Cipher', campaign: cipher } }));
+  archiveCampaign({ db, cfg, campaignId: cipher, userId: CREATOR, typedName: 'Cipher' });
 
   const back = await fire(dispatch, say({ user: DEV, sub: 'restore', options: { campaign: 'Cipher' } }));
   assert.match(back, /back/i);
@@ -431,8 +440,8 @@ test('/campaign restore brings it straight back for the operator', async (t) => 
 // the review. Someone who never played there still sees nothing, because a
 // deleted campaign is not something to advertise to a whole Discord.
 test('/campaign restore shows nothing to somebody who was never at the table', async (t) => {
-  const { dispatch, cipher } = await dispatcher(t);
-  await fire(dispatch, say({ user: CREATOR, sub: 'delete', options: { confirm: 'Cipher', campaign: cipher } }));
+  const { db, dispatch, cipher } = await dispatcher(t);
+  archiveCampaign({ db, cfg, campaignId: cipher, userId: CREATOR, typedName: 'Cipher' });
 
   const said = await fire(dispatch, say({ user: PLAYER, sub: 'restore' }));
   assert.doesNotMatch(said, /Cipher/, 'somebody else\'s deleted campaign is not theirs to see');

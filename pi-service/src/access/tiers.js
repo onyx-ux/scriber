@@ -133,10 +133,98 @@ export function askLimitFor(cfg, tier) {
   return fallback;
 }
 
+// How many campaigns of their own a tier may hold.
+//
+// The second ceiling this file governs, and the first that is not about an API
+// bill. It is here rather than next to the other campaign ceilings in
+// campaign/create.js because it answers the same question tiers always answer
+// -- how much of somebody else's machine may one person take up -- and the
+// cost is real even when nobody is talking: a campaign is a vault folder, a
+// ledger, a roster and every transcript ever recorded in it, kept for as long
+// as it exists.
+//
+// THIS ONE SHIPS WITH NUMBERS IN IT, and that is a deliberate break from the
+// rule the top of this file states for ask limits. Nothing else here invents a
+// number, because only the operator knows what their API bill can stand. Disk
+// is different: five campaigns is a generous free allowance on any machine
+// this bot runs on, and a free tier with no ceiling at all is the one that
+// eventually fills a Raspberry Pi's SD card. So the default is written down
+// and TIER_CAMPAIGN_LIMITS overrides it.
+//
+// 0 is unlimited, the same as it means for asks.
+//
+// Tiers 2 to 4 are not written, so they inherit 10 from tier 1 by the rule
+// below. That is the safe reading rather than a considered one -- if the paid
+// band should climb, write the ladder in TIER_CAMPAIGN_LIMITS.
+const DEFAULT_CAMPAIGN_LIMITS = {
+  0: 5,
+  1: 10,
+  // The house is never metered, and writing it here rather than special-casing
+  // it below means the table says so out loud.
+  [HOUSE_TIER]: 0,
+};
+
+// Same shape and the same inheritance as askLimitFor, deliberately: an
+// operator who has learned how one of these settings reads has learned both.
+// A tier nobody wrote a number for takes the nearest one written BELOW it,
+// which is the only direction that cannot hand somebody more than was written.
+export function campaignLimitFor(cfg, tier) {
+  const perTier = cfg?.tierCampaignLimits;
+  const table = perTier && Object.keys(perTier).length ? perTier : DEFAULT_CAMPAIGN_LIMITS;
+
+  const want = isTier(tier) ? Number(tier) : FREE_TIER;
+  for (const step of [...TIERS].filter((t) => t <= want).reverse()) {
+    const written = table[step];
+    if (Number.isFinite(written) && written >= 0) return written;
+  }
+
+  // Nothing at or below them was written. Fall back to the built-in table
+  // rather than to no limit: guessing "unlimited" is the wrong way to be wrong
+  // about a ceiling whose whole job is to stop a disk filling up.
+  return DEFAULT_CAMPAIGN_LIMITS[FREE_TIER];
+}
+
+// Whether this person may start one more.
+//
+// Counts campaigns they MANAGE, never campaigns they are in. Being at somebody
+// else's table costs the person running it, not the person playing, so joining
+// is unlimited at every tier and this must never start counting membership --
+// that would meter a player for being invited, which is somebody else's act.
+//
+// Archived campaigns are not counted either. They still hold their transcripts,
+// so there is a real argument for counting them, but the other side of it is a
+// trap: create five, delete five, and be locked out of your own bot forever
+// with no way back that does not involve somebody else's SSH session. This
+// file refuses that kind of trap everywhere else and refuses it here.
+export function campaignAllowance(db, cfg, userId) {
+  const tier = tierOf(db, cfg, userId);
+  const limit = campaignLimitFor(cfg, tier);
+  const held = userId ? (db?.countCampaignsManagedBy?.(String(userId)) ?? 0) : 0;
+
+  return {
+    tier,
+    limit,
+    held,
+    // 0 is unlimited, so it is never full.
+    full: limit > 0 && held >= limit,
+    left: limit > 0 ? Math.max(0, limit - held) : null,
+  };
+}
+
 // The whole allowance for one person, which is the shape the enforcement
 // points want: what tier, what it buys, and nothing about how much they have
 // used -- that is the caller's own counter to keep.
+//
+// The campaign ceiling is the exception and carries its count, because unlike
+// a daily question allowance the number held is a fact the store already knows
+// and the page wants to show ("3 of 5") rather than a counter the caller keeps.
 export function allowanceFor(db, cfg, userId) {
   const tier = tierOf(db, cfg, userId);
-  return { tier, askLimit: askLimitFor(cfg, tier) };
+  const campaigns = campaignAllowance(db, cfg, userId);
+  return {
+    tier,
+    askLimit: askLimitFor(cfg, tier),
+    campaignLimit: campaigns.limit,
+    campaignsHeld: campaigns.held,
+  };
 }

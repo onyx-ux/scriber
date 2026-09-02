@@ -66,7 +66,7 @@ export function resolveSessionRef(ref, reachable, db) {
 
   const campaign = reachable.find((c) => refSlug(c.name || c.channel_name).toLowerCase() === parsed.slug);
   if (!campaign) {
-    return { error: `\`${ref}\` isn't a campaign you're part of.` };
+    return { error: `\`${ref}\` isn't a session in a campaign you're part of.` };
   }
 
   const meeting = db

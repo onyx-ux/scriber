@@ -91,6 +91,7 @@ export function openSession(db, cfg, { userId, username, now = Date.now() } = {}
   const token = randomBytes(32).toString('hex');
   const expiresAt = new Date(now + SESSION_TTL_MS).toISOString();
   db.openAuthSession(hmac(secret, token), userId, username, expiresAt);
+  db.recordAuthEvent?.(userId, username, 'in');
   return { token, expiresAt };
 }
 
@@ -128,10 +129,19 @@ export function closeSession(db, cfg, token, { everywhere = false } = {}) {
   const secret = authSecret(cfg);
   if (!secret || !token) return 0;
 
-  if (!everywhere) return db.closeAuthSession(hmac(secret, token));
+  const hashed = hmac(secret, token);
+  const row = db.getAuthSession(hashed);
 
-  const row = db.getAuthSession(hmac(secret, token));
-  return row ? db.closeAllAuthSessions(row.user_id) : 0;
+  if (!everywhere) {
+    const ended = db.closeAuthSession(hashed);
+    if (ended && row) db.recordAuthEvent?.(row.user_id, row.username, 'out');
+    return ended;
+  }
+
+  if (!row) return 0;
+  const ended = db.closeAllAuthSessions(row.user_id);
+  if (ended) db.recordAuthEvent?.(row.user_id, row.username, 'out', 'everywhere');
+  return ended;
 }
 
 // --- the cookies ---
@@ -251,8 +261,11 @@ export function cookieFrom(header, name = COOKIE) {
 // themselves out — and it deliberately touches nothing but sessions. Revoking
 // access and deleting somebody's history are different acts, and only one of
 // them belongs on a button.
-export function revokeAllSessions(db, userId) {
-  return db.closeAllAuthSessions(userId);
+export function revokeAllSessions(db, userId, { reason = 'revoked' } = {}) {
+  const username = db.usernameForUser?.(userId) ?? null;
+  const ended = db.closeAllAuthSessions(userId);
+  if (ended) db.recordAuthEvent?.(userId, username, 'out', reason);
+  return ended;
 }
 
 // Delete dead sessions rather than merely ignoring them.

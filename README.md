@@ -79,7 +79,7 @@ pi-service/          # everything that runs on the Raspberry Pi
     export/markdown.js      # Obsidian-formatted .md export
     delivery/discord-post.js  # posts to channel (no thread) + attaches files
     prompts/dnd-summary-prompt.js
-    commands/                 # /join /leave /history /summarise /export /search /funny
+    commands/                 # every /campaign subcommand
   Dockerfile
   docker-compose.yml
   .env.example
@@ -91,7 +91,7 @@ custom code needed there. See "Network setup" above.
 
 ## Google Drive sync (optional, off by default)
 
-Design: the **Pi stays the source of truth** — `/campaign history` and `/campaign export`
+Design: the **Pi stays the source of truth** — the dashboard's session list and `/campaign export`
 never depend on the internet or on Drive being reachable. Drive sync is a
 one-way, best-effort push of finished markdown (and optionally audio) so
 your PC picks it up automatically via the normal Google Drive desktop app —
@@ -213,40 +213,37 @@ whole stack on one machine for debugging.)*
 
 ## Commands
 
-**Three, in Discord.** There used to be twenty-seven, and anyone opening the
+**One, in Discord.** There used to be twenty-seven, and anyone opening the
 picker saw the lot — including `approve`, `pause`, `import` and the rest of the
 pipeline, which spends the owner's GPU and API budget and has nothing to do
 with playing D&D. That tier lives on [the dashboard](#the-dashboard) now.
 
-- **`/join [campaign:]`** — start recording the voice channel you're in
-- **`/leave [campaign:]`** — stop recording and queue the session (see
-  [Scheduling transcription](#scheduling-transcription) — it does not seize the
-  GPU on the spot)
-- **`/campaign <subcommand>`** — everything else
-
-`/join` and `/leave` stay top-level because they are the only two that must be
-run from inside the voice channel being recorded.
+Everything Quill does in Discord is **`/campaign <subcommand>`**. `join` and
+`leave` held out longest, on the argument that they are the two that must be run
+from inside the voice channel — true, and not a reason to sit in the top level.
+What a player types is `/campaign`, and what they want next is a list of the
+things they can do to their campaign.
 
 ### `/campaign`
 
 | | |
 |---|---|
+| `join [campaign:]` | start recording the voice channel you're in |
+| `leave [campaign:]` | stop recording and queue the session (it does not seize the GPU on the spot) |
 | `create name:` | start a campaign here — you become its DM |
-| `list` | what's here, who runs it, where its notes go |
 | `rename name:` | rename one you run (its notes folder moves with it) |
 | `invite player: [name:]` | ask someone to join — **they** choose whether to be recorded |
 | `remove player:` | take someone off; they can no longer be recorded in it |
 | `output mode:` | where finished notes are posted |
+| `restore [campaign:]` | ask for a deleted campaign back, inside 30 days |
 | `setchar name:` | your character name, as it appears in transcripts and notes |
 | `whoami` | what name you currently appear as |
+| `consent` | whether Quill may record you, and stopping it |
 | `recap` | what happened last time — the stored note, or retold for the table |
 | `funny` | a random memorable moment from this campaign |
 | `search query:` | search every transcript in the campaign |
 | `ask question:` | a question answered from past sessions |
-| `history [count:]` | recent sessions |
 | `export session:` | a session's transcript as a file |
-| `stats` | sessions, hours, lines, and who talks most |
-| `npcs` / `locations` | everyone met and everywhere visited |
 | `archive` | the browsable campaign archive as one HTML file |
 
 Every subcommand that resolves a campaign takes an optional autocompleted
@@ -254,10 +251,28 @@ Every subcommand that resolves a campaign takes an optional autocompleted
 because six commands once shipped able to say "re-run with the `campaign`
 option" while having no such option.
 
+**Ten went to the dashboard**, in one pass, on one argument: every one of them
+was a **list** being read or edited, and an ephemeral Discord reply is the worst
+place to read a list — it cannot be sorted, it shows no counts, and it is gone
+on the next reload.
+
+| Gone from Discord | Where it lives now |
+|---|---|
+| `correct` `uncorrect` `corrections` `replay` | the campaign's **Corrections** tab, which shows how many lines each rule is actually changing |
+| `delete` | the campaign screen, where the name you have to type is next to the thing you are typing it about |
+| `history` | the session list — every night, its state, and what is stuck |
+| `stats` | the roster's line counts and share, plus hours and nights on the campaign card |
+| `npcs` `locations` | the **compendium**, which lines every mention of a name up under one entry |
+| `list` | the dashboard *is* a campaign list |
+
+Deleting went one way and `restore` stayed, which is deliberate rather than
+left over: deleting is the creator's decision, asking for one back is often a
+*player's*, and a player has no reason to have been admitted to the dashboard.
+
 ### Starting a recording
 
-`/join` needs you to be on the campaign's roster. The roster is **the bot's
-own**, not Discord's member list: in a server the bot was merely invited to,
+`/campaign join` needs you to be on the campaign's roster. The roster is **the
+bot's own**, not Discord's member list: in a server the bot was merely invited to,
 being able to see a voice channel is not permission to record the game
 happening in it.
 
@@ -266,27 +281,27 @@ the dashboard roster, by creating the campaign yourself, or by having already sp
 in a recorded session — speaking enrols you, and everyone the bot had already
 heard was enrolled when this landed.
 
-`/join campaign:` picks between tables when you're at more than one in the
-same server. With one, which is the normal case, the option never has to be
+`/campaign join campaign:` picks between tables when you're at more than one in
+the same server. With one, which is the normal case, the option never has to be
 touched.
 
 ### Stopping one
 
-`/leave` also takes a `campaign:`, and in a server holding more than one table
+`/campaign leave` also takes a `campaign:`, and in a server holding more than one table
 it **insists** on it. That option names the session rather than finding it —
 it is a confirmation, not a lookup.
 
-If two tables are genuinely recording at once (see below), `/leave` works out
+If two tables are genuinely recording at once (see below), `leave` works out
 *which* one you mean before it asks you to confirm it: the campaign you named
 if you named one, otherwise the voice channel you are sitting in. Run it from
 outside both channels without naming a campaign and it lists what is live
 rather than guessing.
 
-It is there because stopping cannot be taken back. `/join` afterwards opens a
-*new* session with a new number, so a `/leave` fired at the wrong table splits
-that game's evening in two and no command puts it back together. The condition
-is the same one `/join` announces the campaign on — if `/join` told you which
-game it was recording, `/leave` asks you to say it back. The picker offers
+It is there because stopping cannot be taken back. `/campaign join` afterwards
+opens a *new* session with a new number, so a `leave` fired at the wrong table
+splits that game's evening in two and no command puts it back together. The
+condition is the same one `join` announces the campaign on — if it told you
+which game it was recording, `leave` asks you to say it back. The picker offers
 only the campaigns actually being recorded, so it can never offer a table that
 would then be refused.
 
@@ -304,7 +319,7 @@ server.
 
     /campaign create name:Cipher     -> you run Cipher, sessions read Cipher_01
     /campaign create name:Strahd     -> a different table, its own Session 01
-    /campaign list                   -> what is here, who runs it, where notes go
+    /campaign join campaign:Cipher   -> records tonight against Cipher, not Strahd
 
 Each campaign keeps its own session numbering, roster, character names,
 transcript corrections, vault folder, ledger, archive page and notes
@@ -313,13 +328,13 @@ transcripts, and one person can play different characters in both.
 
 Where a command needs to know which table you mean it asks, and never guesses:
 
-- **reading** (`/campaign recap`, `/campaign stats`, the ledger) resolves to the campaign you
+- **reading** (`/campaign recap`, `search`, `ask`) resolves to the campaign you
   actually play in, so a second table in the server does not make every read
   ambiguous for everyone else;
-- **recording and naming yourself** (`/join`, `/campaign setchar`) resolves to a
+- **recording and naming yourself** (`/campaign join`, `setchar`) resolves to a
   campaign you are on the roster for, here;
-- **changing a campaign's records** (`/campaign`, a correction) resolves to one you
-  run, and naming someone else's says who runs it.
+- **changing a campaign's records** (`/campaign rename`, `invite`, `remove`,
+  `output`) resolves to one you run, and naming someone else's says who runs it.
 
 Campaign names have to be unique across the whole bot, because the name *is*
 the vault folder and the session-reference prefix — two campaigns sharing
@@ -360,7 +375,7 @@ register no slash commands, answer no interactions, run no queue and touch no
 database. They log in, hold a voice connection, and stream audio into the same
 pipeline. Everything else keeps running on the primary bot:
 
-- the table sees **one** Quill and **one** `/join` in the picker;
+- the table sees **one** Quill and **one** `/campaign` in the picker;
 - notes, DMs, approvals and the dashboard are unchanged, because the primary
   posts all of them;
 - there is still one database, one queue, one GPU schedule — so two sessions
@@ -371,14 +386,14 @@ Running the whole bot twice would have done none of that, and would have had
 two processes claiming the same queue job out of one SQLite file — an evening
 summarised twice, at twice the API bill.
 
-**What it looks like in use.** `/join` picks the primary while it is free, so
-a server with one table sees no change at all. When a second table starts
-while the first is still recording, the extra bot walks into that channel and
-`/join` says so, since an unexplained second account sitting in a voice channel
-reads like something has gone wrong. When every bot is busy, `/join` refuses
-and says how many there are — it does not queue, because a `/join` that quietly
-succeeded forty minutes later would start recording mid-scene, with nobody
-aware and nobody asked.
+**What it looks like in use.** `/campaign join` picks the primary while it is
+free, so a server with one table sees no change at all. When a second table
+starts while the first is still recording, the extra bot walks into that channel
+and the reply says so, since an unexplained second account sitting in a voice
+channel reads like something has gone wrong. When every bot is busy, joining
+refuses and says how many there are — it does not queue, because a join that
+quietly succeeded forty minutes later would start recording mid-scene, with
+nobody aware and nobody asked.
 
 **One thing to check first.** Concurrent speakers now add up across *all* the
 tables in the process. `@discordjs/opus` has no practical ceiling, but the pure
@@ -417,24 +432,26 @@ Three tiers, and none of them is a Discord permission.
 
 | Tier | Commands | Who |
 |---|---|---|
-| **The table** | `/join` `/leave`, and `/campaign` `create` `list` `setchar` `whoami` + the read subcommands | anyone in the server |
+| **The table** | `/campaign` `join` `leave` `create` `setchar` `whoami` `consent` `restore` + the read subcommands | anyone in the server |
 | **Campaign manager** | `/campaign` `rename` `invite` `remove` `output` | whoever created the campaign |
-| **Bot owner** | the pipeline — approvals, pause/resume, re-summarise, import, transcripts | the dashboard, behind `STATUS_TOKEN` |
+| **Bot owner** | the pipeline — approvals, pause/resume, re-summarise, import, transcripts, corrections, deletion | the dashboard |
 
 The tiers are per **subcommand** now. There is no owner tier left in Discord at
 all: those commands spend the owner's GPU, API budget and disk, so nobody else
 has a reason to reach them in any server — and a player opening the picker
 never sees them.
 
-"Anyone in the server" is the tier, not the whole check: the four commands that
-touch a live recording or a player's own record — `/join`, `/leave`,
-`/campaign setchar`, `/campaign whoami` — additionally need you on that campaign's roster,
-since being able to see a voice channel is not permission to record the game in
-it, or to end someone else's session.
+"Anyone in the server" is the tier, not the whole check: the commands that touch
+a live recording or a player's own record — `/campaign join`, `leave`,
+`setchar`, `whoami` — additionally need you on that campaign's roster, since
+being able to see a voice channel is not permission to record the game in it, or
+to end someone else's session. `leave` checks that against the session actually
+running rather than through a resolver, so the operator can end one whose table
+has all left.
 
 **Creating a campaign claims it.** Whoever runs `/campaign create` becomes its
-manager, and from then on only they can rename it, set the roster, or correct
-its transcripts. Manage Server was the obvious gate and is the wrong one: the
+manager, and from then on only they can rename it, set its roster, or correct
+its transcripts (the last of those on the dashboard). Manage Server was the obvious gate and is the wrong one: the
 person running the game is often not the person administering the Discord, and
 in a server the bot was merely invited to the two have nothing to do with each
 other. So the bot tracks it itself (`campaigns.manager_user_id`).
@@ -452,23 +469,32 @@ can still be unstuck. Campaigns that predate this are adopted by the owner on
 first boot — otherwise they would read as unclaimed and the next person to run
 `/campaign` would take one over.
 
-The owner tier is the pipeline: it spends the owner's GPU, API budget and
-disk, so nobody else has a reason to reach it in any server. Those commands
-stay in Discord as the away-from-home fallback; the dashboard is where they
-belong day to day.
+The owner tier is the pipeline: it spends the owner's GPU, API budget and disk,
+so nobody else has a reason to reach it in any server. None of it is in Discord
+at all any more — the dashboard is the only way in.
 
 ### Players can install the app themselves
 
-Nine read-only commands are **user-installable**: a player adds Quill to
+Five read-only subcommands are **user-installable**: a player adds Quill to
 their own Discord account and can run them in any channel, on any server,
 including ones the bot has never been in. Discord shows those replies only to
 whoever ran them.
 
-    /recap  /funny  /ask  /search  /history  /stats  /npcs  /locations  /archive
+    /campaign recap  funny  ask  search  export  archive
 
-Everything else stays server-only. `/join` needs the bot present in the voice
-channel it is being asked to record, and anything that changes the campaign
-belongs to the table rather than to whoever installed the app.
+Discord sets install types per **command**, not per subcommand, so `/campaign`
+carries the user install as a whole — and `consent` rides along on purpose,
+because the invitation arrived in a DM and withdrawing should not have to be
+done in front of the table. Nothing else is opened up by that: every subcommand
+still resolves its own campaign through its own tier, so a stranger who installs
+the app reaches only campaigns they have actually spoken in.
+
+Discord sets install types per **command**, so `join` and `leave` cannot be
+pinned to server-only while sharing `/campaign` with the reads that travel. Both
+refuse for themselves instead: `join` resolves through the MEMBER tier, which is
+scoped to the server it was run in, and `leave` answers a DM by saying there is
+no voice channel here for it to be sitting in. That is the trade for one door,
+and a test checks it rather than assuming it.
 
 **This is a permission boundary, so it is enforced rather than assumed.**
 Anyone on Discord can add a user-installed app to their own account, so
@@ -641,7 +667,7 @@ A three-hour session is only minutes of GPU time, but it also parks ~2GB of
 VRAM, which is enough to push a game into paging GPU memory over PCIe and tank
 the frame rate.
 
-So `/leave` records, queues, and stops. The session then transcribes when
+So `leave` records, queues, and stops. The session then transcribes when
 either of these is true:
 
 - **you approve it** — `TRANSCRIBE_REQUIRE_APPROVAL=true` (the default) DMs you
@@ -966,7 +992,7 @@ to, and you're DM'd about it as normal.
 - **Auto-join/leave on voice activity** — start recording automatically when
   players join the voice channel, stop when it empties. Skipped for now
   since it risks recording casual chatter that wasn't meant to be a
-  session; manual `/join`/`/leave` keeps that intentional.
+  session; manual `/campaign join`/`leave` keeps that intentional.
 - **Manual transcript correction** — a a correction command to fix a
   whisper.cpp misheard fantasy name after the fact, since STT reliably
   mangles invented words.

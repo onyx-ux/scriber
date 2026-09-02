@@ -368,6 +368,20 @@ export const config = validate({
   // how a tier nobody wrote a number for is answered.
   tierAskLimits: tierMap(optional('TIER_ASK_LIMITS', '')),
 
+  // How many campaigns of their own each tier may hold:
+  //
+  //   TIER_CAMPAIGN_LIMITS=0:5,1:10,2:25,3:50,4:0
+  //
+  // Same shape and the same inheritance as TIER_ASK_LIMITS, but UNSET IS NOT
+  // "no limit" here: it falls back to the table in access/tiers.js, which is
+  // 5 on the free tier and 10 on tier 1. Disk is the one cost the operator
+  // cannot be asked to price per install — a free tier with no ceiling is what
+  // eventually fills the SD card — so this one ships with a number.
+  //
+  // Counts campaigns somebody RUNS. Being at somebody else's table is
+  // unlimited on every tier and always has been.
+  tierCampaignLimits: tierMap(optional('TIER_CAMPAIGN_LIMITS', '')),
+
   // A daily token ceiling, for the dashboard's gauge only — nothing refuses a
   // call because of it. Neither provider reports how much allowance is left
   // (Anthropic sends a header, Google sends nothing), so a bar needs a number

@@ -77,7 +77,7 @@ test("a reference cannot reach a campaign you're not part of", async (t) => {
   session(db, 'THEIRS', 'Private Game');
 
   const mine = db.listCampaigns().filter((c) => c.guild_id === 'MINE');
-  assert.match(resolveSessionRef('PrivateGame_01', mine, db).error, /isn't a campaign you're part of/);
+  assert.match(resolveSessionRef('PrivateGame_01', mine, db).error, /isn't a session in a campaign you're part of/);
 });
 
 test('a bare meeting id is still accepted, but only within reach', async (t) => {

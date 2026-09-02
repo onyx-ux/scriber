@@ -203,11 +203,167 @@
 
   .door p { margin-top: 17px; max-width: 58ch; color: var(--faint); font-size: 16px; }
   .door p em { font-style: italic; color: var(--iron); }
+
+  /* The way in, for a visitor with no session.
+     This page had no such thing until the htpasswd prompt came off it on
+     2026-08-31 — the browser used to ask for a shared password before anything
+     here ran, so "you are not signed in" was a state the page could never be
+     in. It is the ordinary state now, and it gets a door rather than a
+     refusal. Built from this page's own tokens rather than lifted from
+     index.html: the two pages share three typefaces and no palette. */
+  .gate-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+
+  .gate-btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 12.5px; font-weight: 500; letter-spacing: .01em;
+    padding: 11px 17px; border-radius: 7px;
+    border: 1px solid var(--edge); background: transparent; color: var(--iron);
+    cursor: pointer; text-decoration: none; white-space: nowrap;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .gate-btn:hover { background: var(--sunk); }
+  .gate-btn.discord { border-color: var(--bronze); color: var(--bronze); }
+  .gate-btn.discord:hover { background: var(--bronze-bg); }
+  .gate-btn:focus-visible { outline: 2px solid var(--bronze); outline-offset: 3px; }
+
+  /* An install that cannot sign anybody in says so here rather than sending
+     them to Discord to meet an error page that mentions none of this. */
+  .gate-msg {
+    margin-top: 22px; max-width: 58ch;
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 12px; line-height: 1.65;
+    padding-left: 14px; border-left: 2px solid var(--edge); color: var(--faint);
+  }
+  .gate-msg.bad { border-left-color: var(--seal); color: var(--seal); }
   .door p code, .foot code {
     font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
     font-size: .84em; color: var(--iron);
     background: var(--sunk); padding: 1px 5px; border-radius: 4px;
   }
+
+  /* -- Servers that have gone -------------------------------------------
+     A record, not an alarm, and the styling is the argument for that.
+     Nothing here is red. The reflex for "a server was deleted" is the alarm
+     colour and a warning mark, and it would be wrong twice over: nobody needs
+     to do anything, and nothing was lost. --seal is this page's word for
+     "this next click cannot be undone", and spending it here would make a
+     quiet fact shout for the rest of the page's vocabulary.
+
+     The weight is inverted instead. The server that went is --faint and ruled
+     through; the tables stranded in it are --iron, full ink, unmarked. That is
+     the whole state in one glance — the container is gone, the contents are
+     not — and the strike is this product's own mark for it: the landing page
+     rules through a misheard name on its way to the right one, meaning struck
+     from the record rather than destroyed. Same mark, same meaning. */
+  .gone { margin-top: 46px; }
+
+  .gone-head {
+    display: flex; align-items: baseline; gap: 12px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--edge);
+  }
+  .gone-head h2 {
+    font-family: 'Libre Caslon Display', 'Big Caslon', 'Hoefler Text', Georgia, serif;
+    font-weight: 400; font-size: 21px; letter-spacing: -.008em; margin: 0;
+  }
+  .gone-head .count {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+  }
+  .gone-note {
+    margin: 14px 0 0; max-width: 62ch;
+    color: var(--faint); font-size: 15px; line-height: 1.62;
+  }
+
+  /* One block per server, ruled off underneath the way a ledger closes an
+     account. The last one carries no rule: there is nothing after it to
+     separate from. */
+  .gone-entry { padding: 22px 0 20px; border-bottom: 1px solid var(--edge); }
+  .gone-entry:last-child { border-bottom: 0; padding-bottom: 4px; }
+
+  .gone-server {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  .gone-server .nm {
+    font-family: 'Libre Caslon Display', 'Big Caslon', 'Hoefler Text', Georgia, serif;
+    font-size: 20px; font-weight: 400; letter-spacing: -.006em;
+    color: var(--faint);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+    /* The rule sits on the name rather than through the middle of it, so the
+       name stays readable — it is still the only way anybody identifies which
+       server this was. */
+    text-underline-offset: 0;
+  }
+  /* A server whose name was never written down before it went. Nothing can
+     recover it: a bot cannot read a server it is not in. */
+  .gone-server .nm.unnamed {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 13px; text-decoration: none; letter-spacing: .02em;
+  }
+  .gone-server .when {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: .07em; color: var(--faint);
+    margin-left: auto; white-space: nowrap;
+  }
+
+  /* The tables still filed there. Indented under the server the way a
+     sub-entry sits under its heading, and in full ink because they are the
+     part that is still real. */
+  .gone-tables { margin: 14px 0 0; padding-left: 18px; border-left: 2px solid var(--edge); }
+  .gone-table { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .gone-table + .gone-table { margin-top: 9px; }
+  .gone-table .nm { color: var(--iron); font-size: 16px; }
+  .gone-table .meta {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: .05em; color: var(--faint);
+  }
+
+  @media (max-width: 620px) {
+    .gone-server .when { margin-left: 0; width: 100%; }
+  }
+
+  /* -- Who came and went --------------------------------------------------
+     A terminal, not a table: this is the one place on the page that is a
+     stream rather than a state, so it gets the log's own vocabulary -- a
+     sunk panel, tabular-numeric mono, one line per event -- instead of a
+     row of columns like everything above it. Nothing to click, nothing to
+     decide; it exists to answer "did that admission just take" and "who was
+     that a minute ago". See store/db.js auth_events for how far back it
+     reaches -- it is a convenience, not an audit trail. */
+  .signlog { margin-top: 46px; }
+
+  .signlog-head {
+    display: flex; align-items: baseline; gap: 12px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--edge);
+  }
+  .signlog-head h2 {
+    font-family: 'Libre Caslon Display', 'Big Caslon', 'Hoefler Text', Georgia, serif;
+    font-weight: 400; font-size: 21px; letter-spacing: -.008em; margin: 0;
+  }
+  .signlog-head .count {
+    font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+  }
+
+  .log {
+    margin-top: 14px; max-height: 280px; overflow-y: auto;
+    background: var(--sunk); border: 1px solid var(--edge); border-radius: 7px;
+    padding: 4px 16px;
+  }
+  .log-row {
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline;
+    padding: 7px 0; border-top: 1px solid var(--rule);
+    font-size: 12px; line-height: 1.5;
+  }
+  .log-row:first-child { border-top: 0; }
+  .log-when { color: var(--faint); flex: 0 0 auto; }
+  .log-verb { text-transform: uppercase; flex: 0 0 auto; color: var(--faint); font-weight: 600; }
+  .log-row.in .log-verb { color: var(--bronze); }
+  .log-who { color: var(--iron); }
+  .log-id { color: var(--faint); }
+  .log-note { color: var(--faint); }
+  .log-note::before { content: '— '; }
 
   /* -- Finding somebody -------------------------------------------------
      A guest list is short until the day it is not. Search filters what is
@@ -644,6 +800,25 @@ function since(ms) {
 // everything looks like it happened in the future.
 const stamp = (iso) => (iso ? Date.parse(/[Z+]/.test(iso) ? iso : iso + 'Z') : NaN);
 
+// A calendar date, for the one thing on this page that wants one.
+//
+// since() answers "how long ago" and is right for the roster, where the
+// question is whether somebody has been back lately and the answer is a moving
+// target. It is wrong for a server that went: "90 d" is not a date anybody can
+// place, and the older it gets the less it says. The question there is which
+// week this happened, and only a date answers that.
+//
+// The year is added only when it is not the current one, so a recent departure
+// reads as "12 August" and an old one is never ambiguous.
+function onDate(ms) {
+  if (!ms || Number.isNaN(ms)) return null;
+  const d = new Date(ms);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, {
+    day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
 let toastTimer = null;
 function toast(message, ok) {
   const el = $('toast');
@@ -710,11 +885,40 @@ async function load() {
 // ==========================================================================
 
 function paint() {
-  // The roster only reaches the owner, and the server decides that, not this
-  // page -- /access answers 403 for anybody else. Saying so beats an empty
-  // table, which could equally mean "nobody has ever signed in".
+  // The roster only reaches a dev, and the server decides that, not this page
+  // -- /access answers 403 to everybody else. Saying so beats an empty table,
+  // which could equally mean "nobody has ever signed in".
+  //
+  // Two different noes, and they used to be one. Until 2026-08-31 this page
+  // sat behind an htpasswd prompt, so "not signed in" never reached it: the
+  // browser asked for a shared password first. That password is gone -- it
+  // could not name a person, only a secret -- and the gate is now the Discord
+  // account, which is what "dev" has always been derived from.
+  //
+  // So somebody arriving with no session is not being refused. They have not
+  // been asked yet, and telling them "this is the owner's" would be a lie
+  // about a door they have not tried.
   if (!access) {
-    morph($('page'), `
+    const stuck = me && !me.signInAvailable;
+    morph($('page'), !me?.signedIn ? `
+      <div class="door">
+        <div class="eyebrow">The gatehouse</div>
+        <h1>Sign in to see who can reach this bot.</h1>
+        <p>This page is how accounts are let in, held back, and metered. It answers to
+           whoever runs the bot, so it needs to know which Discord account you are —
+           there is no password for it, and there is nothing to type.</p>
+        ${stuck ? `
+          <p class="gate-msg bad">This bot is not set up for Discord sign-in yet, so nobody can
+             sign in. Set <code>${esc(me?.signInMissing ?? 'DISCORD_CLIENT_SECRET')}</code> in
+             <code>pi-service/.env</code>.</p>` : `
+          <div class="gate-btns">
+            <a class="gate-btn discord" href="${API}/auth/discord">Continue with Discord</a>
+          </div>`}
+      </div>
+      <div class="foot">
+        <p>Quill asks Discord for one thing: who you are. What you can see here is worked
+           out from that — see the dashboard at <code>/app/</code> for everything else.</p>
+      </div>` : `
       <div class="door">
         <div class="eyebrow">Not yours</div>
         <h1>This one is the bot owner's.</h1>
@@ -739,7 +943,7 @@ function paint() {
         <div></div>
       </div>
       <div id="rows"></div>
-    </div>` + admitForm() + footing());
+    </div>` + admitForm() + gone() + signLog() + footing());
 
   fill();
 }
@@ -753,6 +957,108 @@ function paint() {
 // Above the door rather than a row in the table, because it is the one thing on
 // this page that is somebody else waiting on you. Everything below is a list
 // you maintain at your own pace; this is a question with a person behind it.
+// The servers this bot is no longer in, and the tables still filed under them.
+//
+// Here rather than on the dashboard because the dashboard is the campaign
+// list, and the whole point is that these are off it: a table in a Discord the
+// bot was removed from cannot be joined, recorded, rostered or posted to, so
+// leaving it among the live ones is a row whose every control fails silently.
+//
+// Read-only on purpose, and this is the one section of the gatehouse with no
+// buttons in it. There is nothing to decide. Being removed from a Discord is
+// usually an accident, and if the bot is added back every one of these returns
+// on its own — so a Delete control here would only offer somebody the chance
+// to turn a temporary thing into a permanent one.
+function gone() {
+  const servers = access.departedGuilds ?? [];
+  if (!servers.length) return '';
+
+  const stranded = access.strandedCampaigns ?? [];
+
+  const entries = servers.map((g) => {
+    const here = stranded.filter((c) => c.guildId === g.guildId);
+    const named = Boolean(g.name);
+
+    const tables = here.map((c) => `
+      <div class="gone-table" data-key="stranded-${esc(String(c.id))}">
+        <span class="nm">${esc(c.name)}</span>
+        <span class="meta">${c.sessions === 1 ? '1 session' : `${c.sessions} sessions`}${(() => {
+          // A date here too, not an age. Nothing in this section is going to
+          // change again, so "how long ago" is a number that only grows while
+          // saying less; the last night they played is a fact that stays put.
+          const on = onDate(stamp(c.lastSessionAt));
+          return on ? ` · last played ${esc(on)}` : '';
+        })()}</span>
+      </div>`).join('');
+
+    return `
+      <div class="gone-entry" data-key="gone-${esc(g.guildId)}">
+        <div class="gone-server">
+          <span class="nm${named ? '' : ' unnamed'}">${
+            // No name means the bot was already out of that server before it
+            // ever wrote one down. The id is all there is, and all there will
+            // ever be — so it is shown plainly rather than ruled through as if
+            // it were a name.
+            esc(named ? g.name : g.guildId)
+          }</span>
+          <span class="when">${(() => {
+            const on = onDate(stamp(g.leftAt));
+            return on ? `gone since ${esc(on)}` : 'gone';
+          })()}</span>
+        </div>
+        ${tables ? `<div class="gone-tables">${tables}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  return `
+    <section class="gone">
+      <div class="gone-head">
+        <h2>Servers that have gone</h2>
+        <span class="count">${servers.length === 1 ? '1 server' : `${servers.length} servers`}</span>
+      </div>
+      <p class="gone-note">
+        Quill was removed from these, or they were deleted. Their tables have left the
+        campaign list because nothing on one would work — there is no channel to join and
+        nowhere to post a write-up. <b>Nothing has been thrown away.</b> Every session,
+        transcript and note is still on disk, and if Quill is added back to a server its
+        tables return on their own.
+      </p>
+      ${entries}
+    </section>`;
+}
+
+// Who came and went, most recent first. Plain lines rather than a table --
+// see the .log rules above for why -- and read-only for the same reason
+// gone() is: there is nothing here to decide, only to notice.
+function signLog() {
+  const events = access.log ?? [];
+  if (!events.length) return '';
+
+  const rows = events.map((e) => {
+    const who = e.username || e.userId;
+    const when = new Date(stamp(e.at)).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+    return `
+      <div class="log-row ${e.event === 'in' ? 'in' : 'out'}" data-key="log-${esc(e.userId)}-${esc(e.at)}-${e.event}">
+        <span class="log-when mono">${esc(when)}</span>
+        <span class="log-verb mono">${e.event === 'in' ? 'in' : 'out'}</span>
+        <span class="log-who">${esc(who)}</span>
+        ${e.username ? `<span class="log-id mono">${esc(e.userId)}</span>` : ''}
+        ${e.reason ? `<span class="log-note">${esc(e.reason)}</span>` : ''}
+      </div>`;
+  }).join('');
+
+  return `
+    <section class="signlog">
+      <div class="signlog-head">
+        <h2>Who's come and gone</h2>
+        <span class="count">last ${events.length}</span>
+      </div>
+      <div class="log">${rows}</div>
+    </section>`;
+}
+
 function queue() {
   const waiting = (access.people ?? []).filter((p) => p.waiting);
   if (!waiting.length) return '';

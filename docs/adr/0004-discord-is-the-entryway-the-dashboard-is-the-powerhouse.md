@@ -46,7 +46,7 @@ for both produced controls that suited neither.
 to play D&D. They did not agree to open a web page, hold a session, or be
 administered. So these are a floor, asserted in `test/entryway.test.js`:
 
-- `/join`, `/leave` — starting and stopping a recording
+- `/campaign join`, `/campaign leave` — starting and stopping a recording
 - `/campaign consent` — answering whether they may be recorded, and withdrawing
 - `/campaign setchar` — naming their own character
 - `/campaign recap` — reading what happened last time

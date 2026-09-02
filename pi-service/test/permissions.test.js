@@ -167,11 +167,14 @@ test('the command surface splits into the three intended tiers', async () => {
   // at all: approve, pause, transcribe, summarise, pending and import spend
   // the owner's GPU, API budget and disk, so they moved to the dashboard
   // rather than sitting in a picker every player can open.
-  // The corrections four sit here rather than a tier lower: they rewrite the
-  // transcript itself, which is the same authority as renaming the campaign,
-  // not the lesser one of reading it.
+  //
+  // Four, and each one an errand rather than a screen: the campaign's name is
+  // wrong, somebody new sat down, somebody left, the notes are going to the
+  // wrong channel. Corrections and deletion used to sit here too and have gone
+  // the same way as the pipeline — both are lists to be read and weighed, and
+  // an ephemeral reply is the worst place to read a list.
   assert.deepEqual([...MANAGER_SUBCOMMANDS].sort(), [
-    'correct', 'corrections', 'delete', 'invite', 'output', 'remove', 'rename', 'replay', 'uncorrect',
+    'invite', 'output', 'remove', 'rename',
   ]);
 
   const campaign = commandDefs.find((c) => c.name === 'campaign');
@@ -179,10 +182,11 @@ test('the command surface splits into the three intended tiers', async () => {
 
   // Everything that is not a manager subcommand is something the table itself
   // may run. `create` is here because an unclaimed campaign has to be
-  // claimable, and `list` because seeing what is here is not a privilege.
+  // claimable, and `restore` because asking for a deleted table back is a
+  // player's petition, not a manager's undo.
   assert.deepEqual(subs.filter((s) => !MANAGER_SUBCOMMANDS.has(s)).sort(), [
-    'archive', 'ask', 'consent', 'create', 'export', 'funny', 'history', 'list',
-    'locations', 'npcs', 'recap', 'restore', 'search', 'setchar', 'stats', 'whoami',
+    'archive', 'ask', 'consent', 'create', 'export', 'funny', 'join', 'leave',
+    'recap', 'restore', 'search', 'setchar', 'whoami',
   ]);
 
   // `consent` must never drift into the manager tier. It is the one command
@@ -483,7 +487,7 @@ test('someone not on the roster cannot start a recording', async (t) => {
   const { error, campaign } = resolveMemberCampaign(joining('G', PLAYER), db);
   assert.equal(campaign, undefined);
   assert.match(error, /not on the roster/);
-  assert.match(error, /\/dm add/, 'and says how to get on it');
+  assert.match(error, /\/campaign invite/, 'and says how to get on it');
 });
 
 test('the manager can always start their own campaign', async (t) => {

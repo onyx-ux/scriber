@@ -274,7 +274,7 @@ test('listCampaignsForUser reports the campaign name when one is set', async (t)
 // enabling user install in the Developer Portal silently made all 27
 // user-installable on the first deploy. /join was then offered in servers the
 // bot is not in, where it can only fail.
-test('the whole surface is three commands, and only the reads travel', async () => {
+test('the whole surface is one command, and only the reads travel', async () => {
   process.env.DISCORD_TOKEN ||= 'x';
   process.env.DISCORD_CLIENT_ID ||= 'x';
   process.env.GEMINI_API_KEY ||= 'x';
@@ -285,20 +285,25 @@ test('the whole surface is three commands, and only the reads travel', async () 
   // including approve, pause, import and the rest of the pipeline, which
   // spends the owner's GPU and API budget and has nothing to do with playing
   // D&D. Those live on the dashboard now.
-  assert.deepEqual(commandDefs.map((c) => c.name).sort(), ['campaign', 'join', 'leave']);
+  assert.deepEqual(commandDefs.map((c) => c.name).sort(), ['campaign']);
 
   assert.ok(
     commandDefs.every((c) => Array.isArray(c.integration_types) && Array.isArray(c.contexts)),
     'every command states its own install types rather than inheriting the app default'
   );
 
-  // /join and /leave have to be run from inside the voice channel being
-  // recorded, so they are meaningless anywhere the bot is not.
-  for (const name of ['join', 'leave']) {
-    const c = commandDefs.find((x) => x.name === name);
-    assert.deepEqual(c.integration_types, [0], `/${name} needs the bot in the voice channel`);
-    assert.deepEqual(c.contexts, [0]);
-  }
+  // `join` and `leave` have to be run from inside the voice channel being
+  // recorded, so they are meaningless anywhere the bot is not — but Discord
+  // sets install types per COMMAND, so they cannot be pinned to GUILD_INSTALL
+  // while sharing a command with the reads that travel. Both refuse for
+  // themselves instead: join resolves through the MEMBER tier, which is scoped
+  // to the server it was run in, and leave answers a DM by saying so. That is
+  // the trade for one door, and it is checked rather than assumed.
+  const campaignSubs = commandDefs
+    .find((c) => c.name === 'campaign')
+    .options.filter((o) => o.type === 1)
+    .map((o) => o.name);
+  assert.ok(campaignSubs.includes('join') && campaignSubs.includes('leave'));
 
   // /campaign carries USER_INSTALL for its READ subcommands, since Discord
   // sets integration types per command rather than per subcommand. Nothing is

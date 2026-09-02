@@ -250,7 +250,7 @@ export const ACTIONS = {
     }
 
     db.clearInvited(id);
-    const ended = revokeAllSessions(db, id);
+    const ended = revokeAllSessions(db, id, { reason: 'removed' });
 
     // Taking the last name off does not shut the door harder, it removes the
     // door. Reporting "off the list" and nothing else would be true and would
@@ -574,7 +574,7 @@ export const ACTIONS = {
     if (decided.ok) ctx?.notifyRestoreDecided?.(decided);
     return { status: 200, payload: decided };
   },
-  'campaign/create': (db, cfg, body, ctx) => {
+  'campaign/create': async (db, cfg, body, ctx) => {
     const viewer = ctx?.viewer ?? null;
 
     // With login off there is no session, and the page is the operator by
@@ -591,12 +591,20 @@ export const ACTIONS = {
     }
 
     const guildId = String(body?.guildId ?? '').trim();
-    const allowed = guildsCreatableBy({ db, viewer, guilds: ctx?.guilds?.() ?? [] });
+    // Asked again here rather than trusted from the picker: the browser sends
+    // a guild id, and a guild id is eighteen digits anybody can type. This is
+    // the check that actually holds, and the one on /status is only what makes
+    // the dialog useful.
+    const allowed = await guildsCreatableBy({
+      viewer,
+      guilds: ctx?.guilds?.() ?? [],
+      isMember: (g, u) => ctx?.discord?.isMemberOf?.(g, u, { fresh: true }) ?? false,
+    });
     if (!allowed.some((g) => g.id === guildId)) {
       return badRequest(
         allowed.length
           ? 'Pick one of the servers you can start a campaign in.'
-          : 'You have no server to start a campaign in yet.'
+          : 'You are not in a server this bot is in — add it to your Discord, or ask whoever runs that server to.'
       );
     }
 

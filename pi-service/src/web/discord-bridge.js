@@ -40,8 +40,72 @@ const POSTABLE_TYPES = new Set([ChannelType.GuildText, ChannelType.GuildAnnounce
 // first write-up is silently dropped.
 const MAY_POST = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages];
 
+// How long "yes, they are in that server" is believed before asking again.
+//
+// This exists because of where the answer is needed. The server picker on the
+// dashboard is built from /status, and /status is polled every five seconds by
+// every open tab — so an uncached membership check would be one REST call per
+// server per tab per five seconds, forever, to answer a question whose answer
+// changes about once a year.
+//
+// Five minutes is picked from what being wrong costs in each direction. Stale
+// yes: somebody who just left a Discord can still start a campaign in it for a
+// few minutes, and createCampaign's own rules still apply. Stale no: somebody
+// who just joined waits a few minutes before that server appears in the
+// picker, which is annoying rather than harmful. Neither is worth a call every
+// five seconds.
+const MEMBERSHIP_TTL_MS = 5 * 60 * 1000;
+
 export function createDiscordBridge({ client, db, cfg }) {
+  // key: `${guildId}:${userId}` -> { at, member }
+  const membership = new Map();
+
   return {
+    // Is this account actually in that Discord?
+    //
+    // The dashboard needs this because creating a campaign is now allowed to
+    // anyone in the server, which is what /campaign create has always allowed
+    // — being able to type it in a channel IS being in the server. The web
+    // page has no such proof, so it has to ask.
+    //
+    // A single member fetched by id, which is a plain REST read and needs no
+    // privileged intent. `guild.members.cache` is deliberately not trusted as
+    // a negative: without GUILD_MEMBERS this bot never receives the member
+    // list, so a cache miss means "not asked yet", not "not a member". It is
+    // trusted as a positive, because a member in the cache got there by being
+    // seen.
+    //
+    // A failed lookup is cached as false like any other no. Discord being
+    // briefly unreachable should not turn into a retry per poll.
+    // `fresh` skips the cache, and the two callers split on it deliberately.
+    // The server picker on /status is polled and takes the cached answer; the
+    // create action itself is one click and asks Discord outright, so the
+    // check that actually decides is never a five-minute-old memory. It also
+    // means somebody refused because they had not joined yet can join and
+    // press the button again, rather than being told no until a timer expires.
+    async isMemberOf(guildId, userId, { fresh = false } = {}) {
+      if (!guildId || !userId) return false;
+
+      const key = `${guildId}:${userId}`;
+      const seen = membership.get(key);
+      if (!fresh && seen && Date.now() - seen.at < MEMBERSHIP_TTL_MS) return seen.member;
+
+      const guild = client?.guilds?.cache?.get(guildId);
+      if (!guild) {
+        // Not a server this bot is in at all. Nothing to be a member of, and
+        // no call worth making.
+        membership.set(key, { at: Date.now(), member: false });
+        return false;
+      }
+
+      let member = !fresh && (guild.members?.cache?.has?.(userId) ?? false);
+      if (!member) {
+        member = Boolean(await guild.members?.fetch?.(userId).catch(() => null));
+      }
+      membership.set(key, { at: Date.now(), member });
+      return member;
+    },
+
     // Who in this campaign's server matches what was typed.
     //
     // Returns people, not accounts: a Discord id on its own is unusable in a

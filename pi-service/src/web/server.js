@@ -130,6 +130,11 @@ export function startStatusServer({
     } catch (err) {
       console.error('[usage] prune failed:', err.message);
     }
+    try {
+      db.pruneAuthEvents();
+    } catch (err) {
+      console.error('[auth] log prune failed:', err.message);
+    }
   };
   sweep();
   const sweepTimer = setInterval(sweep, 60 * 60 * 1000);
@@ -507,7 +512,15 @@ export function startStatusServer({
       // rather than in scopeStatus because it needs Discord, and attached
       // after scoping so it can only ever be added to a payload, never widen
       // one.
-      const creatable = guildsCreatableBy({ db, viewer, guilds: ctx.guilds() });
+      // Awaited now: the rule is "a server you are in", and only Discord can
+      // say. It is cached for five minutes per account per server, so this is
+      // one REST read on the first poll after signing in and free thereafter
+      // — see isMemberOf in web/discord-bridge.js.
+      const creatable = await guildsCreatableBy({
+        viewer,
+        guilds: ctx.guilds(),
+        isMember: (guildId, userId) => ctx.discord?.isMemberOf?.(guildId, userId) ?? false,
+      });
       if (creatable.length) payload.canCreateIn = creatable;
 
       // Campaigns this viewer deleted and can still bring back. Only ever
