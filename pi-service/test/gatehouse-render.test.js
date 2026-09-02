@@ -223,6 +223,29 @@ test('the owner is shown the roster, and every row explains itself', async (t) =
   assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
 });
 
+// The terminal-style record of who signed in and out, at the bottom of the
+// page. cookieFor() below opens a real session for DEV to render the page at
+// all, so that sign-in is itself the first line the log has to draw.
+test('the sign-on/off log shows who came and went, plainly', async (t) => {
+  const { db, cfg, base } = await world(t);
+  db.setInvited(FRIEND, { username: 'fenwick' });
+  const cookie = cookieFor(db, cfg, DEV, 'matt');
+
+  openSession(db, cfg, { userId: FRIEND, username: 'fenwick' });
+  db.recordAuthEvent(FRIEND, 'fenwick', 'out', 'revoked');
+
+  const page = await render({ base, cookie });
+  const markup = page.body();
+
+  assert.match(markup, /Who's come and gone/i);
+  assert.match(markup, /class="log-row in"/, 'an admission is marked in');
+  assert.match(markup, /class="log-row out"/, 'a departure is marked out');
+  assert.match(markup, /matt/);
+  assert.match(markup, /fenwick/);
+  assert.match(markup, /revoked/, 'the reason travels with the row that has one');
+  assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
+});
+
 test('a player is told whose page this is rather than shown an empty one', async (t) => {
   const { db, cfg, base } = await world(t);
   db.setInvited(FRIEND, { username: 'fenwick' });

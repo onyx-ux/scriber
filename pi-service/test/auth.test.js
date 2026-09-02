@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
 import {
-  openSession, readSession, closeSession,
+  openSession, readSession, closeSession, revokeAllSessions,
   sessionCookie, clearedCookie, cookieFrom,
   newState, askedForConsent, stateMatches, stateCookie, clearedStateCookie,
   SESSION_TTL_MS, STATE_TTL_MS, COOKIE, STATE_COOKIE,
@@ -158,6 +158,74 @@ test('a made-up token is not a session', async (t) => {
   for (const guess of ['', 'x', 'null', 'undefined', '0'.repeat(64)]) {
     assert.equal(readSession(db, cfg, guess), null);
   }
+});
+
+// --- the sign-on/off log ---
+//
+// The gatehouse's own terminal-style record of who came and went. It rides
+// alongside the session table rather than replacing it: a session says who is
+// in RIGHT NOW, this says who was, in order, which a deleted row cannot.
+
+test('signing in and out writes the log, in order, oldest reads last', async (t) => {
+  const { db, cfg } = await harness(t);
+  const { token } = openSession(db, cfg, WHO);
+  closeSession(db, cfg, token);
+
+  const [latest, first] = db.listAuthEvents();
+  assert.equal(first.event, 'in');
+  assert.equal(first.userId, WHO.userId);
+  assert.equal(first.username, WHO.username);
+  assert.equal(first.reason, null);
+
+  assert.equal(latest.event, 'out');
+  assert.equal(latest.userId, WHO.userId);
+  assert.equal(latest.reason, null);
+});
+
+test('signing out everywhere logs one exit, not one per session', async (t) => {
+  const { db, cfg } = await harness(t);
+  const one = openSession(db, cfg, WHO).token;
+  openSession(db, cfg, WHO);
+
+  closeSession(db, cfg, one, { everywhere: true });
+
+  const outs = db.listAuthEvents().filter((e) => e.event === 'out');
+  assert.equal(outs.length, 1, 'two sessions ended, one exit happened');
+  assert.equal(outs[0].reason, 'everywhere');
+});
+
+// The operator's own button, not the person signing themselves out — see
+// web/actions.js access/revoke and access/uninvite, which is where the reason
+// each one passes comes from.
+test('a revoke from the gatehouse logs who it was, not just that somebody left', async (t) => {
+  const { db, cfg } = await harness(t);
+  openSession(db, cfg, WHO);
+
+  const ended = revokeAllSessions(db, WHO.userId);
+  assert.equal(ended, 1);
+
+  const [out] = db.listAuthEvents();
+  assert.equal(out.event, 'out');
+  assert.equal(out.username, WHO.username, 'looked up from the session before it was deleted');
+  assert.equal(out.reason, 'revoked');
+});
+
+test('revoking somebody with no open session writes nothing', async (t) => {
+  const { db } = await harness(t);
+  assert.equal(revokeAllSessions(db, WHO.userId), 0);
+  assert.deepEqual(db.listAuthEvents(), []);
+});
+
+test('the log is a convenience, not an archive — pruning keeps only the tail', async (t) => {
+  const { db, cfg } = await harness(t);
+  for (let i = 0; i < 12; i += 1) {
+    openSession(db, cfg, { userId: `2000000000000000${i}`, username: `p${i}` });
+  }
+
+  db.pruneAuthEvents(5);
+  const kept = db.listAuthEvents();
+  assert.equal(kept.length, 5);
+  assert.equal(kept[0].username, 'p11', 'the most recent survive the prune');
 });
 
 // --- the cookies ---
