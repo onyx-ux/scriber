@@ -447,6 +447,61 @@ test('sibling fields do not shield each other — only the focused one is spared
   assert.equal(b.value, 'server too', 'the other field was frozen along with the focused one');
 });
 
+// Focus is not the thing being protected — unsent state is. A button holds
+// none, and on Windows and Linux a click leaves focus sitting on it, which is
+// how the transcript ended up with no chip lit at all after a press.
+
+test('a focused button still follows the page — the chip that was pressed lights up', async () => {
+  const { morphReconcile } = await load();
+  const doc = makeDoc();
+
+  const parent = tree(doc, 'div', {}, [
+    el('button', doc, { 'data-speaker': '', class: 'chip on' }),
+    el('button', doc, { 'data-speaker': 'rhi', class: 'chip' }),
+  ]);
+  const [everyone, rhi] = parent.kids;
+  doc.activeElement = rhi;         // where the click left it
+
+  morphReconcile(parent, tree(doc, 'div', {}, [
+    el('button', doc, { 'data-speaker': '', class: 'chip' }),
+    el('button', doc, { 'data-speaker': 'rhi', class: 'chip on' }),
+  ]));
+
+  assert.equal(parent.kids[1], rhi, 'the pressed chip was rebuilt rather than patched');
+  assert.equal(everyone.getAttribute('class'), 'chip', 'the chip that lost the filter stayed lit');
+  assert.equal(rhi.getAttribute('class'), 'chip on', 'the pressed chip never lit');
+});
+
+test('a focused button is recursed into as well', async () => {
+  const { morphReconcile } = await load();
+  const doc = makeDoc();
+
+  const parent = tree(doc, 'div', {}, [tree(doc, 'button', { id: 'go' }, ['Record'])]);
+  const button = parent.kids[0];
+  doc.activeElement = button;
+
+  morphReconcile(parent, tree(doc, 'div', {}, [tree(doc, 'button', { id: 'go' }, ['Stop'])]));
+
+  assert.equal(parent.kids[0], button, 'the button was replaced under the pointer');
+  assert.equal(button.kids[0].nodeValue, 'Stop', 'the label of a focused button went stale');
+});
+
+test('a caret in editable text is spared like a field', async () => {
+  const { morphReconcile } = await load();
+  const doc = makeDoc();
+
+  const parent = tree(doc, 'div', {}, [el('div', doc, { 'data-key': 'note', class: 'note' })]);
+  const box = parent.kids[0];
+  box.isContentEditable = true;
+  doc.activeElement = box;
+
+  morphReconcile(parent, tree(doc, 'div', {}, [
+    el('div', doc, { 'data-key': 'note', class: 'note changed' }),
+  ]));
+
+  assert.equal(box.getAttribute('class'), 'note', 'the page wrote over somebody mid-sentence');
+});
+
 // ---------------------------------------------------------------------------
 // morph — the entry point, and the way out of it
 // ---------------------------------------------------------------------------

@@ -124,13 +124,23 @@
     }
     if (node.nodeType !== 1) return;
 
-    // Hands entirely off whatever has focus. Not just its value: re-setting an
-    // identical attribute is cheap but re-setting `class` on the focused
-    // element is enough to interrupt a composition in some IMEs, and there is
-    // nothing this page needs to say to a field urgently enough to be worth
-    // that. It gets patched on the next poll after they click away.
+    // Hands entirely off whatever has focus AND is holding something the page
+    // has not heard about yet. Not just its value: re-setting an identical
+    // attribute is cheap but re-setting `class` on a focused field is enough
+    // to interrupt a composition in some IMEs, and there is nothing this page
+    // needs to say to a field urgently enough to be worth that. It gets
+    // patched on the next poll after they click away.
+    //
+    // A button is not that. This used to spare EVERY focused node, and on
+    // Windows and Linux a click leaves focus on the button it landed on — so
+    // pressing a speaker chip in the transcript took the highlight off the old
+    // chip and never put it on the new one, and the poll five seconds later
+    // skipped it again for the same reason. The highlight only arrived once
+    // the person clicked something else, which reads as lag rather than as a
+    // miss. The campaign tabs had it too. Focus was never the thing worth
+    // protecting here; unsent state is, and a button holds none.
     const focused = node.ownerDocument && node.ownerDocument.activeElement === node;
-    if (focused) return;
+    if (focused && (FIELDS[node.tagName] || node.isContentEditable)) return;
 
     const want = incoming.attributes || [];
     for (let i = 0; i < want.length; i += 1) {
