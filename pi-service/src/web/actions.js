@@ -46,6 +46,7 @@ import { joinLink } from '../delivery/dashboard-link.js';
 import { isVoiceColour, voiceColour } from './palette.js';
 import { isEdition, EDITIONS, DEFAULT_EDITION } from './rules.js';
 import { linesOf, isPart, partName } from '../notes/redline.js';
+import { readable } from './notes-view.js';
 // The token has to be unguessable, not merely unique: it is the only thing
 // standing between a stranger and a table's name. Math.random is neither.
 import { randomBytes } from 'node:crypto';
@@ -983,9 +984,16 @@ export const ACTIONS = {
     // line of THIS text, and the exact words are stored with it, so a
     // correction written against a write-up that has since been replaced can
     // be told apart from one that still fits. See notes/redline.js.
-    let notes = null;
-    try { notes = meeting.summary_json ? JSON.parse(meeting.summary_json) : null; } catch { notes = null; }
-    if (!notes) return badRequest('There is no write-up for that session yet.');
+    let raw = null;
+    try { raw = meeting.summary_json ? JSON.parse(meeting.summary_json) : null; } catch { raw = null; }
+    if (!raw) return badRequest('There is no write-up for that session yet.');
+    // Tidied first, and that is not a nicety. A correction is anchored to
+    // "the third point of the second scene", and the raw blob and the
+    // document everybody reads do not always agree about which point that is
+    // — the model leaves blanks, and readable() drops them. Anchoring against
+    // the raw one would put a correction beside a different sentence than the
+    // one it was written under.
+    const notes = readable(raw);
 
     const part = String(body?.part ?? '');
     const index = Number(body?.index);

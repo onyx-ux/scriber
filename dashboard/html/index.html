@@ -1515,6 +1515,135 @@
 
      Anchored with `position: fixed` against the viewport rather than the
      page, so a scroll is a reason to close it rather than a thing to track.  */
+  /* --- correcting a write-up ---------------------------------------------
+
+     The switch is small. Being through it is not.
+
+     A mode you can be in without noticing is a mode you will type into by
+     accident, so this is not a flag on a toolbar: the whole column changes.
+     The paper goes a shade warmer, a ruled margin runs down the prose, every
+     line it will let you touch says so when the pointer is over it, and a
+     band that does not scroll away stands at the top saying what is going on
+     and how to stop. You should be able to tell from across the room.
+
+     The two colours are declared with light-dark() rather than twice in two
+     theme blocks — every theme here already sets color-scheme, which is what
+     makes that work. See the voice palette for the same trick.  */
+  .pane-main.marking {
+    --mark-paper: light-dark(#FCF7EC, #201C17);
+    --mark-edge:  light-dark(#C6A664, #6B5730);
+    --mark-ink:   light-dark(#6E5214, #E0C07A);
+    --mark-out:   light-dark(#9A8F7E, #7C7264);
+  }
+
+  /* The band. Sticky under the tab bar rather than at the top of the
+     viewport, because it belongs to this write-up and not to the window. */
+  .mark-band {
+    position: sticky; top: 0; z-index: 6;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 0 0 26px; padding: 13px 16px;
+    background: var(--mark-paper); border: 1px solid var(--mark-edge);
+    border-left-width: 3px; border-radius: 7px;
+    box-shadow: 0 6px 18px var(--shadow);
+  }
+  .mark-band .nib { flex: 0 0 auto; width: 15px; height: 15px; color: var(--mark-ink); }
+  .mark-band .what { flex: 1 1 260px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+  .mark-band .what b { color: var(--mark-ink); font-weight: 600; }
+  .mark-band .tally {
+    flex: 0 0 auto; font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
+    color: var(--mark-ink);
+  }
+
+  /* The paper. One sheet under the whole pane, not a tint per block: the
+     sections are different widths, and tinting each of them separately drew a
+     staircase of ragged rectangles down the page that looked like a rendering
+     fault rather than a mode. The rule down the left edge is the margin of a
+     proof, and it runs the length of the thing being proofed.
+
+     On .pane-main rather than on an inner wrapper bled out with negative
+     margins. The pane's own padding is 30/26/48 at one width, 42/56/76 at
+     another and 26/24/40 on a phone, so a wrapper reaching for its edges
+     would have to know all four and would be wrong at three of them. The
+     element that already knows how wide it is carries the paper. */
+  .pane-main.marking {
+    background: var(--mark-paper);
+    border-left: 2px solid var(--mark-edge);
+  }
+  /* The band sits on that sheet, so it needs a ground of its own to read as a
+     notice rather than as the first paragraph. */
+  .marking .mark-band { background: var(--card); }
+
+  /* A line you can change. The nib sits in the gutter rather than in the
+     text, so nothing reflows when it appears — a paragraph that shifts a
+     word as the pointer crosses it is unreadable. */
+  .mline {
+    position: relative; border-radius: 3px;
+    box-shadow: 0 0 0 3px transparent; transition: background .12s, box-shadow .12s;
+    cursor: text;
+  }
+  .mline:hover { background: color-mix(in oklab, var(--mark-edge) 17%, transparent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--mark-edge) 17%, transparent); }
+  .mline.open { background: color-mix(in oklab, var(--mark-edge) 22%, transparent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--mark-edge) 22%, transparent); }
+  .mline::before {
+    content: ""; position: absolute; left: -15px; top: .34em;
+    width: 5px; height: 5px; border-radius: 50%; background: var(--mark-edge);
+    opacity: 0; transition: opacity .12s;
+  }
+  .mline:hover::before, .mline.open::before, .mline.marked::before { opacity: 1; }
+  /* Except in a numbered list, where the gutter is already taken. The nib
+     landed a few pixels after the 01, and a decision read "01 ·" with two
+     markers arguing about which of them was the bullet. */
+  .numbered .mline::before { display: none; }
+
+  /* What the summariser wrote, kept and crossed out. Never removed from the
+     page in this mode: seeing what it used to say is the whole reason for
+     being in here. */
+  .mstruck { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--mark-out); }
+  /* And the correction, in whoever wrote it own colour — the same twenty-four
+     the transcript uses, so a redline is legible without a byline. Falls back
+     to the page own ink, which is what somebody who has not picked one gets:
+     the name is the identity, and one is not missing because the other is. */
+  .mnew { color: var(--voice, var(--mark-ink)); }
+  .mgone {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--mark-out); padding-left: 6px;
+  }
+  .mwho {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .05em;
+    color: var(--dim); padding-left: 7px; white-space: nowrap;
+  }
+
+  /* The box. A block inside a span on purpose: the lines it belongs to are
+     spans joined into one paragraph, and giving the editor its own row
+     without breaking that is what display:block on a span is for. */
+  .mark-edit {
+    display: block; margin: 10px 0 14px; padding: 12px 13px 11px;
+    background: var(--card); border: 1px solid var(--mark-edge); border-radius: 7px;
+    box-shadow: 0 10px 26px var(--shadow);
+  }
+  .mark-box {
+    display: block; width: 100%; box-sizing: border-box; resize: vertical;
+    font-family: var(--serif); font-size: 15px; line-height: 1.55; color: var(--text);
+    background: transparent; border: 0; outline: none; padding: 0;
+  }
+  .mark-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--rule);
+  }
+  /* Says whether what you typed is on disk yet, and it is the only thing on
+     this page that has to keep up with typing. Left of the buttons, so the
+     eye finds it without leaving the line being written. */
+  .mark-say {
+    flex: 1 1 auto; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: .05em; color: var(--dim);
+  }
+  .mark-say.saved { color: var(--mark-ink); }
+  .mark-say.failed { color: var(--red-lit); }
+  .btn.xs { padding: 4px 9px; font-size: 11px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mline, .mline::before { transition: none; }
+  }
+
   .peek {
     position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 24px);
     pointer-events: none;
@@ -2473,6 +2602,8 @@ const view = {
   search: '',
   speaker: null,        // transcript filter, a user id
   picking: null,        // whose colour the picker is open for, a user id
+  marking: false,       // the write-up is open for correcting, not reading
+  markAt: null,         // which line the box is open on, as `<part> <index>`
 };
 
 // Only one dialog is ever open. Kept in one place because every opener has to
@@ -2776,6 +2907,268 @@ function ruleSpans(raw, taken) {
   }
   return spans;
 }
+// ==========================================================================
+// Correcting a write-up
+// ==========================================================================
+//
+// The summariser writes what it heard, and what it heard is sometimes wrong.
+// A correction is a LAYER over the write-up and never a change to it: the
+// original stays underneath exactly as written, a correction strikes one line
+// through and says what it should say instead, and taking the correction away
+// brings the original line straight back. Nothing here can delete anything,
+// which is what makes it safe to hand to a whole table rather than to whoever
+// runs it.
+//
+// Two states, and being in the second one is meant to be obvious — see
+// .writeup.marking. Reading draws the corrected text and nothing else: one
+// document, one truth, the same words /recap and the vault export give you.
+// Correcting draws the argument as well.
+
+// How long after the last keystroke the correction goes to the Pi.
+//
+// There is no Save button on purpose. A correction is one sentence typed in
+// the middle of reading, and asking somebody to press a button afterwards is
+// asking them to lose one. Long enough not to send a request per letter,
+// short enough that stopping to think means it is already saved.
+const MARK_WAIT = 700;
+
+// What is being typed, and whether it is on disk. Module state rather than
+// view state: the five-second poll rebuilds `notes` under the box, and a
+// half-typed sentence must not be part of what gets rebuilt.
+const markDraft = { part: null, index: 0, text: '', saved: '', noteId: null, timer: 0, say: '' };
+
+// Correcting is for people the bot can name. Everything a correction is —
+// somebody’s words, in their colour, that only they may change — needs an
+// account behind it, so the switch is simply not there for a reader who has
+// not signed in.
+const mayMark = () => Boolean(me?.signedIn && notes?.written && !notes?.unreadable);
+const marking = () => Boolean(view.marking && mayMark());
+
+// The lines of one part of the write-up, as the page draws them.
+//
+// `notes.marks` is the whole truth — the summariser’s line, the corrections
+// on it, and what it reads as now — indexed exactly as a correction is
+// anchored. Reading drops the lines that were struck out with nothing put
+// back; correcting keeps them, because putting one back is a thing you come
+// in here to do.
+function partLines(part) {
+  const found = (notes?.marks ?? []).find((p) => p.part === part);
+  if (found) return marking() ? found.lines : found.lines.filter((l) => !l.gone);
+
+  // A bot that has not caught up. The dashboard is a bind mount and the API
+  // is a container, so for a few seconds during a deploy they are not the
+  // same age — and a write-up that will not draw is a worse answer than one
+  // drawn without its marks.
+  const scene = /^scene:(\d+)(:title)?$/.exec(part);
+  const from = scene
+    ? (scene[2] ? notes?.scenes?.[Number(scene[1])]?.title : notes?.scenes?.[Number(scene[1])]?.points)
+    : notes?.[part];
+  const list = Array.isArray(from) ? from : from ? [from] : [];
+  return list.map((base, index) => ({ index, base, reading: base, marks: [], struck: false, gone: false }));
+}
+
+// Who wrote a correction, in their own colour. The colour is an affordance
+// for reading a redline at a glance and not the identity — somebody who has
+// never picked one is written in the page’s own ink and named just the same.
+function markVoice(mark) {
+  return voiceClass(mark?.userId, notes?.colours?.[mark?.userId]);
+}
+
+// One line, in whichever of the two states the page is in.
+function drawLine(part, e) {
+  if (!marking()) return wiki(e.reading);
+
+  const at = `${part} ${e.index}`;
+  const open = view.markAt === at;
+  const last = e.marks[e.marks.length - 1] ?? null;
+
+  const said = e.gone
+    ? '<span class="mgone">struck out</span>'
+    : `<span class="mnew${last ? markVoice(last) : ''}">${wiki(e.reading)}</span>`;
+
+  return `<span class="mline${open ? ' open' : ''}${last ? ' marked' : ''}"`
+    + ` data-mark-line="${esc(at)}">`
+    + (last ? `<span class="mstruck">${wiki(e.base)}</span> ` : '')
+    + (last ? said : wiki(e.base))
+    + (last ? `<span class="mwho">${esc(markNames(e))}</span>` : '')
+    + (open ? markBox(e) : '')
+    + '</span>';
+}
+
+// Whose correction it is, said once however many times they changed it.
+function markNames(e) {
+  const who = [...new Set(e.marks.map((m) => nameOf(m.userId)))];
+  return who.length === 1 ? who[0] : `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}`;
+}
+
+// A display name for a Discord id, from whatever the page already knows —
+// the roster first, because that is where a character name lives.
+function nameOf(userId) {
+  // The roster's own words, which is where a character name lives — somebody
+  // who has told the table they play Kaelen Vance is Kaelen Vance in a
+  // margin, not their Discord handle.
+  const row = (detail?.roster ?? []).find((r) => String(r.userId) === String(userId));
+  if (row) return row.characterName || row.displayName || 'somebody at the table';
+  if (me?.signedIn && String(me.userId) === String(userId)) return 'you';
+  return 'somebody at the table';
+}
+
+// The box, which is the same box whether it is making a correction or
+// changing one. data-key so the patcher keeps the very node being typed in
+// when the poll rebuilds the pane around it — that, and morph’s rule about
+// never touching a focused field, is what lets this stay open for as long as
+// somebody takes to write a sentence.
+function markBox(e) {
+  const last = e.marks[e.marks.length - 1] ?? null;
+  const mine = last && me?.signedIn && String(last.userId) === String(me.userId);
+  return `
+    <span class="mark-edit" data-key="mark-edit" data-mark-keep>
+      <textarea class="mark-box" id="mark-box" rows="2" spellcheck="true"
+        aria-label="What this line should say"
+        placeholder="What it should say instead">${esc(markDraft.text)}</textarea>
+      <span class="mark-row">
+        <span class="mark-say" id="mark-say" data-key="mark-say" role="status">${esc(markDraft.say)}</span>
+        <button type="button" class="btn xs" data-mark-strike>Strike this line out</button>
+        ${last && mine ? '<button type="button" class="btn xs ghost" data-mark-undo>Restore the original</button>'
+          : last && canManage() ? '<button type="button" class="btn xs ghost" data-mark-undo>Take this correction down</button>' : ''}
+      </span>
+    </span>`;
+}
+
+// --- opening, typing, saving, closing -------------------------------------
+
+function markSay(word, how = '') {
+  markDraft.say = word;
+  // Poked straight into the node rather than painted. This has to keep up
+  // with typing, and a repaint per keystroke would be the one thing on this
+  // page that fights the person using it.
+  const node = $('mark-say');
+  if (node) { node.textContent = word; node.className = `mark-say ${how}`; }
+}
+
+function markOpen(part, e) {
+  markFlush();
+  const last = e.marks[e.marks.length - 1] ?? null;
+  const mine = last && me?.signedIn && String(last.userId) === String(me.userId);
+  markDraft.part = part;
+  markDraft.index = e.index;
+  // Somebody else’s correction is not yours to change, so you start from
+  // what the line reads as and write your own on top of theirs.
+  markDraft.noteId = mine ? last.id : null;
+  markDraft.text = e.gone ? '' : String(e.reading ?? '');
+  markDraft.saved = mine ? String(last.body ?? '') : null;
+  markDraft.say = '';
+  view.markAt = `${part} ${e.index}`;
+  paint();
+  const box = $('mark-box');
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+}
+
+function markClose() {
+  markFlush();
+  markDraft.part = null;
+  markDraft.noteId = null;
+  markDraft.text = '';
+  markDraft.say = '';
+  view.markAt = null;
+}
+
+// Whatever is pending, now rather than in 700ms. Called on the way out of a
+// line, because leaving is a stronger signal that you have finished than
+// stopping typing is.
+function markFlush() {
+  if (!markDraft.timer) return;
+  clearTimeout(markDraft.timer);
+  markDraft.timer = 0;
+  markStore();
+}
+
+function markTyped(value) {
+  markDraft.text = value;
+  markSay('unsaved');
+  clearTimeout(markDraft.timer);
+  markDraft.timer = setTimeout(() => { markDraft.timer = 0; markStore(); }, MARK_WAIT);
+}
+
+// The one that talks to the Pi.
+//
+// Deliberately not send(): that toasts and re-reads the whole world, which is
+// right for a button and wrong for something that happens while you are still
+// typing the next word. This says so in the box instead.
+async function markStore({ striking = false } = {}) {
+  const part = markDraft.part;
+  if (!part || !notes || !view.campaignId) return;
+
+  const text = striking ? '' : String(markDraft.text ?? '').trim();
+
+  // An empty box on a line nobody has corrected is how you arrive, not a
+  // decision. Striking a line out is a decision, and it has its own button.
+  if (!text && !striking && markDraft.noteId === null) { markSay(''); return; }
+  if (markDraft.noteId !== null && text === markDraft.saved) { markSay('saved', 'saved'); return; }
+
+  markSay('saving…');
+  const at = { campaignId: view.campaignId, meetingId: notes.meetingId };
+  let res;
+  try {
+    res = markDraft.noteId !== null
+      ? await post('/actions/recap/note-edit', { ...at, noteId: markDraft.noteId, body: text })
+      : await post('/actions/recap/note', { ...at, part, index: markDraft.index, body: text });
+  } catch (err) {
+    markSay('not saved — the bot did not answer', 'failed');
+    return;
+  }
+  if (!res.ok || res.payload?.ok === false) {
+    markSay(res.payload?.message || 'not saved', 'failed');
+    return;
+  }
+
+  if (res.payload?.note?.id) markDraft.noteId = res.payload.note.id;
+  markDraft.saved = text;
+  markSay('saved', 'saved');
+  await reReadNotes();
+  paint();
+}
+
+// Taking a correction down. The only destructive act here, and what it
+// destroys is a correction rather than a write-up: the summariser’s line is
+// back on the page the moment it goes.
+async function markUndo() {
+  clearTimeout(markDraft.timer);
+  markDraft.timer = 0;
+  const e = markLineAt(view.markAt);
+  const last = e?.marks?.[e.marks.length - 1];
+  if (!last) { markClose(); return paint(); }
+
+  markSay('putting it back…');
+  const res = await post('/actions/recap/note-remove',
+    { campaignId: view.campaignId, noteId: last.id });
+  if (!res.ok || res.payload?.ok === false) {
+    markSay(res.payload?.message || 'not removed', 'failed');
+    return;
+  }
+  markClose();
+  await reReadNotes();
+  paint();
+}
+
+// The line an anchor points at, read back out of what the page last drew.
+function markLineAt(at) {
+  const cut = String(at ?? '').lastIndexOf(' ');
+  if (cut < 0) return null;
+  const part = at.slice(0, cut);
+  const index = Number(at.slice(cut + 1));
+  return partLines(part).find((l) => l.index === index) ?? null;
+}
+
+// syncNotes() is keyed on the session and its job, and a correction changes
+// neither — so it would keep handing back the copy it already had. This is
+// the way to say "no, really, again".
+async function reReadNotes() {
+  if (!notes?.meetingId) return;
+  const fresh = await get(`/notes?meeting=${notes.meetingId}`).catch(() => null);
+  if (fresh) notes = fresh;
+}
+
 // --- wikilinks -------------------------------------------------------------
 //
 // Every NPC and every place a write-up has named already has somewhere to be
@@ -5224,7 +5617,7 @@ function renderScreen() {
       </div>
     </div>
     <div class="pane">
-      <div class="pane-main">
+      <div class="pane-main${view.tab === 'notes' && view.shelf === 'sessions' && marking() ? ' marking' : ''}">
         ${tabsBar()}
         ${paneBody()}
       </div>
@@ -5789,8 +6182,18 @@ function notesPane(s) {
   // title put the buttons on their own line and a short one did not: the same
   // four controls moved between two places depending on the words above them.
   // Here they have one home.
+  // Reading or correcting, and it goes first because it changes what every
+  // other control on this line is for. The words are the two things you can
+  // be doing rather than two things you can press: a switch labelled Edit
+  // says what will happen, and a switch labelled Correcting says where you
+  // are, which is the question somebody halfway down a paragraph is asking.
   const doings = `
     <div class="row-btns">
+      ${mayMark() ? `
+        <div class="seg" data-seg="marking">
+          <button type="button" class="${marking() ? '' : 'on'}" data-mark="read">Reading</button>
+          <button type="button" class="${marking() ? 'on' : ''}" data-mark="correct">Correcting</button>
+        </div>` : ''}
       ${cap('transcripts') ? `<button class="btn sm" data-transcript="${s.meetingId}">Transcript</button>` : ''}
       ${canManage() ? `<button type="button" class="btn sm" data-fix-name>Fix a name</button>` : ''}
       ${can() ? `<button type="button" class="btn sm" data-act="summary/again" data-meeting="${s.meetingId}"
@@ -5835,13 +6238,35 @@ function notesPane(s) {
   const marginRest = () =>
     marginalia.filter((m) => unclaimed.has(m.name)).map(sidenote).join('');
 
+  // A band that does not scroll away, so nobody types into a page they have
+  // forgotten they are correcting. It says the one thing that makes this
+  // safe to be in — the original is kept — and carries the way out.
+  const band = marking() ? `
+    <div class="mark-band">
+      <svg class="nib" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 14l1.2-3.4L11 2.8a1.4 1.4 0 012 2L5.4 12.8 2 14z"
+              stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      </svg>
+      <span class="what">
+        <b>You are correcting this write-up.</b>
+        <span>Click any line to change it, or strike it out.</span>
+        <span>What the summariser wrote is kept underneath &mdash; nothing here can delete it,
+        and taking a correction away puts the original line straight back.</span>
+      </span>
+      ${notes.corrections ? `<span class="tally">${notes.corrections} correction${notes.corrections === 1 ? '' : 's'}</span>` : ''}
+      <button type="button" class="btn sm" data-mark="read">Done</button>
+    </div>` : '';
+
   return `
+    <div class="writeup${marking() ? ' marking' : ''}">
     ${sessionKicker(s, 'done', doings)}
+    ${band}
     <h1 class="display" style="margin-top:14px">${esc(heading)}</h1>
 
     ${nameFixer()}
 
-    ${notes.tldr ? `<div class="lede measure" id="part-0" data-part="How it opens">${wiki(notes.tldr)}</div>` : ''}
+    ${partLines('tldr').length ? `<div class="lede measure" id="part-0" data-part="How it opens">
+      ${partLines('tldr').map((e) => drawLine('tldr', e)).join(' ')}</div>` : ''}
 
     ${notes.scenes.length ? `
       <div class="cap" style="margin:32px 0 4px">What happened</div>
@@ -5849,25 +6274,76 @@ function notesPane(s) {
         ${notes.scenes.map((scene, i) => `
           <div class="scene" id="part-${i + 1}" data-part="${esc(scene.title)}">
             ${marginFor([scene.title, ...scene.points].join(' '))}
-            ${i === 0 && scene.title === heading ? '' : `<h4>${esc(scene.title)}</h4>`}
-            <p>${scene.points.map((p) => wiki(p)).join(' ')}</p>
+            ${i === 0 && scene.title === heading ? '' : `<h4>${partLines(`scene:${i}:title`)
+              .map((e) => drawLine(`scene:${i}:title`, e)).join(' ') || esc(scene.title)}</h4>`}
+            <p>${partLines(`scene:${i}`).map((e) => drawLine(`scene:${i}`, e)).join(' ')}</p>
           </div>`).join('')}
         ${marginRest()}
       </div>` : ''}
 
-    ${notes.partyDecisions.length ? `
+    ${partLines('partyDecisions').length ? `
       <div id="part-decisions" data-part="Party decisions">
         <div class="cap" style="margin:32px 0 10px">Party decisions</div>
-        ${numberedList(notes.partyDecisions)}
+        ${numberedList('partyDecisions')}
       </div>` : ''}
 
-    ${notes.followUps.length ? `
+    ${partLines('followUps').length ? `
       <div id="part-followups" data-part="Follow-ups">
         <div class="cap" style="margin:32px 0 10px">Follow-ups</div>
-        ${numberedList(notes.followUps)}
+        ${numberedList('followUps')}
       </div>` : ''}
 
-    <div class="recap-extras measure">${recapSections(notes)}</div>`;
+    ${previousVersions()}
+    ${orphanedMarks()}
+
+    <div class="recap-extras measure">${recapSections(notes)}</div>
+    </div>`;
+}
+
+// Corrections whose line is not in the write-up any more.
+//
+// Never dropped and never hidden. A correction is somebody’s own words about
+// their own game, and losing one quietly is the failure this whole feature is
+// a defence against — so when the text it was written about has gone, it is
+// shown apart, with the line it used to strike through.
+function orphanedMarks() {
+  const lost = notes?.orphaned ?? [];
+  if (!marking() || !lost.length) return '';
+  return `
+    <div class="measure" style="margin-top:34px">
+      <div class="cap" style="margin-bottom:10px">Corrections with nowhere left to sit</div>
+      <div class="quiet" style="max-width:62ch;margin-bottom:14px">
+        The lines these were written about are not in this write-up any more. They are kept
+        because they are somebody&rsquo;s own account of their own game, and nothing here throws
+        one of those away.
+      </div>
+      <div class="stack">
+        ${lost.map((m) => `
+          <div>
+            <div class="what"><span class="mstruck">${wiki(m.quoted)}</span></div>
+            <div class="who"><span class="mnew${markVoice(m)}">${m.body ? wiki(m.body) : 'struck out'}</span>
+              <span class="mwho">${esc(nameOf(m.userId))}</span></div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+// Where the corrections on an earlier write-up went.
+//
+// Re-summarising is the one act that genuinely destroys what a correction was
+// written about, so the old write-up and its redlines are kept whole rather
+// than re-anchored onto text nobody wrote them about. This is the line that
+// says so, and it is shown in both states: somebody reading needs to know the
+// table said something about the version before this one.
+function previousVersions() {
+  const had = (notes?.previous ?? []).filter((v) => v.notes > 0);
+  if (!had.length) return '';
+  const total = had.reduce((sum, v) => sum + v.notes, 0);
+  return `
+    <div class="quiet measure" style="margin-top:30px">
+      ${total} correction${total === 1 ? '' : 's'} ${total === 1 ? 'belongs' : 'belong'} to an earlier
+      write-up of this night, kept with it. Re-summarising never takes them with it.
+    </div>`;
 }
 
 // A list of things the table decided, or has still to do.
@@ -5877,11 +6353,17 @@ function notesPane(s) {
 // makes both claims and neither is true. One decision is a decision, and it
 // gets the same hanging indent so it still lines up with the list it would be
 // part of if there were more of them.
-function numberedList(items) {
-  const numbered = items.length > 1;
+// Takes the part rather than the lines, because the numbers have to survive
+// one of them being struck out: a list of three whose second is gone reads 01
+// and 02 to somebody reading and 01, 02, 03 to somebody correcting, and only
+// the part knows which of those it is.
+function numberedList(part) {
+  const lines = partLines(part);
+  const numbered = lines.length > 1;
   return `<div class="numbered measure">
-    ${items.map((item, i) => `
-      <div><span class="i">${numbered ? String(i + 1).padStart(2, '0') : '·'}</span><span>${wiki(item)}</span></div>`).join('')}
+    ${lines.map((e, i) => `
+      <div><span class="i">${numbered ? String(i + 1).padStart(2, '0') : '·'}</span>
+        <span>${drawLine(part, e)}</span></div>`).join('')}
   </div>`;
 }
 
@@ -7916,6 +8398,9 @@ async function openSession(meetingId, { quiet = false } = {}) {
 // later it has notes, which nothing would have gone back for otherwise.
 async function syncNotes() {
   const s = selected();
+  // A correction being typed belongs to the session it was typed in, so it
+  // goes to the Pi before the page moves anywhere else.
+  if (markDraft.part && (!s || s.meetingId !== notes?.meetingId)) markClose();
   if (!s) { notes = null; notesKey = null; return; }
 
   // Keyed on the session AND its live job, so a re-summarise is picked up:
@@ -8123,6 +8608,39 @@ function notesAsMarkdown() {
 // renders would do nothing at all.
 document.addEventListener('click', async (event) => {
   const t = event.target;
+
+  // --- correcting a write-up ---
+
+  // The switch, and the way out of the band, which is the same act.
+  const mode = t.closest('[data-mark]');
+  if (mode) {
+    markClose();
+    view.marking = mode.dataset.mark === 'correct';
+    return paint();
+  }
+
+  if (marking()) {
+    // Inside the open box, nothing on this page is listening. A press on the
+    // textarea is a caret, and the two buttons are answered here.
+    if (t.closest('[data-mark-strike]')) { clearTimeout(markDraft.timer); markDraft.timer = 0; return markStore({ striking: true }); }
+    if (t.closest('[data-mark-undo]')) return markUndo();
+    if (t.closest('[data-mark-keep]')) return;
+
+    const line = t.closest('[data-mark-line]');
+    if (line) {
+      const at = line.dataset.markLine;
+      if (at === view.markAt) return;
+      const e = markLineAt(at);
+      if (!e) return;
+      const cut = at.lastIndexOf(' ');
+      return markOpen(at.slice(0, cut), e);
+    }
+
+    // A press anywhere else means finished with that line. Saved on the way
+    // out rather than dropped: leaving is a stronger signal that a sentence
+    // is finished than stopping typing for 700ms is.
+    if (view.markAt) { markClose(); paint(); }
+  }
 
   if (t.closest('[data-close-modal]') || t === $('modal')?.querySelector('[data-backdrop]')) {
     closeDialogs(); return paint();
@@ -8635,6 +9153,7 @@ async function confirmBlastRadius(action, body, payload) {
 // the answer as you type. The box keeps the caret because morph() leaves the
 // focused field alone; it used to be saved and put back by hand here.
 document.addEventListener('input', (event) => {
+  if (event.target.id === 'mark-box') return markTyped(event.target.value);
   if (event.target.id !== 'tsearch') return;
   view.search = event.target.value;
   renderScreen();
@@ -8642,6 +9161,11 @@ document.addEventListener('input', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
+  // The box first, and what is in it is kept. Escape here means "that is
+  // the sentence", not "forget what I typed" — there is no undo behind it,
+  // and a correction lost to a keystroke is the thing this must never do.
+  if (view.markAt) { markClose(); return paint(); }
+  if (view.marking) { view.marking = false; return paint(); }
   if (view.importing || view.creating || view.deleting || view.askingRestore || view.reviewing || view.picking) {
     closeDialogs(); return paint();
   }

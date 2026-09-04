@@ -556,6 +556,99 @@ for the first time.
       touched, and two of the three new tests in `pi-service/test/morph.test.js`
       fail against the old guard.
 
+- [x] **The table can correct its own write-up, and cannot erase it**
+      (asked for 2026-09-04) — the summariser writes what it heard, and what
+      it heard is sometimes wrong. Until now the only fixes were a correction
+      rule, which rewrites transcripts rather than notes, and re-summarising,
+      which costs money and rolls the dice again. Neither let somebody who was
+      in the room simply say "no, it was the other door".
+
+      **A correction is a layer over the write-up and never a change to it.**
+      The summariser’s text stays underneath exactly as written; a correction
+      strikes one line through and says what it should say instead; taking the
+      correction away puts the original line straight back. That is the whole
+      safety claim, and it is what makes this safe to hand to a table rather
+      than to whoever runs it — **"delete everything" is not a gesture that
+      exists here.** The worst anybody can do is strike every line through,
+      which is visibly a redline.
+
+      **Reading or correcting, and being in the second one is meant to be
+      obvious.** A switch on the write-up says which of the two you are in
+      rather than which one pressing it would reach — the question somebody
+      halfway down a paragraph is asking. Through it, the whole pane changes:
+      warm paper, a gold rule down the margin like a proof, a band at the top
+      that does not scroll away saying what is going on and how to stop, and a
+      nib in the gutter beside every line it will let you touch. A mode you can
+      be in without noticing is a mode you will type into by accident.
+
+      **There is no Save button, on purpose.** A correction is one sentence
+      typed in the middle of reading, and asking for a button press afterwards
+      is asking somebody to lose one. It goes to the Pi 700ms after the last
+      keystroke — long enough not to send a request per letter, short enough
+      that stopping to think means it is already saved — and the box says
+      `unsaved` / `saving…` / `saved` so it is never silent. Leaving the line,
+      pressing Escape or opening another session all write it down first.
+
+      The box survives the five-second poll landing mid-sentence, which is the
+      one thing that would have made this unusable: `data-key` keeps the very
+      node being typed in, and morph’s rule about never touching a focused
+      field keeps what is in it. Verified with a repaint fired between two
+      keystrokes.
+
+      **What it looks like.** The summariser’s line crossed out, the correction
+      beside it in the corrector’s own voice colour — the same twenty-four the
+      transcript uses, so a redline is legible without a byline — and their
+      character name after it. Somebody who never picked a colour is written in
+      the page’s own ink and named just the same: the colour is an affordance,
+      the name is the identity.
+
+      **Everywhere else shows the corrected reading.** `/recap`, `/funny`, the
+      exported site and Copy for Obsidian all render what the table says the
+      night was. One document, one truth; the marks show in one place only.
+      The write-up on disk is never touched, which the tests check by reading
+      it back after a correction.
+
+      **Anchored to a line, not a character offset** — "the third point of the
+      second scene", which survives its neighbours changing. Indexed against
+      the tidied write-up rather than the raw blob, because the model leaves
+      blanks in its lists and the reader never sees them: anchoring against the
+      raw one would put a correction beside a different sentence than the one
+      it was written under. The exact struck text is stored too, so a line that
+      has MOVED is found again and a line that has gone is shown apart rather
+      than dropped.
+
+      **Re-summarising keeps the old write-up and its corrections** as a
+      previous version, and starts the new one clean with a line saying where
+      the others went. Nothing is re-anchored: a correction is somebody’s words
+      about a sentence, and guessing which new sentence they meant would be
+      inventing their opinion. A night re-summarised with nobody having touched
+      it leaves no version behind — what is worth keeping is the redlines, not
+      the model’s earlier drafts.
+
+      **Who may.** Anybody at the table, which is a new tier in `ACTION_NEEDS`
+      called `table`: weaker than running the campaign, stronger than being
+      signed in. The people who can tell the model it misheard are the ones who
+      were in the room, and most of them are not the DM. You may change and
+      take back your own corrections and nobody else’s; whoever runs the table
+      can take any of them down, which is the only destructive act here and
+      destroys a correction rather than a write-up.
+
+      **Three faults caught in the new code while writing the tests.**
+      `recap/note-remove` deleted first and judged afterwards, so the `null`
+      that means the manager’s override was handed over by anybody whose id
+      simply did not match. The `table` tier resolved the campaign before
+      asking who was calling, so a request with no session and no campaign id
+      fell through to the action’s own validator and came back 400 instead of
+      403 — caught by `no-session.test.js`, which enumerates `ACTIONS` rather
+      than listing them and so covered an action written long after it was.
+      And the paper was first drawn as a tint per block, which made a staircase
+      of ragged rectangles down the page; it is one sheet on `.pane-main` now,
+      because that element already knows how wide it is at all four
+      breakpoints and a wrapper bled out with negative margins would have had
+      to know all four and been wrong at three.
+
+      1499 tests. Walked in a real browser signed in as a player rather than as
+      the operator, in both themes and down to 600px: 47 checks, console clean.
 - [x] **The rulebook switch was refusing the person it was drawn for** — the
       new setting went into the action table without a line in `ACTION_NEEDS`,
       and an unlisted action falls through to `machinery`: the tier that means
@@ -715,76 +808,6 @@ for the first time.
 ## Work in progress
 
 
-### Correcting a write-up — the foundation is in, the page is not (2026-09-04)
-
-The summariser writes what it heard, and what it heard is sometimes wrong.
-A correction is a **layer over** the write-up and never a change to it: the
-summariser’s text stays underneath exactly as written, a correction strikes
-one line of it through and says what it should say instead, and removing the
-correction brings the original line straight back. That is the whole safety
-claim, and it is what makes this safe to hand to a table rather than to
-whoever runs it — **"delete everything" is not a gesture that exists here.**
-
-**The five questions are settled.**
-
-- **Who may correct.** Anybody at the table, which is a new tier in
-  `ACTION_NEEDS` called `table` — weaker than running the campaign, stronger
-  than being signed in. The people who can tell the model it misheard are the
-  ones who were in the room, and most of them are not the DM.
-- **What the other three audiences show.** The corrected reading, everywhere.
-  `/recap`, the Obsidian export and the Discord post all render what the table
-  says the night was; one document, one truth. The marks show in one place
-  only: the dashboard, with the switch set to edit.
-- **What Re-summarise does.** Keeps the old write-up **and its corrections**
-  as a previous version you can still open and read; the new one starts clean
-  with a line saying how many corrections belong to the old one. Nothing is
-  re-anchored onto the new text — a correction is somebody’s words about a
-  sentence, and guessing which new sentence they meant would be inventing
-  their opinion. This was the sharp one: re-summarising is the only act that
-  genuinely destroys what a correction was written about.
-- **How a correction is anchored.** To a LINE — one bullet, one paragraph,
-  one scene title — by part and index, never a character offset. A line has
-  an identity the write-up already gives it ("the third point of the second
-  scene"), which survives its neighbours changing. The exact text struck
-  through is stored with it, so a line that has MOVED is found again and a
-  line that has genuinely gone is shown apart rather than dropped.
-- **A commenter with no colour.** Falls back to the page’s own ink. The
-  colour is an affordance for reading a redline at a glance; the name is the
-  identity, and one is not missing because the other is.
-
-**Built and tested (27 new tests, 1494 passing):**
-
-- `src/notes/redline.js` — the whole of the reading logic, pure, knowing
-  nothing about the database or the page. `linesOf()` says what is there to
-  correct, `readingOf()` says what the write-up says once the corrections are
-  applied, `redlineOf()` says what it looks like with the marks showing.
-- `recap_versions` and `recap_notes` in the store, with `setSummary()` now
-  retiring a corrected write-up rather than overwriting it. A night
-  re-summarised with nobody having touched it leaves no version behind: the
-  value kept here is the redlines, not the model’s earlier drafts.
-- `recap/note`, `recap/note-edit`, `recap/note-remove`, and the `table` tier
-  in `authority.js`.
-
-**Two faults caught while writing it, both in the new code:**
-
-- `recap/note-remove` was deleting first and judging afterwards, so the
-  `null` that means *the manager’s override* was being handed over by anybody
-  whose id simply did not match — which is exactly the case it has to refuse.
-- The `table` tier resolved the campaign before asking who was calling, so a
-  request with no session and no campaign id fell through to the action’s own
-  validator and came back 400. Every other tier fails closed on the level
-  first; this one does now too. Caught by `no-session.test.js`, which
-  enumerates `ACTIONS` rather than listing them — it covered an action
-  written a year after it was.
-
-**Still to build:** the page. The view/edit switch, the strike-through drawn
-in the commenter’s own voice colour, the line offering the corrections on a
-previous version, and making `readingOf()` the text that `/recap`, the
-Obsidian export and the Discord post actually render — the decision is made
-and the function exists, but nothing calls it outside the tests yet.
-
-Not deployed. The migration is additive and harmless, but there is no reason
-to put half a feature on the Pi.
 - [ ] **The threshold — the first-time landing page** (started 2026-09-02) — the
       screen somebody gets once, on the first sign-in their account has ever
       made. White writing in the dark that appears a character at a time, asks

@@ -55,6 +55,9 @@ import {
 } from '../campaign/consent.js';
 import { standing, stopRecording, resumeRecording } from '../campaign/withdrawal.js';
 import { exportCampaignSite } from '../export/site.js';
+// A write-up is read here as the table has corrected it, never as the model
+// first wrote it — see notes/redline.js.
+import { correctedWriteUp } from '../web/notes-view.js';
 import {
   dashboardPointer,
   APPROVE_PREFIX,
@@ -1474,14 +1477,14 @@ async function handleRecap(interaction, db, cfg) {
     return interaction.reply({ content: pick(RECAP_NONE), flags: MessageFlags.Ephemeral });
   }
 
-  let notes = {};
-  try {
-    notes = JSON.parse(meeting.summary_json || '{}');
-  } catch {
-    // A half-written summary should not take the command down with it — the
-    // header and the date are still worth having.
-    notes = {};
-  }
+  // The write-up as the TABLE has it, corrections applied. A recap read out
+  // in Discord and a recap read on the dashboard are the same night, and it
+  // would be a strange product where the one people actually ask for is the
+  // one that still has the mistake in it. correctedWriteUp returns null when
+  // there is nothing readable, which the empty object below covers exactly as
+  // the try/catch used to: a half-written summary must not take the command
+  // down with it, and the header and the date are still worth having.
+  const notes = correctedWriteUp(db, meeting.id) ?? {};
   const date = (meeting.started_at || '').slice(0, 10);
   const header = pick(RECAP_HEADER, { channel: meeting.channel_name, date });
   const stored = notes.tldr || '_no recap available_';
@@ -1813,7 +1816,7 @@ async function handleFunny(interaction, db) {
   // session it came from — the pool /funny picks randomly out of.
   const pool = [];
   for (const meeting of meetings) {
-    const notes = JSON.parse(meeting.summary_json || '{}');
+    const notes = correctedWriteUp(db, meeting.id) ?? {};
     for (const moment of notes.funnyMoments || []) {
       pool.push({ moment, channel: meeting.channel_name, date: (meeting.started_at || '').slice(0, 10) });
     }

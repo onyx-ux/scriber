@@ -148,3 +148,96 @@ test('the campaign list flags which sessions have notes to read', async (t) => {
     'so the Notes button is never offered for a session that would open empty'
   );
 });
+
+// --- the corrections the table has made ------------------------------------
+//
+// The page draws the ordinary fields exactly as it always did and never has to
+// know corrections exist — which is also why /recap, the export and the
+// Discord post are right without a line of their own. `marks` is the only
+// thing here that knows, and it is what the switch draws when it is set to
+// correcting.
+
+test('the fields are the corrected reading, and the marks are beside them', async (t) => {
+  const { db, campaignId } = await harness(t);
+  const id = session(db, campaignId, {
+    tldr: 'They went through the front door.',
+    scenes: [{ title: 'The queue', points: ['Wren stamped the writ.', 'Nobody read it.'] }],
+    partyDecisions: ['Leave the stone in the wall.'],
+  });
+
+  db.addRecapNote({
+    meetingId: id, part: 'tldr', index: 0,
+    quoted: 'They went through the front door.',
+    body: 'They went through the side door.', userId: 'saf',
+  });
+  db.addRecapNote({
+    meetingId: id, part: 'scene:0', index: 1, quoted: 'Nobody read it.', body: '', userId: 'rhi',
+  });
+
+  const view = buildNotesView({ db, meetingId: id });
+
+  // What a reader gets: the corrected sentence, and no sign of how it got
+  // there. One document, one truth.
+  assert.equal(view.tldr, 'They went through the side door.');
+  assert.deepEqual(view.scenes[0].points, ['Wren stamped the writ.']);
+  assert.equal(view.corrections, 2);
+
+  // And what somebody correcting gets: the summariser's own line, kept.
+  const tldr = view.marks.find((p) => p.part === 'tldr');
+  assert.equal(tldr.lines[0].base, 'They went through the front door.');
+  assert.equal(tldr.lines[0].reading, 'They went through the side door.');
+  assert.equal(tldr.lines[0].marks[0].userId, 'saf');
+
+  const scene = view.marks.find((p) => p.part === 'scene:0');
+  assert.equal(scene.lines[1].gone, true, 'struck out with nothing put back');
+  assert.equal(scene.lines[1].base, 'Nobody read it.', 'and the original is still there to put back');
+});
+
+test('a write-up nobody has corrected reads as it always did', async (t) => {
+  const { db, campaignId } = await harness(t);
+  const id = session(db, campaignId, {
+    tldr: 'They went through the front door.',
+    scenes: [{ title: 'The queue', points: ['Wren stamped the writ.'] }],
+  });
+
+  const view = buildNotesView({ db, meetingId: id });
+  assert.equal(view.tldr, 'They went through the front door.');
+  assert.equal(view.corrections, 0);
+  assert.deepEqual(view.orphaned, []);
+  assert.deepEqual(view.previous, []);
+  // The marks are still there — every line, with nothing on it. The page needs
+  // them to know what it may let somebody press.
+  assert.ok(view.marks.some((p) => p.part === 'tldr'));
+});
+
+test('the page is told where the corrections on an older write-up went', async (t) => {
+  const { db, campaignId } = await harness(t);
+  const id = session(db, campaignId, { tldr: 'The first attempt.', scenes: [] });
+  db.addRecapNote({ meetingId: id, part: 'tldr', index: 0, quoted: 'The first attempt.', body: 'No.', userId: 'saf' });
+
+  db.setSummary(id, { tldr: 'A second attempt.', scenes: [] });
+
+  const view = buildNotesView({ db, meetingId: id });
+  assert.equal(view.corrections, 0, 'the new write-up starts clean');
+  assert.equal(view.previous.length, 1);
+  assert.equal(view.previous[0].notes, 1, 'and the old one kept what was said about it');
+});
+
+// A correction is anchored to "the third point of the second scene", so the
+// document it is anchored to has to be the document everybody reads. The model
+// leaves blanks in its lists and readable() drops them — anchoring against the
+// raw blob instead would put a correction beside a different sentence.
+test('the lines are numbered as the reader sees them, not as the model wrote them', async (t) => {
+  const { db, campaignId } = await harness(t);
+  const id = session(db, campaignId, {
+    tldr: 'An opening.',
+    scenes: [],
+    partyDecisions: ['', 'Leave the stone in the wall.', '   ', 'Say nothing yet.'],
+  });
+
+  const view = buildNotesView({ db, meetingId: id });
+  const part = view.marks.find((p) => p.part === 'partyDecisions');
+  assert.deepEqual(part.lines.map((l) => l.base), ['Leave the stone in the wall.', 'Say nothing yet.']);
+  assert.deepEqual(part.lines.map((l) => l.index), [0, 1]);
+  assert.deepEqual(view.partyDecisions, ['Leave the stone in the wall.', 'Say nothing yet.']);
+});

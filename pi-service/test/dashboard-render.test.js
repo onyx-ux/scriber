@@ -1339,6 +1339,28 @@ test('the index has a slot of its own, filled after the page is drawn', async (t
   assert.ok(mark > 0 && sync < mark, 'the index is marked before it is the right index');
 });
 
+// Correcting a write-up is a state, not a button, so the switch has to say
+// which state you are in rather than which one pressing it would reach — and
+// it cannot be there at all for somebody the bot cannot name, because every
+// part of a correction (whose it is, whose colour it is in, who may change it)
+// needs an account behind it.
+test('the write-up offers a way into correcting it, and starts out of it', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  const markup = page.body();
+
+  assert.match(markup, /data-seg="marking"/, 'no switch on the write-up');
+  assert.match(markup, /data-mark="read"[^>]*>Reading</);
+  assert.match(markup, /data-mark="correct"[^>]*>Correcting</);
+
+  // Out of it to begin with: a page that opened in a mode where clicking a
+  // sentence changes it would be a page that changes sentences by accident.
+  assert.doesNotMatch(markup, /class="mark-band"/, 'the page opened already correcting');
+  assert.doesNotMatch(markup, /data-mark-line=/, 'a line was pressable before anybody asked');
+  assert.doesNotMatch(markup, /class="pane-main marking"/);
+});
+
 test('the card that opens over a name has somewhere to be drawn', async (t) => {
   const { db, cfg, base, campaignId } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });

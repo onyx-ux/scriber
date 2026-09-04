@@ -2,6 +2,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { sessionNotePath, sessionLabel, campaignFolderFor } from './naming.js';
+import { correctedWriteUp } from '../web/notes-view.js';
 
 // A single self-contained HTML dashboard for the whole campaign, written
 // alongside the markdown exports so it syncs to Drive/Obsidian like anything
@@ -251,12 +252,10 @@ export function renderCampaignSite(sessions, campaignName = null) {
 export async function exportCampaignSite(db, campaignId, cfg) {
   const meetings = db.listCompletedMeetings(campaignId);
   const sessions = meetings.map((m) => {
-    let notes = {};
-    try {
-      notes = JSON.parse(m.summary_json || '{}');
-    } catch {
-      notes = {};
-    }
+    // Corrections applied, like everywhere else a person reads this: the
+    // exported site is the table's own record of its campaign, and the
+    // version with the mistake still in it is not the record they want.
+    const notes = correctedWriteUp(db, m.id) ?? {};
     return {
       id: m.id,
       // Carried so the link to the markdown uses the per-campaign session
