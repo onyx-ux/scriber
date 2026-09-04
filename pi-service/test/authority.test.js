@@ -115,13 +115,54 @@ test('an action nobody has classified needs the owner', async (t) => {
   assert.match(denial.message, /bot owner/);
 });
 
-test('every action in the table is either listed or deliberately machinery', () => {
-  const unlisted = Object.keys(ACTIONS).filter((name) => !(name in ACTION_NEEDS));
-  for (const name of unlisted) {
-    // Not an assertion about the list's contents — an assertion that reading
-    // ACTION_NEEDS is enough to know what an action costs. Anything absent
-    // resolves to machinery rather than to undefined.
-    assert.equal(ACTION_NEEDS[name] ?? 'machinery', 'machinery');
+// Naming the whole list rather than looping over whatever happens to be in it.
+//
+// This test used to assert `ACTION_NEEDS[name] ?? 'machinery' === 'machinery'`
+// for every unlisted action, which is a restatement of the `??` and cannot
+// fail. campaign/edition went in unlisted and inherited the owner's-GPU gate —
+// so a DM pressing the rulebook switch on their own campaign was told it was
+// somebody else's hardware to spend, while the page drew the buttons enabled
+// for them. The list is written out here so that leaving the next action off
+// ACTION_NEEDS is a failing test rather than a silent default.
+//
+// Every name below really does spend the owner's hardware or their API budget:
+// a transcription, a summary, a model, the pause button over all of it.
+test('the actions that fall through to machinery are the ones that cost money', () => {
+  const unlisted = Object.keys(ACTIONS).filter((name) => !(name in ACTION_NEEDS)).sort();
+  assert.deepEqual(unlisted, [
+    'health/probe',
+    'import',
+    'model/choose',
+    'pause',
+    'session/discard',
+    'summary/again',
+    'summary/approve',
+    'summary/approve-all',
+    'summary/park',
+    'transcribe',
+  ], 'a new action left off ACTION_NEEDS is machinery — decide, do not inherit');
+
+  // And the default really is machinery, not undefined.
+  for (const name of unlisted) assert.equal(ACTION_NEEDS[name] ?? 'machinery', 'machinery');
+});
+
+// The other half of the same lesson: a campaign setting that spends nothing is
+// the manager's, and the page has to be telling the truth about who may press
+// it. Both are checked together because the bug was the gap between them.
+test('a setting that costs nothing belongs to whoever runs the campaign', async (t) => {
+  const { db, campaignId, viewer } = await world(t);
+  for (const name of ['campaign/output', 'campaign/edition']) {
+    assert.equal(ACTION_NEEDS[name], 'manage', `${name} is a campaign setting, not machinery`);
+    assert.equal(
+      mayAct({ pathname: `/actions/${name}`, body: { campaignId }, viewer: viewer(CREATOR), db }),
+      null,
+      `${name} should be allowed for the person who runs the campaign`
+    );
+    assert.equal(
+      mayAct({ pathname: `/actions/${name}`, body: { campaignId }, viewer: viewer(PLAYER), db })?.status,
+      403,
+      `${name} should still be refused to somebody who only plays there`
+    );
   }
 });
 

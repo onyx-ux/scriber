@@ -556,6 +556,109 @@ for the first time.
       touched, and two of the three new tests in `pi-service/test/morph.test.js`
       fail against the old guard.
 
+- [x] **The rulebook switch was refusing the person it was drawn for** — the
+      new setting went into the action table without a line in `ACTION_NEEDS`,
+      and an unlisted action falls through to `machinery`: the tier that means
+      *this spends the owner’s GPU or their API budget*. Choosing which wiki a
+      spell name links to spends neither. So a DM pressing the switch on their
+      own campaign got told it was somebody else’s hardware to decide about,
+      while the page drew the buttons enabled for them, because the page asks
+      `canManage()` and the server asked something stricter.
+
+      Found by asking, not by clicking: the browser walk ran as the operator,
+      who passes every gate, so it went green over the top of it. The test that
+      should have caught it was asserting `ACTION_NEEDS[name] ?? 'machinery'`
+      **equals** `'machinery'` for every unlisted action — a restatement of the
+      `??`, which cannot fail. It now names the ten actions that are allowed to
+      fall through, so the eleventh is a failing test rather than a default.
+
+- [x] **The write-up index caught up a session late** — it is built by reading
+      the prose, and the prose is drawn by the same paint that draws the rail,
+      so what the template could put there had been read from the PREVIOUS
+      page. On a page nobody is touching those are the same write-up. Opening a
+      different session they are not: the index went blank until the
+      five-second poll came round, and on slightly different timing it listed
+      the last night’s scenes under ids that were no longer on the page.
+
+      Put right immediately after the morph instead, against the prose that is
+      actually there — and only when it disagrees, because rewriting it every
+      five seconds would take the focus out of the index for anybody reading by
+      keyboard, which is a worse fault than the one being fixed.
+- [x] **What is behind a name, without going to look** — every NPC and place a
+      write-up names is already a link. Hovering one now opens a card with who
+      they are, the night they walked on, and how many nights they appear in.
+
+      Nothing is fetched for it: the compendium is what made the name a link in
+      the first place, so the card is already in memory. It is
+      `pointer-events: none` on purpose — a thing to read rather than a thing to
+      visit, which means there is no state where the pointer is on the card and
+      not on the name, and no code to handle one. Following the link is what the
+      link is for.
+
+      It lives outside every panel the patcher touches, because it is anchored
+      to a node inside one and would otherwise be thrown away by the first poll
+      that landed while somebody was reading it.
+
+- [x] **Where you are in a write-up** — a recap of a four-hour night runs to
+      seven or eight sections, and past the fold there was no way to tell how
+      much was left. The facts rail now opens with the write-up read as its own
+      shape: the opening, every scene by its own title, the decisions and the
+      follow-ups, with the one on screen marked and a click back to any of them.
+
+      Built by reading the prose rather than the notes object, so the index can
+      only list what is actually on the page. A scroll handler rather than an
+      IntersectionObserver, for the same reason the margin is floats rather than
+      positioning: the pane is rebuilt every five seconds, and an observer would
+      have to be re-attached to the new nodes each time.
+
+      Below three parts there is no index — a table of contents for a page you
+      can see the end of is furniture — and below 1300px there is no rail to put
+      it in, which is the same answer.
+
+      **The >1200px in the original note is not reachable.** The margin already
+      has its own derived threshold: 326 for the session list + 320 for the rail
+      + 112 of pane padding + 720 of measure + 58 of gutter + 340 of note =
+      1876, so 1900 is where a sidenote first fits rather than a taste. At 1200
+      there is about 500px of pane, and a 340px margin note would run under the
+      rail. The index goes in the rail instead, which exists from 1301 up.
+
+- [x] **A spell in a write-up links to the rules for it** — 506 spell names,
+      linking out to the wikidot for the edition the campaign says it plays.
+      Nothing of the rules text is reproduced: this is a list of NAMES and the
+      address of a page somebody else wrote.
+
+      **Generated from each wiki own spell index**, so a slug is right by
+      construction rather than by 506 chances to mistype one. The two editions
+      are genuinely different lists — 2014 has 424 of these and 2024 has 363 —
+      and every entry carries which wikis have it, so a campaign only links what
+      its own edition can answer. A link to a 404 is worse than no link.
+
+      Seventeen spells appear twice under one name and two slugs, which is not a
+      duplicate: the wikis slugify an apostrophe differently, `bigbys-hand`
+      against `bigby-s-hand`, so each edition needs its own row to have an
+      address that resolves.
+
+      **The one failure this must not have** is linking "the light was failing"
+      to a cantrip. So a single-word spell name is linked only if it is on a
+      hand-made keep-list of coined words — Fireball, Counterspell,
+      Prestidigitation — and the 99 that are also ordinary English are left
+      alone. Multi-word names are all fine. The campaign own names win over the
+      rules everywhere they overlap: a table with an NPC called Sanctuary means
+      the person.
+
+      Served from `/rules` rather than shipped in the page — 26KB that most
+      visits never need, and one copy rather than the palette two.
+
+      **What is NOT linked, and why.** Conditions, monsters, skills and classes
+      are the terms a recap says most, and neither wiki has a page for any of
+      them: `/conditions`, `/grappled`, `/monster:goblin`, `/class:wizard` and
+      every variation tried are 404 on both. Checked 2026-09-04, not assumed.
+
+      `dnd2024.wikidot.com` answers a 301 from https to http — it has no working
+      certificate — so a reader following a 2024 link lands on plain HTTP
+      whatever we write. The links say https anyway: asking for the secure one
+      and being refused is different from writing the insecure one down, and the
+      day they fix it these are already right.
 - [x] **Everyone gets a colour** — a speaker picks one of twenty-four and their
       name is written in it, in transcripts and nowhere else. Twelve families
       of two shades: the ten dragons, plus an eldritch purple and an ocean blue
@@ -708,6 +811,26 @@ own reports, written down before they are argued with, and some of them will
 collide with a design decision recorded on purpose. Whoever picks one up should
 read the argument before deciding against it.
 
+- [ ] **The page scrolls sideways between 821px and 1023px wide** — the top
+      bar’s min-content is 1018px: the campaign name, the health readings, two
+      pause buttons and the theme switch. There is a wrap rule for exactly this
+      and it is filed under the phone breakpoint, on the reasonable-sounding
+      assumption that a bar this wide could only fail on a phone. Below 820 it
+      wraps and is fine; above 1024 it fits. The band between is a laptop
+      window docked to half the screen — which is where a DM reads a write-up
+      beside Discord, so it is not a rare width.
+
+      **Not a regression** — measured identically against `HEAD` before and
+      after the write-up work, and it has nothing to do with either job.
+
+      Left alone on purpose, having tried it twice. Moving the wrap rule out to
+      1024 makes the second row spill two pixels through a bar pinned to 76px,
+      and the pause buttons come out sliced along the top; letting the bar grow
+      as well fixes that but then `.right` stops shrinking and starts wrapping
+      at 1100, where today it fits. What gives way in that band — the health
+      readings, the word on the pause buttons, the campaign name — is a
+      decision about the bar, not a bug fix, and it belongs to whoever wants to
+      make it.
 - [ ] **The Gemini rung is off because its line breaks are wrong** — attribution
       is exact (validated 229/229 on 396 real clips, zero failures) and it runs
       at 1.74x realtime against the Pi's 0.38x. What is not right is *when*
@@ -745,6 +868,49 @@ read the argument before deciding against it.
       this file is the record.
 
 ## Ideas not built yet
+
+- **The table can correct its own write-up, without being able to erase it**
+  (asked for 2026-09-04) — the summariser writes what it heard, and what it
+  heard is sometimes wrong. Today the only fixes are a correction rule, which
+  rewrites transcripts rather than notes, and re-summarising, which costs
+  money and rolls the dice again. Neither lets somebody who was there simply
+  say "no, it was the other door".
+
+  **The shape asked for is a redline, not an edit box.** Adding a comment
+  strikes the original text through and writes the correction beside it, in
+  the commenter’s own voice colour — the same twenty-four the transcript
+  already uses, so who said what is legible without a byline. A **view / edit**
+  switch decides what a reader sees: **view** shows only the corrected reading,
+  with the struck text hidden; **edit** shows both, and the marks. Anybody can
+  edit their own comments.
+
+  **What makes it safe is that nothing is destructive.** The summariser’s
+  write-up stays underneath as the base and is never overwritten — a comment
+  is a layer over it, so "delete everything" is not a gesture that exists.
+  The worst anybody can do is strike every line through, which is visibly a
+  redline and is undone by removing the comment.
+
+  The longer aim behind it is a write-up with real structure — headings,
+  sections, links — closer to an Obsidian file than to a rendered blob, so the
+  page and the vault export are the same document.
+
+  **To settle before building:**
+
+  - Who may comment. Everybody at the table is the obvious answer and the one
+    that makes it worth having; it is also the first thing on this dashboard a
+    player could change that another player reads.
+  - What `/recap`, the Discord post and the Obsidian export show — the base
+    text or the corrected reading. They are three different audiences and one
+    of them has already been posted.
+  - What `summary/again` does to the comments. Re-summarising replaces the
+    base, and the comments are anchored to text that no longer exists. That is
+    the deletion this feature exists to prevent, arriving by the back door.
+  - How a comment is anchored at all — an offset into a string breaks the
+    moment the string does. Anchoring to a scene and a sentence index survives
+    more, and still not a re-summarise.
+  - What a commenter with no colour looks like. Twenty-four colours and a
+    table of six means most people have one, but the fallback has to read as
+    somebody rather than as a fault.
 
 - **Limits behind the tiers** — the tier is set, stored and visible, and it
   governs exactly one ceiling: the daily `/campaign ask` allowance, via

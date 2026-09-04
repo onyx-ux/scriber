@@ -1176,10 +1176,15 @@ test('a dead invitation names no table and asks for another', async (t) => {
   const page = await render({
     base, cookie: cookieFor(db, cfg, RHI, 'rhi'), search: '?join=never-was-a-token',
   });
-  await page.settle((m) => /id="thr-token"/.test(m));
+  // Settled on the REFUSAL, not on the field. The field is drawn as soon as the
+  // step changes; the note under it arrives a paint later, when invite/peek has
+  // answered — so waiting for the field and asserting on the note is a race, and
+  // it lost one on a loaded machine.
+  await page.settle((m) => /not good any more/.test(m));
   const markup = page.body();
 
   assert.ok(balanced(markup).ok);
+  assert.match(markup, /id="thr-token"/);
   assert.match(markup, /not good any more/);
   assert.doesNotMatch(markup, /Cipher/, 'a bad token learns nothing about what exists');
   assert.match(markup, /data-thr-nolink/, 'and there is a way out of the dead end');
@@ -1273,4 +1278,87 @@ test('a table where nobody has picked is not offered a switch', async (t) => {
   // unnecessary.
   assert.doesNotMatch(markup, /data-voices/);
   assert.doesNotMatch(markup, /voiced/);
+});
+
+// --- where you are in a write-up -------------------------------------------
+//
+// The rail itself is built by reading the DOM, which this harness has none of,
+// so it is checked in a real browser instead. What IS checkable here is the
+// half the rail is built from: every part of the prose has to be anchored and
+// named, or the index has nothing to list and nowhere to send anybody.
+
+test('every part of a write-up is anchored and named', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+
+  const parts = [...markup.matchAll(/id="(part-[a-z0-9-]+)" data-part="([^"]*)"/g)]
+    .map((m) => ({ id: m[1], name: m[2] }));
+
+  // The fixture has a lede, one scene, and one decision — the follow-ups list
+  // is empty, and a section with nothing in it is not a place to send anybody.
+  assert.ok(parts.some((p) => p.id === 'part-0'), 'the opening has no anchor');
+  assert.ok(parts.some((p) => p.id === 'part-1'), 'the first scene has no anchor');
+  assert.ok(parts.some((p) => p.id === 'part-decisions'), 'the decisions have no anchor');
+  assert.equal(parts.filter((p) => p.id === 'part-followups').length, 0,
+               'an empty section was still offered as somewhere to go');
+
+  // A name each, and an id each. Two parts sharing an id would send both rows
+  // of the index to whichever one the browser found first.
+  for (const p of parts) assert.ok(p.name.length > 0, `${p.id} has no name`);
+  assert.equal(new Set(parts.map((p) => p.id)).size, parts.length);
+
+  // The scene takes its own title, so the index reads as the write-up does.
+  assert.ok(parts.some((p) => p.name === 'The queue at the notary'),
+            'a scene is not indexed under its own title');
+});
+
+// The index is the one thing on this page built by reading the page, so the
+// copy the template makes describes the write-up that was open a moment ago.
+// Opening a different session made that visible: the index went blank until
+// the five-second poll came round, and on other timing it listed the previous
+// night's scenes under ids that had gone. It is put right straight after the
+// morph instead, which only works if there is a slot to put it in and if the
+// putting-right happens before anything reads the rows.
+test('the index has a slot of its own, filled after the page is drawn', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+
+  assert.match(page.body(), /<div class="parts-slot" data-key="parts-slot">/,
+               'the rail has nowhere to put an index that disagrees with the page');
+
+  const html = await readFile(PAGE, 'utf8');
+  const paint = html.slice(html.lastIndexOf('function paint()'));
+  const sync = paint.indexOf('syncParts()');
+  const mark = paint.indexOf('markPart()');
+  assert.ok(sync > 0, 'paint never puts the index right');
+  assert.ok(mark > 0 && sync < mark, 'the index is marked before it is the right index');
+});
+
+test('the card that opens over a name has somewhere to be drawn', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  // The links are drawn once the compendium has been read, which is a fetch
+  // per session — so this waits for the thing it is about to assert on rather
+  // than for the screen it sits on.
+  await page.settle((m) => /class="wiki"/.test(m));
+
+  // It is anchored to a node inside a panel the patcher rebuilds, so it has to
+  // live outside every panel or it would be thrown away with the first poll
+  // that landed while somebody was reading it.
+  const html = await readFile(PAGE, 'utf8');
+  assert.match(html, /<div class="peek" id="peek" role="tooltip" hidden><\/div>/);
+
+  const skeleton = html.slice(html.indexOf('<div id="modal">'), html.indexOf('<script src="/dash/morph.js">'));
+  assert.ok(skeleton.includes('id="peek"'), 'the card is inside something that gets patched');
+
+  // And the names it opens over are the wikilinks, which carry the entry it
+  // reads. If that attribute ever moves, the card goes blank rather than
+  // loudly wrong.
+  assert.match(page.body(), /class="wiki" data-entry="npcs:wren halloway"/);
 });

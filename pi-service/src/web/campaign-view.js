@@ -13,6 +13,7 @@
 // rather than leaving it to whoever next edits the payload.
 import { sessionRef } from '../campaign/session-ref.js';
 import { campaignLabel } from '../campaign/resolve.js';
+import { DEFAULT_EDITION } from './rules.js';
 
 // Consent, per person, in the words the operator needs.
 //
@@ -114,6 +115,10 @@ export function buildCampaignView({ db, campaignId }) {
     // the current manager out of its own list.
     managerUserId: campaign.manager_user_id ?? null,
     output: campaign.output_mode ?? 'default',
+    // Null in the row means nobody has said, which reads as the current
+    // edition rather than as nothing — a table that has never been asked is
+    // far more likely to be playing this year’s rules than none.
+    edition: campaign.rules_edition || DEFAULT_EDITION,
     outputChannelId: campaign.output_channel_id ?? null,
 
     // listRoster is already the union of "on the roster", "has a character"

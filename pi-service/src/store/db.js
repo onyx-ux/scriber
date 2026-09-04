@@ -565,6 +565,15 @@ function migrate(db) {
     console.log('[db] migrated: added campaigns.output_mode / output_channel_id');
   }
 
+  // Which edition this table plays, which decides nothing about how the bot
+  // works and one thing about how a write-up reads: whether a spell it names
+  // links to the 2014 rules or the 2024 ones. Null means "not said", which
+  // web/rules.js reads as the current edition — see DEFAULT_EDITION there.
+  if (!campaignColumns.includes('rules_edition')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN rules_edition TEXT`);
+    console.log('[db] migrated: added campaigns.rules_edition');
+  }
+
   // Who is at the table. Membership is what /join checks, so that a stranger
   // in a public server cannot start a recording of somebody else's game.
   //
@@ -862,6 +871,16 @@ function wrap(db) {
     // mode is 'dm' (to the campaign's manager) or 'channel'. A null mode
     // means "whatever the bot is configured to do", which is where every
     // campaign starts.
+    // Which rulebook this table plays out of. Stored as the bare year, and
+    // validated by the caller against web/rules.js rather than here — this
+    // layer stores what it is given, and the list of editions that exist is
+    // not a fact about the database.
+    setRulesEdition(campaignId, edition) {
+      return db
+        .prepare(`UPDATE campaigns SET rules_edition = ?, updated_at = datetime('now') WHERE id = ?`)
+        .run(edition ? String(edition) : null, campaignId).changes;
+    },
+
     setCampaignOutput(campaignId, mode, channelId = null) {
       db.prepare(
         `UPDATE campaigns SET output_mode = ?, output_channel_id = ?, updated_at = datetime('now') WHERE id = ?`

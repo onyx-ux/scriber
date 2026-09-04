@@ -303,6 +303,14 @@ export const ACTION_NEEDS = {
   'corrections/remove': 'manage',
   'corrections/replay': 'manage',
   'campaign/output': 'manage',
+  // Which rulebook the table plays out of, which decides nothing but where a
+  // spell name in a write-up links to. Listed here rather than left to the
+  // default on purpose: an unlisted action is `machinery`, and machinery is
+  // the owner's hardware and the owner's API bill. This spends neither. It
+  // was unlisted for exactly as long as it took to ask a DM to press it — the
+  // page drew the buttons enabled for anyone who may manage the campaign, and
+  // the answer that came back was about somebody else's GPU.
+  'campaign/edition': 'manage',
   // Not 'manage', and the odd one out on this table for a reason.
   //
   // Every other entry here names an act ON something — a roster, a correction,

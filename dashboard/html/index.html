@@ -1499,6 +1499,108 @@
     .facts .rail-anchored { display: none; }
   }
 
+
+  /* ----------------------------------------------------------------------
+     What is behind a name, before you go there.
+
+     A wikilink already leads somewhere; the cost of following one mid-
+     sentence is losing your place in the sentence. So the card answers the
+     small question — who is this again — and leaves the page where it is.
+
+     pointer-events: none, deliberately. It is a thing to read, not a thing
+     to visit: nothing in it is clickable, so it cannot be moved into, so
+     there is no state where the pointer is on the card and not on the name
+     and nothing has to be written to handle one. Following the link is what
+     the link is for.
+
+     Anchored with `position: fixed` against the viewport rather than the
+     page, so a scroll is a reason to close it rather than a thing to track.  */
+  .peek {
+    position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 24px);
+    pointer-events: none;
+    background: var(--card); border: 1px solid var(--line-2); border-radius: 8px;
+    padding: 14px 16px 15px; box-shadow: 0 14px 34px var(--shadow);
+    opacity: 0; transform: translateY(-3px); transition: opacity .13s, transform .13s;
+  }
+  .peek.up { opacity: 1; transform: none; }
+  .peek-kind {
+    display: block; font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
+  }
+  .peek-name {
+    display: block; margin-top: 6px;
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 19px; line-height: 1.2; letter-spacing: -.008em; color: var(--text);
+  }
+  .peek-what {
+    display: block; margin-top: 7px;
+    font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--text-2);
+  }
+  .peek-foot {
+    display: block; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .peek { transition: none; }
+  }
+
+  /* ----------------------------------------------------------------------
+     Where you are in a write-up.
+
+     A recap of a four-hour night runs to six or seven scenes, and once the
+     prose is longer than the window the reader has no idea how much is left
+     or what is coming. This is the write-up read as its own shape: the
+     scenes in order, the one on screen marked, and a way back to any of them.
+
+     It lives at the top of the facts rail, which is the only gutter this
+     screen has that is not already spoken for — the margin past 1900px is
+     the sidenotes’, and below 1300px there is no rail at all. That last one
+     is the right answer rather than a gap: a window that narrow is a window
+     you scroll, and an index of a page you can see the end of is furniture. */
+  .parts { display: flex; flex-direction: column; gap: 1px; }
+  .parts-row {
+    display: flex; gap: 10px; align-items: baseline; text-align: left;
+    background: none; border: 0; padding: 5px 0 5px 12px; cursor: pointer;
+    border-left: 2px solid var(--rule); color: var(--dim);
+    font: inherit; font-size: 13px; line-height: 1.35;
+    transition: color .15s, border-color .15s;
+  }
+  .parts-row:hover { color: var(--text-2); border-left-color: var(--edge); }
+  .parts-row .n {
+    font-family: var(--mono); font-size: 10px; color: var(--dim);
+    font-variant-numeric: tabular-nums; flex: 0 0 auto;
+  }
+  .parts-row .t { flex: 1; min-width: 0; }
+  /* The one on screen. The pen rather than the highlighter: this is a place
+     in the document, not something Quill kept. */
+  .parts-row.here { color: var(--text); border-left-color: var(--pen); }
+  .parts-row.here .n { color: var(--pen); }
+  @media (prefers-reduced-motion: reduce) { .parts-row { transition: none; } }
+  /* ----------------------------------------------------------------------
+     A rule the write-up names, and where it is written down.
+
+     Quieter than a wikilink, and that is the whole design. A name in this
+     campaign is somewhere to go IN this campaign; a spell is a footnote — it
+     leaves the product entirely, and a reader who follows one has stopped
+     reading the recap. So it takes the dim rule rather than the pen, keeps
+     the colour of its sentence, and only firms up under the cursor.
+
+     An anchor rather than a button, because it is a real address: it opens
+     in a tab, it can be copied, and middle-click does what middle-click
+     does. rel="noopener noreferrer" because target="_blank" hands the new
+     page a handle on this one otherwise.  */
+  .rule {
+    color: inherit; text-decoration: none;
+    border-bottom: 1px dotted var(--dim);
+    transition: border-color .12s;
+  }
+  .rule:hover, .rule:focus-visible {
+    border-bottom-color: var(--text-2); border-bottom-style: solid;
+    outline: none;
+  }
+  .rule:focus-visible { border-radius: 2px; box-shadow: 0 0 0 2px var(--pen-br); }
+  @media (prefers-reduced-motion: reduce) { .rule { transition: none; } }
+
   .theme { margin-left: 4px; }
   .theme button { padding: 5px 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 
@@ -2305,6 +2407,11 @@
      4.5s (see toast()), which is what actually gives it the longer hearing. -->
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
+<!-- What is under a name, without going to look. Outside every panel the
+     patcher touches, because it is anchored to a element inside one and
+     would be thrown away with it. See peekAt(). -->
+<div class="peek" id="peek" role="tooltip" hidden></div>
+
 <!-- Patches a panel instead of replacing it, so a poll that lands while
      somebody is typing does not take their caret. Ordinary script, absolute
      path, no build step: nginx's catch-all `location /` serves it under the
@@ -2482,6 +2589,193 @@ const sessionName = (s) =>
   : s?.meetingId != null ? `Session #${s.meetingId}`
   : 'Session';
 
+
+// ==========================================================================
+// What is behind a name
+// ==========================================================================
+
+// A wikilink says there is more; this says what, without spending the reader
+// their place in the sentence to find out. Everything in the card is already
+// in memory — the compendium is what made the name a link in the first place —
+// so hovering costs nothing and asks the bot for nothing.
+
+let peekFor = null;      // the element the card is currently anchored to
+let peekTimer = 0;
+
+// The entry a wikilink points at, or nothing.
+//
+// A link only exists because vocabulary() found the name, and vocabulary()
+// only answers when the compendium is loaded for this campaign — so in
+// practice this always finds one. It still checks, because "the link exists
+// therefore the entry does" is a fact about today’s wiki() rather than a
+// promise, and the failure would be a card with a blank in it.
+function peekEntry(ref) {
+  const [kind, key] = String(ref ?? '').split(':');
+  if (!compendium || compendium.campaignId !== view.campaignId) return null;
+  return (compendium[kind] ?? []).find((e) => e.key === key) ?? null;
+}
+
+const PEEK_KIND = { npcs: 'Who', places: 'Where' };
+
+function peekCard(entry, kind) {
+  // The first thing the summariser wrote about them, which is the sentence
+  // that introduced them. Later ones are what happened next, and a card is
+  // not the place to catch up on a campaign.
+  const what = entry.said[0]?.text ?? '';
+  const nights = entry.seen.length;
+  const first = entry.first ? sessionName(entry.first) : '';
+  const word = kind === 'places' ? 'First gone to' : 'First met';
+  return `
+    <span class="peek-kind">${esc(PEEK_KIND[kind] ?? '')}</span>
+    <span class="peek-name">${esc(entry.name)}</span>
+    ${what ? `<span class="peek-what">${esc(what)}</span>` : ''}
+    <span class="peek-foot">${first ? `${esc(word)} in ${esc(first)}` : ''}${
+      nights > 1 ? ` &middot; in ${nights} nights` : ''}</span>`;
+}
+
+// Where the card goes. Under the name by preference, above it when there is
+// no room below, and never off either side.
+function peekPlace(anchor, card) {
+  const a = anchor.getBoundingClientRect();
+  const box = card.getBoundingClientRect();
+  const GAP = 9;
+  const EDGE = 12;
+
+  let top = a.bottom + GAP;
+  if (top + box.height > window.innerHeight - EDGE) {
+    const above = a.top - box.height - GAP;
+    // Only flip if flipping is actually better. On a short window both ends
+    // are cramped, and a card half off the top is worse than one half off
+    // the bottom, which at least starts at the name.
+    if (above >= EDGE) top = above;
+  }
+
+  let left = a.left;
+  const most = window.innerWidth - box.width - EDGE;
+  if (left > most) left = most;
+  if (left < EDGE) left = EDGE;
+
+  card.style.top = `${Math.round(top)}px`;
+  card.style.left = `${Math.round(left)}px`;
+}
+
+function peekAt(anchor) {
+  const entry = peekEntry(anchor.dataset.entry);
+  if (!entry) return;
+  const [kind] = String(anchor.dataset.entry).split(':');
+  const card = $('peek');
+  if (!card) return;
+
+  peekFor = anchor;
+  card.innerHTML = peekCard(entry, kind);
+  card.hidden = false;
+  // Measured after it has content and before it is shown, so the flip test
+  // above is reading this card rather than the last one.
+  peekPlace(anchor, card);
+  card.classList.add('up');
+}
+
+function peekAway() {
+  clearTimeout(peekTimer);
+  peekTimer = 0;
+  peekFor = null;
+  const card = $('peek');
+  if (!card) return;
+  card.classList.remove('up');
+  card.hidden = true;
+}
+
+// A pause before it appears, because a card that follows the pointer across a
+// paragraph is a page that flickers. None on the way out.
+const PEEK_WAIT = 320;
+
+document.addEventListener('mouseover', (event) => {
+  const link = event.target.closest?.('.wiki[data-entry]');
+  if (!link) { if (peekFor) peekAway(); return; }
+  if (link === peekFor) return;
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(() => peekAt(link), PEEK_WAIT);
+});
+
+// Keyboard readers get it without the wait: tabbing to a link is already the
+// deliberate act the delay exists to wait for.
+document.addEventListener('focusin', (event) => {
+  const link = event.target.closest?.('.wiki[data-entry]');
+  if (link) peekAt(link); else if (peekFor) peekAway();
+});
+document.addEventListener('focusout', () => { if (peekFor) peekAway(); });
+
+// A scroll moves the name out from under a card fixed to the viewport, and a
+// click is going somewhere. Both are reasons to close rather than to chase.
+window.addEventListener('scroll', () => { if (peekFor) peekAway(); }, true);
+document.addEventListener('click', () => { if (peekFor) peekAway(); }, true);
+
+
+// --- the rules a write-up names ---------------------------------------------
+//
+// Fetched rather than carried: the table is 26KB of spell names and would sit
+// in this page whether or not anybody opened a write-up. One request per
+// edition, kept for the life of the tab.
+//
+// Two editions and they are different lists — 2024 dropped spells the 2014
+// books had — so what is linked depends on which rulebook the campaign says it
+// plays out of. A link to a page that 404s is worse than no link.
+
+let rules = null;   // { edition, by: Map<name, url>, re: RegExp }
+
+async function loadRules(edition) {
+  const want = String(edition || '2024');
+  if (rules && rules.edition === want) return;
+  try {
+    const got = await get(`/rules?edition=${encodeURIComponent(want)}`);
+    const by = new Map(got.spells.map((s) => [s.name, s.url]));
+
+    // ONE regex for the whole list rather than one per name. The campaign
+    // vocabulary is a dozen entries and can afford a pass each; this is three
+    // hundred and sixty, against every passage, on a page that repaints every
+    // five seconds.
+    //
+    // Longest first, because alternation takes the first branch that matches
+    // at a position: without it, a two-word spell whose first word is also a
+    // spell would be claimed by the shorter one and point at the wrong page.
+    const names = [...by.keys()].sort((a, b) => b.length - a.length).map(escapeRe);
+    rules = {
+      edition: got.edition,
+      label: got.label,
+      by,
+      re: names.length
+        ? new RegExp(`(^|[^A-Za-z0-9'’])(${names.join('|')})(?![A-Za-z0-9])`, 'g')
+        : null,
+    };
+  } catch (err) {
+    // A write-up with no rules links reads exactly as it did last week. Not
+    // worth a toast, and definitely not worth stopping the page for.
+    rules = null;
+  }
+}
+
+// Where each rule name falls in a passage, skipping anything the campaign’s
+// own names have already claimed.
+//
+// First occurrence only, per name, per passage — the same rule the wikilinker
+// uses next door, and for the same reason: the fourth Fireball in a paragraph
+// connects nothing the first did not.
+function ruleSpans(raw, taken) {
+  if (!rules?.re) return [];
+  const spans = [];
+  const seen = new Set();
+  rules.re.lastIndex = 0;
+  let m;
+  while ((m = rules.re.exec(raw))) {
+    const start = m.index + m[1].length;
+    const end = start + m[2].length;
+    rules.re.lastIndex = end;
+    if (seen.has(m[2]) || taken(start, end)) continue;
+    seen.add(m[2]);
+    spans.push({ start, end, url: rules.by.get(m[2]) });
+  }
+  return spans;
+}
 // --- wikilinks -------------------------------------------------------------
 //
 // Every NPC and every place a write-up has named already has somewhere to be
@@ -2565,6 +2859,12 @@ function wikiSpans(raw, except) {
       re.lastIndex = end;
     }
   }
+
+  // The rules go in after the campaign’s own names and never over them. A
+  // table that has an NPC called Sanctuary means the person, and the one
+  // thing this must not do is send a reader out of the product to read about
+  // somebody they know.
+  spans.push(...ruleSpans(raw, clash));
   return spans.sort((a, b) => a.start - b.start);
 }
 
@@ -2580,9 +2880,12 @@ function wiki(text, except = null) {
   let out = '';
   let at = 0;
   for (const sp of spans) {
+    const word = esc(raw.slice(sp.start, sp.end));
     out += esc(raw.slice(at, sp.start));
-    out += `<button type="button" class="wiki" data-entry="${sp.v.kind}:${esc(sp.v.key)}">${
-      esc(raw.slice(sp.start, sp.end))}</button>`;
+    out += sp.url
+      ? `<a class="rule" href="${esc(sp.url)}" target="_blank" rel="noopener noreferrer"`
+        + ` title="Read ${word} on the ${esc(rules?.label ?? 'rules')} wiki">${word}</a>`
+      : `<button type="button" class="wiki" data-entry="${sp.v.kind}:${esc(sp.v.key)}">${word}</button>`;
     at = sp.end;
   }
   return out + esc(raw.slice(at));
@@ -2599,7 +2902,12 @@ function wikiText(text) {
   let out = '';
   let at = 0;
   for (const sp of spans) {
-    out += `${raw.slice(at, sp.start)}[[${raw.slice(sp.start, sp.end)}]]`;
+    const word = raw.slice(sp.start, sp.end);
+    // A rules link is left as plain words. [[Fireball]] in a vault means a
+    // note called Fireball, which the exporter does not write and the reader
+    // does not have — so bracketing it would fill their graph with dead ends.
+    // The address is on the page they copied it from.
+    out += raw.slice(at, sp.start) + (sp.url ? word : `[[${word}]]`);
     at = sp.end;
   }
   return out + raw.slice(at);
@@ -5533,13 +5841,13 @@ function notesPane(s) {
 
     ${nameFixer()}
 
-    ${notes.tldr ? `<div class="lede measure">${wiki(notes.tldr)}</div>` : ''}
+    ${notes.tldr ? `<div class="lede measure" id="part-0" data-part="How it opens">${wiki(notes.tldr)}</div>` : ''}
 
     ${notes.scenes.length ? `
       <div class="cap" style="margin:32px 0 4px">What happened</div>
       <div class="measure">
         ${notes.scenes.map((scene, i) => `
-          <div class="scene">
+          <div class="scene" id="part-${i + 1}" data-part="${esc(scene.title)}">
             ${marginFor([scene.title, ...scene.points].join(' '))}
             ${i === 0 && scene.title === heading ? '' : `<h4>${esc(scene.title)}</h4>`}
             <p>${scene.points.map((p) => wiki(p)).join(' ')}</p>
@@ -5548,12 +5856,16 @@ function notesPane(s) {
       </div>` : ''}
 
     ${notes.partyDecisions.length ? `
-      <div class="cap" style="margin:32px 0 10px">Party decisions</div>
-      ${numberedList(notes.partyDecisions)}` : ''}
+      <div id="part-decisions" data-part="Party decisions">
+        <div class="cap" style="margin:32px 0 10px">Party decisions</div>
+        ${numberedList(notes.partyDecisions)}
+      </div>` : ''}
 
     ${notes.followUps.length ? `
-      <div class="cap" style="margin:32px 0 10px">Follow-ups</div>
-      ${numberedList(notes.followUps)}` : ''}
+      <div id="part-followups" data-part="Follow-ups">
+        <div class="cap" style="margin:32px 0 10px">Follow-ups</div>
+        ${numberedList(notes.followUps)}
+      </div>` : ''}
 
     <div class="recap-extras measure">${recapSections(notes)}</div>`;
 }
@@ -5825,15 +6137,121 @@ function recapSections(notes) {
   ].filter(Boolean).join('');
 }
 
+// The write-up read as its own shape — see .parts.
+//
+// Built from the prose rather than from the notes object, so the rail can
+// only ever list what is actually on the page: the two are the same list by
+// construction instead of by two people remembering to change both. It is
+// also why this is one line of DOM reading in a file that otherwise builds
+// everything from state.
+//
+// Below three parts there is nothing to index. Two headings and a place
+// marker is a table of contents for a page you can already see all of.
+function partsRail() {
+  const found = [...document.querySelectorAll('[data-part]')];
+  if (found.length < 3) return '';
+  return `
+    <div>
+      <div class="cap" style="margin-bottom:12px">This write-up</div>
+      <nav class="parts" aria-label="Sections of this write-up">
+        ${found.map((el, i) => `
+          <button type="button" class="parts-row" data-part-to="${esc(el.id)}">
+            <span class="n">${String(i + 1).padStart(2, '0')}</span>
+            <span class="t">${esc(el.dataset.part)}</span>
+          </button>`).join('')}
+      </nav>
+    </div>`;
+}
+
 function factsRail() {
   const s = selected();
   if (!s || !notes || notes.meetingId !== s.meetingId || notes.unreadable || !notes.written) return '';
 
-  const body = recapSections(notes);
+  // The index first: it is where you are, and the rest of the rail is what
+  // the night held.
+  //
+  // It goes in a slot of its own because it is the one thing here built by
+  // reading the page rather than the state — so what this template can put in
+  // it was read from the PREVIOUS draw. syncParts() puts it right immediately
+  // after the morph, when the prose it describes is actually on the page.
+  const parts = partsRail();
+  const rest = recapSections(notes);
   // Optional: the rail is the wide-window home for these. The narrow one is
   // .recap-extras, at the foot of the prose.
-  return body ? `<aside class="facts optional">${body}</aside>` : '';
+  return parts || rest
+    ? `<aside class="facts optional"><div class="parts-slot" data-key="parts-slot">${parts}</div>${rest}</aside>`
+    : '';
 }
+
+// The index, rebuilt against the prose that is on the page now.
+//
+// Everything else on this dashboard is drawn from state, so one pass is
+// enough. This one reads the DOM, which means the copy the template made was
+// a description of the write-up that was open a moment ago. On a page nobody
+// is touching those are the same write-up. On the paint that opens a
+// different session they are not, and the index either went blank until the
+// five-second poll came round or — with the timing a shade different — listed
+// the previous night's scenes under ids that were no longer on the page.
+//
+// Rewritten only when it disagrees. Doing it unconditionally would take the
+// focus out of the index every five seconds for anybody reading by keyboard,
+// which is a worse fault than the one being fixed.
+function syncParts() {
+  const slot = document.querySelector('.parts-slot');
+  if (!slot) return;
+
+  const want = [...document.querySelectorAll('[data-part]')].map((el) => `${el.id} ${el.dataset.part}`);
+  const have = [...slot.querySelectorAll('[data-part-to]')]
+    .map((b) => `${b.dataset.partTo} ${b.querySelector('.t')?.textContent ?? ''}`);
+  if (have.length === want.length && have.every((row, i) => row === want[i])) return;
+
+  slot.innerHTML = partsRail();
+}
+
+// Which part is on screen, marked in the rail.
+//
+// A scroll handler rather than an IntersectionObserver, for the same reason
+// the margin is floats rather than positioning: the pane is rebuilt by a
+// poll every five seconds, and an observer would have to be torn down and
+// re-attached to the new nodes each time. Reading positions on demand has no
+// lifecycle to get wrong.
+//
+// "On screen" is the last part whose top has passed a line a third of the
+// way down the window — not the topmost visible one. The difference matters
+// at the end of a long scroll, where three short sections share the window
+// and the honest answer is the one you are reading rather than the one whose
+// heading happens to still be above the fold.
+function markPart() {
+  const rows = [...document.querySelectorAll('[data-part-to]')];
+  if (!rows.length) return;
+
+  const line = window.innerHeight * 0.34;
+  let here = 0;
+  rows.forEach((row, i) => {
+    const part = document.getElementById(row.dataset.partTo);
+    if (part && part.getBoundingClientRect().top <= line) here = i;
+  });
+
+  // At the foot of the page the last part wins, whatever the line says. The
+  // final sections of a write-up are two or three lines each and can never
+  // reach a third of the way up the window, so without this the index stops
+  // moving a screen before the reader does — and the one place a reader is
+  // most sure where they are is the end.
+  const doc = document.documentElement;
+  if (window.scrollY + window.innerHeight >= doc.scrollHeight - 4) here = rows.length - 1;
+  rows.forEach((row, i) => row.classList.toggle('here', i === here));
+}
+
+// Throttled to a frame. A scroll fires far more often than a page can be
+// painted, and this reads layout, which is the one thing worth not doing
+// sixty times between two frames.
+let partTick = 0;
+function partsFollow() {
+  if (partTick) return;
+  partTick = requestAnimationFrame(() => { partTick = 0; markPart(); });
+}
+window.addEventListener('scroll', partsFollow, { passive: true });
+window.addEventListener('resize', partsFollow, { passive: true });
 
 // ==========================================================================
 // Who and where — the campaign read down instead of across
@@ -6364,6 +6782,7 @@ function settingsTab() {
   const never = roster.filter((p) => p.consent.state === 'unasked' || p.consent.state === 'declined').length;
   const providers = status?.providers ?? [];
   const mode = detail.output === 'dm' ? 'dm' : detail.output === 'channel' ? 'channel' : 'default';
+  const edition = detail.edition === '2014' ? '2014' : '2024';
 
   // What Discord said this bot may post in, when it was asked. Absent is not
   // empty: the list only rides along for somebody who may change the
@@ -6397,6 +6816,23 @@ function settingsTab() {
     <div style="display:flex;gap:40px;padding-top:30px;align-items:flex-start;flex-wrap:wrap">
       <div style="flex:1;min-width:0;max-width:820px">
         <h1 class="display sm">How this campaign runs</h1>
+
+        <div class="cap" style="margin:28px 0 6px">Which rules you play</div>
+        ${row('Rulebook', 'Only decides where a spell named in a write-up links to',
+          `<div class="seg" data-seg="edition">
+             <button type="button" class="${edition === '2014' ? 'on' : ''}" data-act="campaign/edition"
+                     data-campaign="${detail.id}" data-edition="2014"
+                     ${canManage() ? '' : 'disabled'}>2014</button>
+             <button type="button" class="${edition === '2024' ? 'on' : ''}" data-act="campaign/edition"
+                     data-campaign="${detail.id}" data-edition="2024"
+                     ${canManage() ? '' : 'disabled'}>2024</button>
+           </div>`)}
+        <div class="quiet" style="margin-top:-6px;padding-bottom:14px;max-width:62ch">
+          Spell names in a write-up link out to the D&amp;D wiki for this edition. Nothing else
+          changes: Quill records, transcribes and summarises the same either way, and the two
+          books do not have all the same spells — a name the chosen edition has no page for is
+          left as plain words rather than sent to a dead link.
+        </div>
 
         <div class="cap" style="margin:28px 0 6px">Where the notes go</div>
         ${row('Destination', 'Everyone in the channel sees the write-up, or only you do',
@@ -7373,6 +7809,20 @@ function paint() {
   // Last, because it measures what everything above has just drawn.
   measureChrome();
 
+  // The card is anchored to a node inside a panel the patcher may have just
+  // rebuilt. Reused nodes survive, so this almost never fires — but a name
+  // that has genuinely gone leaves a card hanging over the page pointing at
+  // nothing at all.
+  if (peekFor && !document.contains(peekFor)) peekAway();
+
+  // Which part of the write-up is on screen is a fact about the scroll
+  // position, not about the state this page just drew from — so it is put
+  // back after the draw rather than baked into it, the same way the
+  // threshold puts its torch back. The index itself comes first: marking a
+  // row is only meaningful once the rows are the right ones.
+  syncParts();
+  markPart();
+
   const rec = status?.recording?.length;
   const needs = (status?.campaigns ?? []).reduce((sum, c) => sum + (c.awaiting || 0), 0);
   document.title = rec ? '● Recording — Quill' : needs ? `(${needs}) Quill` : 'Quill';
@@ -7423,6 +7873,10 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
 
   try {
     detail = await get(`/campaign?id=${id}`);
+    // Which rulebook this table plays out of decides which spell names in its
+    // write-ups become links. Not awaited: a recap reads perfectly well for the
+    // moment before the list lands, and the next paint picks it up.
+    loadRules(detail?.edition);
   } catch (err) {
     detail = null;
     toast(`Couldn't load that campaign — ${err.message}`, false);
@@ -7882,6 +8336,18 @@ document.addEventListener('click', async (event) => {
   const speaker = t.closest('[data-speaker]');
   if (speaker) { view.speaker = speaker.dataset.speaker || null; return paint(); }
 
+  // Back to a part of the write-up. Scrolled rather than jumped, and offset
+  // by the sticky top bar so the heading does not land underneath it.
+  const goPart = t.closest('[data-part-to]');
+  if (goPart) {
+    const part = document.getElementById(goPart.dataset.partTo);
+    if (part) {
+      const top = part.getBoundingClientRect().top + window.scrollY - 96;
+      window.scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+    return;
+  }
+
   // Whether the rest of the table is drawn in their own colours. This
   // browser’s answer, not the table’s and not the account’s — see
   // voicesShown().
@@ -7950,6 +8416,7 @@ document.addEventListener('click', async (event) => {
   if (d.action) body.action = d.action;
   if (d.queue) body.queue = d.queue;
   if (d.mode) body.mode = d.mode;
+  if (d.edition) body.edition = d.edition;
   if (d.paused) body.paused = d.paused === 'true';
   if (d.request) body.requestId = Number(d.request);
   if (d.approve) body.approve = d.approve === 'true';
@@ -7971,6 +8438,11 @@ document.addEventListener('click', async (event) => {
   // person it should be leaving out. Cleared rather than left armed, which
   // would offer to hand it straight back.
   if (d.act === 'campaign/manager' && said?.ok) { view.heir = null; paint(); }
+
+  // A different rulebook is a different list of spells, so the one held in
+  // memory is now the wrong one. send() has already refreshed the campaign,
+  // which is where the new edition comes from.
+  if (d.act === 'campaign/edition' && said?.ok) { await loadRules(said.edition); paint(); }
   btn.disabled = false; btn.textContent = was;
 });
 

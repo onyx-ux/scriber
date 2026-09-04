@@ -44,6 +44,7 @@ import { revokeAllSessions } from './auth.js';
 import { isOperator, isPrimaryOperator, runsThisBot, mayGrantHouseTier } from '../access/operators.js';
 import { joinLink } from '../delivery/dashboard-link.js';
 import { isVoiceColour, voiceColour } from './palette.js';
+import { isEdition, EDITIONS, DEFAULT_EDITION } from './rules.js';
 // The token has to be unguessable, not merely unique: it is the only thing
 // standing between a stranger and a table's name. Math.random is neither.
 import { randomBytes } from 'node:crypto';
@@ -926,6 +927,32 @@ export const ACTIONS = {
   // by whoever sent the request — and a slug outside the table would render as
   // nothing anyway, which is a silent no-op wearing the shape of an answer.
   // An empty colour is not a refusal but a request: it clears what was there.
+  // Which rulebook this table plays out of.
+  //
+  // 'manage' by the default in ACTION_NEEDS, and correctly: it is a fact
+  // about the game rather than about a person, and the whole table reads the
+  // links it changes.
+  'campaign/edition': (db, cfg, body) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+
+    const asked = String(body?.edition ?? '').trim();
+    if (!isEdition(asked)) {
+      return badRequest(`That is not an edition. Pick one of: ${Object.keys(EDITIONS).join(', ')}.`);
+    }
+
+    db.setRulesEdition(id, asked);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        campaignId: id,
+        edition: asked,
+        message: `Rules links now point at the ${EDITIONS[asked].label}.`,
+      },
+    };
+  },
+
   'roster/colour': (db, cfg, body) => {
     const id = campaignId(body);
     const who = userId(body);

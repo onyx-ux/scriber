@@ -375,6 +375,10 @@ async function driver({ base, typed = {}, signedInAs = null }) {
       // written to return early on exactly that. What these tests read is the
       // markup either side of the animation, not the animation.
       querySelector: () => null,
+      // Plural too. The write-up index asks for every part of the prose at
+      // once, and with no layout here the honest answer is that there are
+      // none — which is what the page is written to handle.
+      querySelectorAll: () => [],
       // The theme control writes the mode onto <html>, and does it OUTSIDE the
       // try/catch that guards localStorage — so without this, clicking it
       // throws rather than being recorded as a control that did something.
@@ -595,7 +599,12 @@ test('every control the dashboard renders does something', async (t) => {
     assert.ok(r.changed || r.requested, `${what}: does nothing from either state`);
   }
 
-  assert.deepEqual(dead.filter((d) => !/session=|tab=|closeModal|speaker$|shelfBack|themeSet=auto/.test(d)), [],
+  //  is the write-up index. What it does is scroll, which is a real
+  // effect on a real page and no effect at all on a bag of objects with no
+  // layout — so it can only be checked where there is one, and it is: see the
+  // browser walk in the scratchpad note on job 3, and the anchors it jumps to
+  // in dashboard-render.test.js.
+  assert.deepEqual(dead.filter((d) => !/session=|tab=|closeModal|speaker$|shelfBack|themeSet=auto|part=/.test(d)), [],
     `controls wired to nothing:\n${dead.join('\n')}`);
 });
 

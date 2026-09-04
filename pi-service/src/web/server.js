@@ -6,6 +6,7 @@ import { allowanceFor } from '../access/tiers.js';
 import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
 import { buildTranscriptView } from './transcript-view.js';
+import { rulesFor, EDITIONS, DEFAULT_EDITION, isEdition } from './rules.js';
 import { createDiscordBridge } from './discord-bridge.js';
 // Every question about who may do what goes through this one module — the
 // door, the name, the act, the acting id, and the cut. See web/authority.js.
@@ -327,6 +328,30 @@ export function startStatusServer({
 
     if (url.pathname === '/health') {
       send(res, 200, { ok: true });
+      return;
+    }
+
+    // The spell names a write-up might mention, and where each one is written
+    // up by somebody who is allowed to publish it.
+    //
+    // Served rather than shipped inside the dashboard for two reasons. The
+    // table is 26KB and would sit in a 300KB page that is fetched on every
+    // visit whether or not anybody opens a write-up; and the palette next door
+    // already shows what happens when the same data lives in two files — a
+    // test has to hold them together. There is one copy of this, here.
+    //
+    // Ungated on purpose. It is a list of spell names and public URLs: there
+    // is nothing in it about this bot, this campaign or anybody at it, and it
+    // is the same answer for every caller.
+    if (url.pathname === '/rules') {
+      const asked = url.searchParams.get('edition');
+      const edition = isEdition(asked) ? asked : DEFAULT_EDITION;
+      send(res, 200, {
+        edition,
+        label: EDITIONS[edition].label,
+        editions: Object.entries(EDITIONS).map(([id, e]) => ({ id, label: e.label })),
+        spells: rulesFor(edition),
+      });
       return;
     }
 
