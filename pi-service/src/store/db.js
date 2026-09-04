@@ -617,6 +617,52 @@ function migrate(db) {
     )
   `);
 
+  // An invitation nobody had to be looked up for.
+  //
+  // The DM invite (campaign_consent above) needs a Discord user id, which means
+  // the person running the table has to find each player in a member list
+  // before they can ask them. This is the other half: one link per campaign,
+  // handed round however the table already talks to each other, and whoever
+  // opens it says yes for themselves and puts their own character name in.
+  //
+  // The token is the whole of the authority, so it is treated like a password:
+  // random, revocable, and with an end date. It is NOT a way past consent — the
+  // person opening it still agrees on the same screen, under the same words as
+  // the DM, and it is their own session that is written down. See invite/accept
+  // in web/actions.js, which never takes a user id from the body.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_invite_links (
+      token TEXT PRIMARY KEY,
+      campaign_id INTEGER NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT,
+      revoked_at TEXT
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_invite_links_campaign ON campaign_invite_links (campaign_id)`);
+
+  // What colour a voice is written in, per campaign.
+  //
+  // Per campaign rather than per account, on the same reasoning as consent
+  // above: the ranger you play on Tuesdays and the wizard you play on Fridays
+  // are two people at two tables, and there is no reason the second table
+  // should have its palette decided by the first.
+  //
+  // The slug is stored, never a hex — see web/palette.js for why. A row here
+  // holding a slug that is no longer in the palette is harmless by
+  // construction: the reader looks the slug up and gets nothing, and the name
+  // renders in the ordinary ink it always did.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_colours (
+      campaign_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      colour TEXT NOT NULL,
+      set_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (campaign_id, user_id)
+    )
+  `);
+
   // Everyone already at a table when consent arrived keeps being recorded.
   // They have been playing on the old understanding and asking them to
   // re-consent mid-campaign would stop a running game dead; the ask applies
@@ -1054,6 +1100,98 @@ function wrap(db) {
         .run(nowIso).changes;
     },
 
+    // --- the invite link ---
+    //
+    // Storage only. Every rule about what a token may do lives in
+    // web/actions.js; this knows how to keep one and how to tell whether it is
+    // still alive, and "alive" is asked for explicitly rather than assumed —
+    // a caller that wants the row regardless (to revoke it, to report on it)
+    // should not have to work around a filter.
+
+    createInviteLink({ token, campaignId, createdBy = null, expiresAt = null }) {
+      db.prepare(
+        `INSERT INTO campaign_invite_links (token, campaign_id, created_by, expires_at)
+         VALUES (?, ?, ?, ?)`
+      ).run(token, campaignId, createdBy, expiresAt);
+      return db.prepare(`SELECT * FROM campaign_invite_links WHERE token = ?`).get(token);
+    },
+
+    // The token as somebody arriving actually presents it: a row, or nothing.
+    //
+    // Revoked and expired both answer null, and deliberately answer the SAME
+    // null. A caller that could tell them apart would leak, to anyone holding
+    // any string at all, whether that string was ever a real invitation.
+    getLiveInviteLink(token, nowIso = new Date().toISOString()) {
+      const row = db.prepare(`SELECT * FROM campaign_invite_links WHERE token = ?`).get(String(token ?? ''));
+      if (!row) return null;
+      if (row.revoked_at) return null;
+      if (row.expires_at && row.expires_at <= nowIso) return null;
+      return row;
+    },
+
+    // The link a campaign already has out, so asking twice does not scatter
+    // three live tokens for one table.
+    liveInviteLinkFor(campaignId, nowIso = new Date().toISOString()) {
+      return (
+        db
+          .prepare(
+            `SELECT * FROM campaign_invite_links
+              WHERE campaign_id = ? AND revoked_at IS NULL
+                AND (expires_at IS NULL OR expires_at > ?)
+              ORDER BY created_at DESC, rowid DESC LIMIT 1`
+          )
+          .get(campaignId, nowIso) ?? null
+      );
+    },
+
+    // Pulling the link. Marked rather than deleted: a revoked token that comes
+    // back later must not be re-issuable by chance, and the row is the record
+    // that it was ours and is finished.
+    revokeInviteLinks(campaignId, nowIso = new Date().toISOString()) {
+      return db
+        .prepare(`UPDATE campaign_invite_links SET revoked_at = ? WHERE campaign_id = ? AND revoked_at IS NULL`)
+        .run(nowIso, campaignId).changes;
+    },
+
+    // --- what colour somebody is written in ---
+
+    // Setting a colour does NOT enrol anybody, which is the one way this is
+    // unlike setCharacterName next to it. Naming a character is a claim about
+    // who is at the table; picking a colour is a claim about nothing at all,
+    // and a row here for somebody who is not a member would put them on a
+    // roster by way of a preference. Pass no colour to clear it.
+    setVoiceColour(campaignId, userId, colour) {
+      if (!colour) {
+        return db
+          .prepare(`DELETE FROM campaign_colours WHERE campaign_id = ? AND user_id = ?`)
+          .run(campaignId, String(userId)).changes;
+      }
+      return db
+        .prepare(
+          `INSERT INTO campaign_colours (campaign_id, user_id, colour) VALUES (?, ?, ?)
+           ON CONFLICT(campaign_id, user_id) DO UPDATE SET colour = excluded.colour, set_at = datetime('now')`
+        )
+        .run(campaignId, String(userId), String(colour)).changes;
+    },
+
+    getVoiceColour(campaignId, userId) {
+      const row = db
+        .prepare(`SELECT colour FROM campaign_colours WHERE campaign_id = ? AND user_id = ?`)
+        .get(campaignId, String(userId));
+      return row?.colour || null;
+    },
+
+    // Everyone at this table who has picked one, as { userId: slug }. A plain
+    // object rather than a Map because every caller either spreads it into a
+    // JSON payload or looks one id up, and neither wants a Map.
+    listVoiceColours(campaignId) {
+      const out = {};
+      for (const row of db.prepare(`SELECT user_id, colour FROM campaign_colours WHERE campaign_id = ?`).all(campaignId)) {
+        out[row.user_id] = row.colour;
+      }
+      return out;
+    },
+
     // Withdrawing an invitation, or a player being taken off the table
     // entirely. Removes the consent record too: if they are asked again later
     // it should be a fresh question, not a resumed one.
@@ -1065,6 +1203,7 @@ function wrap(db) {
         .prepare(`DELETE FROM campaign_consent WHERE campaign_id = ? AND user_id = ?`)
         .run(campaignId, userId).changes;
       db.prepare(`DELETE FROM characters WHERE campaign_id = ? AND user_id = ?`).run(campaignId, userId);
+      db.prepare(`DELETE FROM campaign_colours WHERE campaign_id = ? AND user_id = ?`).run(campaignId, userId);
       return members + consent;
     }),
 
@@ -1726,6 +1865,24 @@ function wrap(db) {
              FROM auth_events ORDER BY id DESC LIMIT ?`
         )
         .all(Math.max(1, Math.min(200, limit)));
+    },
+
+    // How many times this account has signed in, as far as the log still
+    // remembers. Asked for one thing: whether the person looking at the
+    // dashboard has ever been here before, so the page can greet a first
+    // arrival instead of dropping them into somebody else's campaign list.
+    //
+    // Read the caveat before trusting it anywhere else. This counts rows in a
+    // table that pruneAuthEvents keeps to the last 300 events across everybody,
+    // so a busy install forgets an old sign-in and would call that person new a
+    // second time. That is the right trade for a welcome screen and the wrong
+    // one for anything that decides access -- nothing here is authority.
+    countSignIns(userId) {
+      return (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM auth_events WHERE user_id = ? AND event = 'in'`)
+          .get(userId)?.n ?? 0
+      );
     },
 
     // A best-effort name for somebody whose sessions are about to be deleted --

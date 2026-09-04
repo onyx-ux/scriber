@@ -280,8 +280,25 @@ export function identify({ req, db, cfg, client }) {
 export const ACTION_NEEDS = {
   'roster/search': 'manage',
   'roster/invite': 'manage',
+  // Handing out a way into your table, and taking it back. Both are the
+  // manager's, on the same reasoning as roster/invite: deciding who may be
+  // asked is running the campaign.
+  'invite/link': 'manage',
+  'invite/revoke': 'manage',
+  // The other two are the invited person's, and they are not on this table's
+  // terms at all — somebody arriving by link is by definition not yet at the
+  // table, so every level here would refuse them and the feature could only
+  // ever work for people who did not need it.
+  //
+  // What actually gates them is the token, checked in the action against a
+  // stored row that can be revoked and expires. `signed-in` is the second half
+  // of that: consent has to be recorded against a real Discord account, and
+  // invite/accept reads it from the session rather than the body.
+  'invite/peek': 'signed-in',
+  'invite/accept': 'signed-in',
   'roster/character': 'manage',
   'roster/forget': 'manage',
+  'roster/colour': 'manage',
   'corrections/add': 'manage',
   'corrections/remove': 'manage',
   'corrections/replay': 'manage',
@@ -327,13 +344,17 @@ export const ACTION_NEEDS = {
   'access/dismiss': 'everything',
 };
 
-// The two actions you may aim at yourself wherever you are welcome.
+// The three acts you may aim at yourself wherever you are welcome.
 //
 // /campaign setchar has always let a player name their own character, and it
 // is obviously theirs to name — the dashboard being stricter than the slash
 // command for the same act was an accident of grouping it with the rest of the
 // roster, not a decision.
-export const OWN_BUSINESS = new Set(['roster/character', 'roster/forget']);
+//
+// The colour of your own name is the same kind of thing, only more so: it
+// changes nothing but how you are written down, and the person it describes
+// is the only one with an opinion worth having about it.
+export const OWN_BUSINESS = new Set(['roster/character', 'roster/forget', 'roster/colour']);
 
 export function mayAct({ pathname, body, viewer, db }) {
   const name = /^\/actions\/(.+?)\/?$/.exec(pathname)?.[1];

@@ -73,6 +73,14 @@
 
     --shadow: #1F211C1A;
 
+    /* The mono stack, which the rest of this file spells out in full at every
+       use. It is a token because three rules in the "people at the door" block
+       below were already written against `var(--mono)` — and it did not exist,
+       so those three silently fell back to the body serif and the one block on
+       this page that is somebody waiting on you was the one block whose ids and
+       timestamps were not set in mono. */
+    --mono: 'Spline Sans Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
     /* The select's own chevron, at this page's line weight. */
     --chev: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2012%2012%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M2.5%204.5%206%208l3.5-3.5%22%20stroke%3D%22%2357584F%22%20stroke-width%3D%221.3%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E");
   }

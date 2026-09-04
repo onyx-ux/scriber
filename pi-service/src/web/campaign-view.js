@@ -94,6 +94,7 @@ export function buildCampaignView({ db, campaignId }) {
   if (!campaign) return null;
 
   const consent = new Map(db.listConsent(campaignId).map((row) => [row.user_id, row]));
+  const colours = db.listVoiceColours(campaignId);
   const label = campaignLabel(campaign);
 
   // One query for every live job rather than one per session: a campaign with
@@ -126,6 +127,7 @@ export function buildCampaignView({ db, campaignId }) {
       lines: r.lines ?? 0,
       enrolled: Boolean(r.enrolled),
       consent: consentFor(consent.get(r.userId), r.lines ?? 0),
+      colour: colours[r.userId] ?? null,
     })),
 
     corrections: db.listCorrections(campaignId).map((c) => ({

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
 import { registerCommandHandlers, activeSessions } from '../src/commands/index.js';
-import { dashboardLink, dashboardHome, deskInvitation } from '../src/delivery/dashboard-link.js';
+import { dashboardLink, dashboardHome, deskInvitation, joinLink } from '../src/delivery/dashboard-link.js';
 import { dashboardPointer } from '../src/delivery/approval-notify.js';
 
 // Telling somebody where the desk is.
@@ -182,4 +182,38 @@ test('the operator is always on their own guest list', async (t) => {
   const said = await created(h.dispatch, 'owner', 'Housebound');
 
   assert.match(said, /The desk/);
+});
+
+
+// --- the address one table hands to its own players ---
+//
+// Pasted into a chat window by a person, which is a harder job than the desk
+// link has: it has to survive being copied, and it has to work on an install
+// nobody has reconfigured.
+
+test('an invitation is the desk with a token on it, not a path of its own', () => {
+  const url = joinLink({ dashboardUrl: URL_BASE }, 'brass-key-9');
+
+  assert.equal(url, `${URL_BASE}/app/?join=brass-key-9`);
+  // /app/ and not /join/<token>, deliberately: nginx serves the dashboard from
+  // an exact `location = /app/`, which a query string does not disturb. A path
+  // of its own would need a new location block on every box running the bot
+  // before a single link opened. See joinLink.
+  assert.match(url, /\/app\/\?/);
+});
+
+test('an install with no address makes no link rather than half of one', () => {
+  assert.equal(joinLink({}, 'brass-key-9'), null);
+  assert.equal(joinLink({ dashboardUrl: 'not a url' }, 'brass-key-9'), null);
+  assert.equal(joinLink({ dashboardUrl: URL_BASE }, ''), null, 'and no token is no link');
+});
+
+// A DASHBOARD_URL that already carries a path or a query is somebody's reverse
+// proxy, and the token has to survive it.
+test('a token is added to an address rather than replacing what is there', () => {
+  assert.equal(
+    joinLink({ dashboardUrl: 'https://pi.example.org/quill/?theme=dark' }, 'k'),
+    'https://pi.example.org/app/?join=k',
+    'the desk is always /app/ on that host — see dashboardLink'
+  );
 });

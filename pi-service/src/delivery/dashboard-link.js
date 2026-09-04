@@ -61,6 +61,25 @@ export function mayBeSentToDesk(cfg, db, userId) {
   return Boolean(dashboardLink(cfg)) && maySignIn(cfg, userId, db);
 }
 
+// An invitation to one table, as an address the person running it can paste
+// wherever their players already are.
+//
+// A query on /app/ rather than a path of its own, and that is a deployment fact
+// rather than a taste one: nginx serves the dashboard from `location = /app/`,
+// an exact match that a query string does not disturb, so this address works on
+// an install nobody has reconfigured. A prettier `/join/<token>` would need a
+// new location block on every box running the bot before a single link opened.
+//
+// Null when there is no DASHBOARD_URL, for the same reason dashboardLink() is:
+// a relative path is not something you can hand to somebody in a chat window.
+export function joinLink(cfg, token) {
+  const base = dashboardLink(cfg);
+  if (!base || !token) return null;
+  const url = new URL(base);
+  url.searchParams.set('join', token);
+  return url.toString();
+}
+
 // The invitation itself, for the reply to /campaign create.
 //
 // Named for what the dashboard calls itself. "The desk" is the page's own word

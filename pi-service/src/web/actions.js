@@ -42,6 +42,21 @@ import { TIERS, TOP_TIER, isTier, askLimitFor } from '../access/tiers.js';
 // not straight at the store — see web/auth.js.
 import { revokeAllSessions } from './auth.js';
 import { isOperator, isPrimaryOperator, runsThisBot, mayGrantHouseTier } from '../access/operators.js';
+import { joinLink } from '../delivery/dashboard-link.js';
+import { isVoiceColour, voiceColour } from './palette.js';
+// The token has to be unguessable, not merely unique: it is the only thing
+// standing between a stranger and a table's name. Math.random is neither.
+import { randomBytes } from 'node:crypto';
+
+// How long an invite link lives. Longer than the 24 hours a DM invite gets, and
+// for the opposite reason: a DM is a question put to one person who is looking
+// at it now, and a link is pinned in a channel for whoever has not read it yet.
+// Not forever, so a campaign that quietly ends does not leave a live door.
+const INVITE_LINK_DAYS = 14;
+
+// One sentence for every dead token — never used, revoked, expired, or invented
+// on the spot. Telling them apart would tell a stranger which guesses were warm.
+const DEAD_LINK = 'That invitation is not good any more. Ask whoever runs the game for a new link.';
 
 // An id arriving over HTTP is a string from a JSON body written by a page that
 // could have been edited. "12abc" must not become 12.
@@ -735,6 +750,153 @@ export const ACTIONS = {
       .then((result) => ({ status: result.ok ? 200 : 400, payload: result }));
   },
 
+  // --- the invite link -------------------------------------------------------
+  //
+  // The other way onto a roster. roster/invite needs a Discord user id, so the
+  // person running the table has to find each player in a member list first;
+  // this hands them one address they can paste into whatever the table already
+  // uses, and each player says yes for themselves at the other end.
+  //
+  // Three rules the four actions below are built to keep:
+  //
+  //   * the token is the whole of the authority, so it is random, revocable and
+  //     dated, and a bad one is refused in exactly the same words as an expired
+  //     one — anything else tells a stranger which strings are real;
+  //   * holding a link is not being asked on somebody's behalf. Accepting still
+  //     records consent under the SESSION's user id, never one from the body;
+  //   * the manager can pull it. A link that cannot be withdrawn is a door left
+  //     open in a house you no longer remember the layout of.
+
+  // Make one, or hand back the one already out. Deliberately not a fresh token
+  // per press: three live links for one table is three things to remember to
+  // revoke, and the DM pressing this twice means "show me the link" both times.
+  'invite/link': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    const campaign = db.getCampaign(id);
+    if (!campaign) return badRequest('No such campaign.');
+
+    let row = db.liveInviteLinkFor(id);
+    if (!row) {
+      row = db.createInviteLink({
+        token: randomBytes(18).toString('base64url'),
+        campaignId: id,
+        createdBy: actingUserId(ctx?.viewer, cfg),
+        expiresAt: new Date(Date.now() + INVITE_LINK_DAYS * 86400_000).toISOString(),
+      });
+    }
+
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        token: row.token,
+        // Null on an install with no DASHBOARD_URL. The page says so rather
+        // than printing half an address somebody would paste anyway.
+        url: joinLink(cfg, row.token),
+        expiresAt: row.expires_at,
+        campaignId: id,
+      },
+    };
+  },
+
+  'invite/revoke': (db, cfg, body) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    if (!db.getCampaign(id)) return badRequest('No such campaign.');
+    const pulled = db.revokeInviteLinks(id);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        revoked: pulled,
+        message: pulled
+          ? '🔗 That link is dead. Anyone still holding it gets nothing; make a new one to invite anybody else.'
+          : 'There was no live link to pull.',
+      },
+    };
+  },
+
+  // What the person arriving is shown before they agree to anything.
+  //
+  // Reveals the campaign's name to whoever holds the token, which is the point
+  // of a token — you cannot ask somebody to join a table you refuse to name.
+  // Nothing else: not the roster, not the sessions, not who else was asked.
+  'invite/peek': (db, cfg, body, ctx) => {
+    const link = db.getLiveInviteLink(body?.token);
+    const campaign = link ? db.getCampaign(link.campaign_id) : null;
+    if (!campaign) return { status: 404, payload: { ok: false, message: DEAD_LINK } };
+
+    const who = actingUserId(ctx?.viewer, cfg);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        campaignId: campaign.id,
+        campaignName: campaign.name || campaign.channel_name || 'the table',
+        // So the screen can say "you are already at this table" rather than
+        // asking somebody to join something they are halfway through.
+        alreadyIn: Boolean(who) && db.mayRecord(campaign.id, who),
+        characterName: who ? db.getCharacterName(campaign.id, who) : null,
+        retentionDays: cfg?.audioRetentionDays ?? 0,
+      },
+    };
+  },
+
+  // Saying yes, and saying what to call you.
+  //
+  // The one action here that writes a consent row for a person who was never
+  // individually asked, so it is the one that most needs its user id to be
+  // beyond argument: it comes from the session, and there is no code path that
+  // reads body.userId. An operator console with no Discord session cannot use
+  // this at all — actingUserId would hand it the owner's id, and agreeing to be
+  // recorded is not something the owner does on a player's behalf.
+  'invite/accept': (db, cfg, body, ctx) => {
+    const who = ctx?.viewer?.userId;
+    if (!who) return { status: 403, payload: { ok: false, message: 'Sign in with Discord first.' } };
+
+    const link = db.getLiveInviteLink(body?.token);
+    const campaign = link ? db.getCampaign(link.campaign_id) : null;
+    if (!campaign) return { status: 404, payload: { ok: false, message: DEAD_LINK } };
+
+    // Yes has to be typed out. `consent !== true` refuses on anything else a
+    // body could carry — missing, "true", 1, null — because the failure
+    // direction of a loose read here is somebody being recorded who never said
+    // so, and that is the one bug in this file that cannot be apologised for.
+    const agreed = body?.consent === true;
+
+    // The same call /campaign consent makes, so somebody arriving by link ends
+    // up in exactly the state somebody arriving by DM does. Declining is
+    // recorded too, and is not a no-op: it is an answer on file that stops the
+    // capture path cold, rather than the silence that merely also stops it.
+    db.setConsent(campaign.id, who, agreed);
+
+    // The name is taken either way, and that is deliberate.
+    //
+    // Naming a character enrols somebody, so this does put a player who said no
+    // onto the roster — which is correct here rather than in spite of it. Being
+    // at a table and being recorded at one are separate facts in this schema and
+    // always have been (see setConsent, which enrols on yes and leaves a no
+    // exactly where it stands): mayRecord is the only gate the capture path
+    // asks, and it still answers no. What the roster gains is a person the DM
+    // can see, named the way the table names them, marked as not recorded — and
+    // that is a more useful thing for everyone than a silence.
+    const name = String(body?.name ?? '').trim();
+    const named = name ? setCharacter(db, { campaignId: campaign.id, userId: who, name }) : null;
+    if (named && named.ok === false) return { status: 400, payload: named };
+
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        campaignId: campaign.id,
+        campaignName: campaign.name || campaign.channel_name || 'the table',
+        recorded: agreed,
+        characterName: named?.name ?? db.getCharacterName(campaign.id, who) ?? null,
+      },
+    };
+  },
+
   'roster/character': (db, cfg, body) => {
     const id = campaignId(body);
     const who = userId(body);
@@ -749,6 +911,48 @@ export const ACTIONS = {
     if (!id) return badRequest('A numeric campaignId is required.');
     if (!who) return badRequest('A Discord user id is required.');
     return { status: 200, payload: forgetCharacter(db, { campaignId: id, userId: who }) };
+  },
+
+  // What colour this person's name is written in, in this campaign's
+  // transcripts.
+  //
+  // Own business, filed next to roster/character because it behaves the same
+  // way: yours to set for yourself wherever you play, and the manager can set
+  // one for a player who never opens the dashboard. A table where four of the
+  // five voices are the default ink is not what anybody asked for.
+  //
+  // The slug is checked against the palette rather than stored as given. It
+  // becomes a class name on a page, so an unchecked string is markup written
+  // by whoever sent the request — and a slug outside the table would render as
+  // nothing anyway, which is a silent no-op wearing the shape of an answer.
+  // An empty colour is not a refusal but a request: it clears what was there.
+  'roster/colour': (db, cfg, body) => {
+    const id = campaignId(body);
+    const who = userId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    if (!who) return badRequest('A Discord user id is required.');
+
+    const asked = String(body?.colour ?? '').trim();
+    if (asked && !isVoiceColour(asked)) return badRequest('That is not one of the colours.');
+
+    db.setVoiceColour(id, who, asked || null);
+
+    // Every action here says what it did: server.js writes it to the audit
+    // log that replaced the Discord DM trail, and the dashboard toasts it.
+    // Without one the log read "ok: undefined" and the toast said "HTTP 200".
+    const picked = voiceColour(asked);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        campaignId: id,
+        userId: who,
+        colour: asked || null,
+        message: picked
+          ? `Written in ${picked.shade} ${picked.name.toLowerCase()} from now on.`
+          : 'Back to the page\u2019s own ink.',
+      },
+    };
   },
 
   // Importing a recording made somewhere else — a phone on the table, a

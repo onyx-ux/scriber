@@ -43,7 +43,11 @@ function freePort() {
   });
 }
 
-async function world(t, { activeSessions = new Map() } = {}) {
+// `memberOf` is what decides whether a viewer can be given a campaign at all:
+// canCreateIn is "the servers Quill is in that you are also in", and only
+// Discord can answer the second half. Off by default, which is the state every
+// test here but the creation walk wants.
+async function world(t, { activeSessions = new Map(), memberOf = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'quill-render-'));
   const db = openDb(join(dir, 'db.sqlite'));
 
@@ -103,6 +107,7 @@ async function world(t, { activeSessions = new Map() } = {}) {
       guilds: { cache: new Map([['guild-1', { id: 'guild-1', name: 'The Cellar', ownerId: OWNER }]]) },
     },
     discord: {
+      isMemberOf: async () => memberOf,
       findKnownMember: async () => null,
       sendCode: async () => ({ ok: true }),
       findPeople: async () => ({ ok: true, people: [] }),
@@ -176,15 +181,31 @@ async function pageScripts(html, what) {
 }
 
 // Load the page's script into a sandbox with just enough DOM to run.
-async function render({ base, cookie }) {
+async function render({ base, cookie, search = '' }) {
   const html = await readFile(PAGE, 'utf8');
   const scripts = await pageScripts(html, 'dashboard');
 
   const panels = {};
+  // Every handler for a type, not the last one registered.
+  //
+  // It used to be one function per type, which was true of the page for as long
+  // as the page had one submit handler. It grew a second — the threshold's own
+  // fields — and the newer registration silently replaced the older, so a form
+  // this harness sent went to the wrong listener and did nothing at all. A
+  // browser calls both; so does this.
   const listeners = {};
+  const on = (type, fn) => { (listeners[type] ??= []).push(fn); };
+  const fire = async (type, event) => {
+    for (const fn of listeners[type] ?? []) await fn(event);
+  };
   const copied = [];
   const el = (id) => (panels[id] ??= {
     id, _html: '', className: '', textContent: '', dataset: {},
+    // Every element in a browser has these. Stubbing them away turned "put the
+    // torch beside the chosen line" into a TypeError in a screen that works
+    // perfectly well in a real one, so they are here rather than guarded for at
+    // every call site in the page.
+    classList: classList(), style: {}, offsetTop: 0, offsetHeight: 0,
     set innerHTML(v) { this._html = v; },
     get innerHTML() { return this._html; },
     focus() {}, querySelector() { return null; }, setSelectionRange() {}, closest: () => null,
@@ -203,7 +224,34 @@ async function render({ base, cookie }) {
     ),
     URLSearchParams, URL, Date, Math, JSON, Number, String, Boolean, Array, Object, Set, Map, Intl,
     FormData: class {},
-    location: { search: '' },
+    // An invitation arrives as /app/?join=<token>, so the address bar is a real
+    // input to this page and not decoration.
+    location: { search, pathname: '/app/', hash: '' },
+    history: { replaceState() {} },
+    // A real one, because the invite token is moved into it on arrival and read
+    // back out a paint later — a stub that forgot between the two would pass
+    // the tests and lose every invitation in production.
+    sessionStorage: (() => {
+      const kept = new Map();
+      return {
+        getItem: (k) => (kept.has(k) ? kept.get(k) : null),
+        setItem: (k, v) => kept.set(k, String(v)),
+        removeItem: (k) => kept.delete(k),
+      };
+    })(),
+    // Real too, and for the same reason: the colour switch is a fact about
+    // this browser rather than about the account, and the page guards every
+    // read of it with try/catch — so an absent store looks identical to one
+    // that has never been written to, and the switch could not be tested at
+    // all.
+    localStorage: (() => {
+      const kept = new Map();
+      return {
+        getItem: (k) => (kept.has(k) ? kept.get(k) : null),
+        setItem: (k, v) => kept.set(k, String(v)),
+        removeItem: (k) => kept.delete(k),
+      };
+    })(),
     navigator: { clipboard: { writeText: async (text) => { copied.push(text); } } },
     confirm: () => true,
     setTimeout, clearTimeout,
@@ -211,11 +259,11 @@ async function render({ base, cookie }) {
     setInterval: () => 0,
     // The page re-measures its chrome on resize. Nothing here ever resizes;
     // this exists so registering the handler is not a TypeError.
-    addEventListener: (type, fn) => { listeners[type] = fn; },
+    addEventListener: on,
     scrollY: 0,
     document: {
       getElementById: el,
-      addEventListener: (type, fn) => { listeners[type] = fn; },
+      addEventListener: on,
       // A real class list rather than a bag of no-ops: renderScreen dresses the
       // body for the sign-in gate and renderSheet asks for that class back, so
       // stubs that always answer "no" put the two out of step.
@@ -229,6 +277,11 @@ async function render({ base, cookie }) {
       // written to return early on exactly that. What these tests read is the
       // markup either side of the animation, not the animation.
       querySelector: () => null,
+      // Same answer, plural. The threshold asks for every answer row at once to
+      // work out where its torch should stand; with no layout here there are
+      // none to find, and the page is written to place no torch rather than to
+      // assume one.
+      querySelectorAll: () => [],
       // The theme control writes the mode onto <html>, and does it OUTSIDE the
       // try/catch that guards localStorage. measureChrome writes --above onto
       // the same element, so the style map has to agree with itself: it is
@@ -274,12 +327,24 @@ async function render({ base, cookie }) {
       closest: (sel) => (matches.includes(sel) ? node : null),
       get textContent() { return 'x'; }, set textContent(v) {},
     };
-    await listeners.click({ target: node });
+    await fire('click', { target: node });
+    await settle(until);
+  };
+
+  // The threshold's fields are forms, so Enter sends them — which means the
+  // only way to drive one from here is the submit listener, not a click.
+  const submit = async (marker, values = {}, until = () => true) => {
+    Object.entries(values).forEach(([id, value]) => { el(id).value = value; });
+    const form = {
+      closest: (sel) => (sel === `form[${marker}]` ? form : null),
+      querySelector: () => null,
+    };
+    await fire('submit', { target: form, preventDefault() {} });
     await settle(until);
   };
 
   await settle((html_) => html_.length > 500);
-  return { body, click, settle, copied };
+  return { body, click, submit, settle, copied };
 }
 
 // Every element opened is closed. A template that throws part-way through
@@ -291,7 +356,22 @@ function balanced(markup) {
   return { opens: opens.length, closes: closes.length, ok: opens.length === closes.length };
 }
 
-const cookieFor = (db, cfg, userId, username) =>
+// A session for somebody who has been here before.
+//
+// The second half matters as much as the first. /me answers firstVisit from the
+// sign-on log, and openSession writes the row that log is made of — so without
+// a prior sign-in every viewer in this file is a brand new account, and the
+// page draws them the threshold instead of the dashboard. That is the right
+// behaviour and it is tested on its own below; everything else here is about
+// what a returning viewer is shown.
+const cookieFor = (db, cfg, userId, username) => {
+  db.recordAuthEvent(userId, username, 'in');
+  return `quill_session=${openSession(db, cfg, { userId, username }).token}`;
+};
+
+// And a session for somebody the bot has never seen, which is the whole of what
+// makes the threshold appear.
+const firstCookieFor = (db, cfg, userId, username) =>
   `quill_session=${openSession(db, cfg, { userId, username }).token}`;
 
 // The page opens on the desk, so anything about the inside of a campaign has
@@ -882,4 +962,315 @@ test('the notes copied for Obsidian carry their wikilinks', async (t) => {
 
   assert.match(markdown, /\[\[Wren Halloway\]\] signed the writ/);
   assert.match(markdown, /^# Cipher_0\d/, 'the heading is the name the vault gives the file');
+});
+
+// --- the threshold, WIP ---
+//
+// The screen somebody gets once, on the first sign-in their account has ever
+// made. What is pinned here is the routing rather than the writing: which
+// question is asked, which is skipped because the bot already knows the answer,
+// and which door it puts them at. The animation is a browser matter and this
+// harness has no layout — see the CDP checks in the ADR for that class of test.
+
+test('a first sign-in is met by the book, not by the dashboard', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, PLAYER, 'saf') });
+  await page.settle((m) => /thr-sheet/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok, 'unbalanced markup means a template threw part-way');
+  assert.match(markup, /Welcome, adventurer/);
+  assert.match(markup, /Create the Story\./);
+  assert.match(markup, /Join the Story\./);
+  assert.match(markup, /data-thr-answer="dm"/);
+  assert.match(markup, /class="wisp"/, 'each answer carries the torch that lights it');
+  assert.match(markup, /class="thr-wip"/, 'a screen still being written says so');
+  assert.doesNotMatch(markup, /data-screen="models"/, 'nothing of the dashboard is drawn behind it');
+});
+
+test('somebody who has been here before is never asked again', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  const markup = page.body();
+
+  assert.doesNotMatch(markup, /Welcome, adventurer/);
+});
+
+// The one rule that keeps this from being a questionnaire: a table the bot can
+// already see is not something it asks about. saf has played at Cipher, so the
+// second question is skipped and the ending is the way in to that table.
+test('a player with a table is shown where it is, and asked nothing further', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, PLAYER, 'saf') });
+  await page.settle((m) => /thr-sheet/.test(m));
+
+  // Joining asks for an invitation first, because somebody pressing "join a
+  // story" while already sitting at one means a story this bot cannot see.
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'player' }, (m) => /thr-token/.test(m));
+  assert.match(page.body(), /Show me the invitation/);
+
+  await page.click(['[data-thr-nolink]'], {}, (m) => /thr-entry/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.doesNotMatch(markup, /Has Quill joined you/, "the maker’s questions are not asked of a joiner");
+  assert.match(markup, /Open Cipher/);
+  assert.match(markup, new RegExp(`data-thr-campaign="${campaignId}"`));
+  assert.match(markup, /first entry/, 'the book writes their name in');
+  // One exchange on the page at a time: the question that was answered has
+  // burnt away rather than staying above the next thing. There is no fire in
+  // this harness — no layout to measure one against — so what is under test is
+  // that the answered block is GONE, which is the part the fire is dressing.
+  assert.doesNotMatch(markup, /Welcome, adventurer/, 'the answered question does not stay on the page');
+});
+
+// The DM with nowhere to put a campaign yet, which is the other half of the
+// brief: the two questions, then the door to campaign creation.
+test('a new operator is asked the second question and left at campaign creation', async (t) => {
+  const { db, cfg, base } = await world(t);
+  // Nobody's owner, nobody's player: an account with no table anywhere is the
+  // only one the second question is for.
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, '50000000000000005', 'rhi') });
+  await page.settle((m) => /thr-sheet/.test(m));
+
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'dm' }, (m) => /Has Quill joined/.test(m));
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'yes' }, (m) => /thr-entry/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.doesNotMatch(markup, /Welcome, adventurer/, 'both answered questions are gone');
+  assert.match(markup, /Then begin it in Discord/);
+  assert.match(markup, /data-thr-door="create"|\/campaign create/);
+  assert.match(markup, /data-thr-door="dashboard"/, 'there is always a way past it');
+});
+
+// The table gets made inside the threshold rather than behind it. A DM whose
+// Discord Quill is already in, and whom the bot could actually be told to make
+// a campaign for, is asked what it is called — no dialog, no command, no
+// handing them to a screen they have never seen.
+test('a new DM who can be given a table is asked what it is called', async (t) => {
+  const { db, cfg, base } = await world(t, { memberOf: true });
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, '50000000000000005', 'rhi') });
+  await page.settle((m) => /thr-sheet/.test(m));
+
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'dm' }, (m) => /Has Quill joined/.test(m));
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'yes' }, (m) => /data-thr-name/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /Then we begin a new one/);
+  assert.match(markup, /What is the story called\?/);
+  assert.match(markup, /id="thr-name"/, 'the name is typed here');
+  assert.doesNotMatch(markup, /\/campaign create/, 'nobody is sent off to type a command');
+  assert.doesNotMatch(markup, /first entry/, 'and it is not the ending yet');
+});
+
+// --- the other road: joining by invitation ---
+//
+// A link is the only part of this screen that reaches somebody who is not new.
+// It has to open for a player who signed in months ago for a different table,
+// it has to name the table before it asks anything, and the question it asks
+// has to be answerable with no.
+
+const RHI = '50000000000000005';
+const invitedTo = (db, campaignId) =>
+  db.createInviteLink({ token: 'brass-key-9', campaignId, createdBy: CREATOR }).token;
+
+test('an invitation opens the book for somebody who has been here before', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const token = invitedTo(db, campaignId);
+
+  // cookieFor, not firstCookieFor: this account has signed in before, which is
+  // exactly the case the first-visit gate would refuse.
+  const page = await render({
+    base, cookie: cookieFor(db, cfg, RHI, 'rhi'), search: `?join=${token}`,
+  });
+  await page.settle((m) => /thr-terms/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /Cipher is expecting you/, 'it names the table before it asks for anything');
+  assert.match(markup, /Yours as well\?/);
+  assert.match(markup, /data-thr-agree="no"/, 'the question can be answered with no');
+  assert.doesNotMatch(markup, /Welcome, adventurer/, 'an invitation is not the first-timer walk');
+  assert.doesNotMatch(markup, /id="thr-seat"/, 'nothing is asked of them before they have agreed');
+});
+
+test('the recording question is asked with the facts it cannot be asked without', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({
+    base, cookie: cookieFor(db, cfg, RHI, 'rhi'), search: `?join=${invitedTo(db, campaignId)}`,
+  });
+  await page.settle((m) => /thr-terms/.test(m));
+  const markup = page.body();
+
+  assert.match(markup, /only while it is in the voice channel/i);
+  assert.match(markup, /That text — not your voice/, 'what leaves the machine is stated, not glossed');
+  assert.match(markup, /campaign consent/, 'and how to take it back');
+});
+
+test('agreeing writes the consent and the character name under the session', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({
+    base, cookie: cookieFor(db, cfg, RHI, 'rhi'), search: `?join=${invitedTo(db, campaignId)}`,
+  });
+  await page.settle((m) => /thr-terms/.test(m));
+
+  await page.click(['[data-thr-agree]'], { thrAgree: 'yes' }, (m) => /id="thr-seat"/.test(m));
+  assert.match(page.body(), /What do they call you at the table\?/);
+
+  // The last press on this road burns to the dashboard rather than to an ending
+  // of its own, so what it settles on is the desk being drawn.
+  await page.submit('data-thr-seat', { 'thr-seat': 'Marn Ashgrove' }, (m) => /data-screen/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.equal(db.mayRecord(campaignId, RHI), true);
+  assert.equal(db.getCharacterName(campaignId, RHI), 'Marn Ashgrove');
+  assert.doesNotMatch(markup, /thr-sheet/, 'the book is gone');
+  assert.doesNotMatch(markup, /first entry/, 'and it does not stop to write them in first');
+});
+
+test('declining is recorded, and nothing else is asked of them', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({
+    base, cookie: cookieFor(db, cfg, RHI, 'rhi'), search: `?join=${invitedTo(db, campaignId)}`,
+  });
+  await page.settle((m) => /thr-terms/.test(m));
+
+  await page.click(['[data-thr-agree]'], { thrAgree: 'no' }, (m) => /id="thr-seat"/.test(m));
+  // The no is sent before the name is even asked for, and deliberately WITHOUT
+  // waiting for the page to finish moving — see welcomeAgree. The screen
+  // reaching the next step is not the evidence; the row is.
+  await page.settle(() => db.getConsent(campaignId, RHI)?.state === 'declined');
+  assert.equal(db.getConsent(campaignId, RHI)?.state, 'declined', 'a no is an answer on file, not silence');
+
+  // And they are still asked what to call them: not being recorded is not the
+  // same as not being at the table.
+  assert.match(page.body(), /your seat is still yours/);
+  await page.submit('data-thr-seat', { 'thr-seat': 'Orrin Vale' }, (m) => /thr-entry/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.equal(db.getCharacterName(campaignId, RHI), 'Orrin Vale', 'the table knows who they are');
+  assert.equal(db.mayRecord(campaignId, RHI), false, 'and Quill still never records them');
+  assert.match(markup, /not in the book/, 'the answer is said back to them');
+  assert.doesNotMatch(markup, /data-thr-agree/, 'and it does not ask again');
+});
+
+test('somebody who already agreed is asked only what to call them', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  // saf agreed to be recorded at Cipher back in world().
+  const page = await render({
+    base, cookie: cookieFor(db, cfg, PLAYER, 'saf'), search: `?join=${invitedTo(db, campaignId)}`,
+  });
+  await page.settle((m) => /id="thr-seat"/.test(m));
+  const markup = page.body();
+
+  assert.doesNotMatch(markup, /data-thr-agree/, 'the question has an answer on file already');
+  assert.match(markup, /What do they call you at the table\?/);
+});
+
+test('a dead invitation names no table and asks for another', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({
+    base, cookie: cookieFor(db, cfg, RHI, 'rhi'), search: '?join=never-was-a-token',
+  });
+  await page.settle((m) => /id="thr-token"/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /not good any more/);
+  assert.doesNotMatch(markup, /Cipher/, 'a bad token learns nothing about what exists');
+  assert.match(markup, /data-thr-nolink/, 'and there is a way out of the dead end');
+});
+
+// And the same two answers from somebody the bot could NOT make a campaign for
+// still end where they used to: with the command, since that is the only way in
+// that exists for them.
+test('a new DM with no server the bot can place a table in gets the command', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, '50000000000000005', 'rhi') });
+  await page.settle((m) => /thr-sheet/.test(m));
+
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'dm' }, (m) => /Has Quill joined/.test(m));
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'yes' }, (m) => /thr-entry/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /\/campaign create/);
+  assert.doesNotMatch(markup, /id="thr-name"/, 'there is nothing to type here');
+});
+
+// --- the twenty-four voices ---
+//
+// The colour is chosen on the campaign table and spent in the transcript, so
+// what these check is the far end: that a slug in the database becomes a class
+// on a name, that the reader can turn the rest of the table off without
+// turning themselves off, and that the filter chips are identified well enough
+// to survive a repaint.
+
+async function openTranscript(page) {
+  await page.click(['[data-transcript]'], { transcript: '1' }, (m) => /class="line"/.test(m));
+  return page.body();
+}
+
+test('a chosen colour is what the name is written in', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  db.setVoiceColour(campaignId, PLAYER, 'eldritch-deep');
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'dev') });
+  const markup = await openTranscript(page);
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /class="who[^"]* voiced v-eldritch-deep"/, "the speaker's name is not in their colour");
+  assert.match(markup, /class="chip[^"]* voiced v-eldritch-deep"/, "the filter chip is not in their colour");
+  assert.doesNotMatch(markup, /v-gold/, 'a colour nobody chose was drawn anyway');
+});
+
+test('every speaker chip is identified, so a repaint cannot mistake one for another', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'dev') });
+  const markup = await openTranscript(page);
+
+  // Without a data-key the patcher falls back to position among siblings of
+  // the same tag, which is fine until somebody speaks for the first time and
+  // every chip after them shifts by one — at which point each chip inherits
+  // the previous one’s colour for a paint. See dash/morph.js.
+  assert.match(markup, /data-key="chip-all"/);
+  assert.match(markup, new RegExp(`data-key="chip-${PLAYER}"`));
+  assert.match(markup, new RegExp(`data-key="chip-${CREATOR}"`));
+});
+
+test('turning the colours off leaves the reader their own', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  db.setVoiceColour(campaignId, PLAYER, 'eldritch-deep');
+  db.setVoiceColour(campaignId, CREATOR, 'gold-bright');
+
+  // Signed in AS the creator, so one of the two colours on this table is the
+  // reader's own — which is the whole distinction the switch makes.
+  const page = await render({ base, cookie: cookieFor(db, cfg, CREATOR, 'kez') });
+  let markup = await openTranscript(page);
+  assert.match(markup, /v-eldritch-deep/, 'the other player was not drawn in their colour to begin with');
+
+  await page.click(['[data-voices]'], {}, (m) => !/v-eldritch-deep/.test(m));
+  markup = page.body();
+
+  assert.doesNotMatch(markup, /v-eldritch-deep/, 'the switch did not take the other player\u2019s colour away');
+  assert.match(markup, /v-gold-bright/, 'it took the reader\u2019s own colour away as well, which is not what it is for');
+
+  // And back again, on the same browser.
+  await page.click(['[data-voices]'], {}, (m) => /v-eldritch-deep/.test(m));
+  assert.match(page.body(), /v-eldritch-deep/, 'the switch only goes one way');
+});
+
+test('a table where nobody has picked is not offered a switch', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'dev') });
+  const markup = await openTranscript(page);
+
+  // A control that visibly does nothing reads as broken rather than as
+  // unnecessary.
+  assert.doesNotMatch(markup, /data-voices/);
+  assert.doesNotMatch(markup, /voiced/);
 });

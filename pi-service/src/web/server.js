@@ -344,6 +344,12 @@ export function startStatusServer({
         can: viewer.can,
         campaigns: viewer.campaignIds.length,
         loginRequired: Boolean(cfg.dashboardRequireLogin),
+        // Whether the page should greet them rather than open on the dashboard.
+        // True while the sign-in that is happening right now is the only one the
+        // log has for them -- their own event is already written by the time
+        // this is asked, so one means first. See countSignIns for why this is a
+        // convenience and not a fact: the log is pruned.
+        firstVisit: Boolean(viewer.userId) && (db.countSignIns?.(viewer.userId) ?? 0) <= 1,
         // Their own tier and what it buys. Sent to everybody rather than held
         // back: "you have four questions left today" is a thing a person needs
         // before they run out, not after.

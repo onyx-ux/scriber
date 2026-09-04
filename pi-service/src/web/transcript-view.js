@@ -35,6 +35,11 @@ export function buildTranscriptView({ db, meetingId }) {
     ])
   );
 
+  // What each voice is written in. Empty for a table where nobody has
+  // picked, which is the state every campaign starts in and a perfectly good
+  // one to stay in — a speaker with no colour is drawn in the page's own ink.
+  const colours = meeting.campaign_id ? db.listVoiceColours(meeting.campaign_id) : {};
+
   const rows = db.listUtterances(meetingId);
   const lines = rows.slice(0, MAX_LINES).map((u) => ({
     ms: u.start_ms ?? 0,
@@ -60,6 +65,7 @@ export function buildTranscriptView({ db, meetingId }) {
       name: characters.get(s.userId) || s.displayName || 'unknown',
       lines: s.lines,
       share: Math.round((s.lines / total) * 100),
+      colour: colours[s.userId] ?? null,
       // Whose account owns this campaign — the person /campaign create was run
       // by. Deliberately not "the DM": on a real table those turn out to be
       // different accounts often enough that inferring one from the other

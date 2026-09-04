@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
 import { runAction, findAction, ACTIONS } from '../src/web/actions.js';
+import { buildTranscriptView } from '../src/web/transcript-view.js';
 import {
   approveSummary,
   approveAllSummaries,
@@ -93,9 +94,14 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'corrections/replay',
       'health/probe',
       'import',
+      'invite/accept',
+      'invite/link',
+      'invite/peek',
+      'invite/revoke',
       'model/choose',
       'pause',
       'roster/character',
+      'roster/colour',
       'roster/forget',
       'roster/invite',
       'roster/search',
@@ -584,6 +590,109 @@ test('forgetting a character keeps the player on the roster', async (t) => {
   assert.equal(db.isCampaignMember(campaignId, who), true);
 });
 
+// --- what colour a voice is written in ---
+
+test('a colour from the palette is stored against the person, per campaign', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const who = '175407464513011713';
+
+  const res = runAction({
+    pathname: '/actions/roster/colour',
+    body: { campaignId, userId: who, colour: 'eldritch-deep' },
+    db,
+    cfg,
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(db.getVoiceColour(campaignId, who), 'eldritch-deep');
+  assert.deepEqual(db.listVoiceColours(campaignId), { [who]: 'eldritch-deep' });
+});
+
+test('picking a colour does not put anybody at the table', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const who = '175407464513011713';
+
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'gold-bright' }, db, cfg });
+
+  // The one way this differs from roster/character beside it. Naming a
+  // character is a claim about who plays here; choosing a colour is a claim
+  // about nothing, and enrolling somebody as a side effect of a preference
+  // would put a name on the list the DM reads as "these are my players".
+  assert.equal(db.isCampaignMember(campaignId, who), false);
+});
+
+test('a colour that is not in the palette is refused, and nothing is stored', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const who = '175407464513011713';
+
+  for (const bad of [
+    'chartreuse',
+    'red',
+    'red-deepish',
+    'red-deep red-bright',
+    'red-deep" onmouseover="x',
+    '#ff0000',
+  ]) {
+    const res = runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: bad }, db, cfg });
+    assert.equal(res.payload.ok, false, bad);
+    assert.equal(res.status, 400, bad);
+    assert.equal(db.getVoiceColour(campaignId, who), null, bad);
+  }
+});
+
+test('an empty colour clears the one on file rather than being refused', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const who = '175407464513011713';
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'ocean-deep' }, db, cfg });
+
+  const res = runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: '' }, db, cfg });
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.colour, null);
+  assert.equal(db.getVoiceColour(campaignId, who), null);
+});
+
+test('the same person can be a different colour at each of their tables', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const other = db.createCampaign('guild-2', 'Ashfall', 'dm-2');
+  const who = '175407464513011713';
+
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'red-deep' }, db, cfg });
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId: other, userId: who, colour: 'blue-bright' }, db, cfg });
+
+  assert.equal(db.getVoiceColour(campaignId, who), 'red-deep');
+  assert.equal(db.getVoiceColour(other, who), 'blue-bright');
+});
+
+test('leaving a table takes the colour with you', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const who = '175407464513011713';
+  runAction({ pathname: '/actions/roster/character', body: { campaignId, userId: who, name: 'Vex' }, db, cfg });
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'silver-deep' }, db, cfg });
+
+  db.removeFromCampaign(campaignId, who);
+
+  // Coming back later should be a fresh choice, the same way consent is —
+  // not a colour they cannot remember agreeing to.
+  assert.equal(db.getVoiceColour(campaignId, who), null);
+});
+
+test('the transcript carries the colour of each speaker, and null where there is none', async (t) => {
+  const { db, campaignId } = await harness(t);
+  const { meetingId } = parked(db, 'summarise', campaignId);
+
+  // Set through the store rather than the action: parked() files its one
+  // utterance under the speaker id 'someone', and roster/colour quite
+  // rightly refuses anything that is not a Discord snowflake. What is being
+  // asked here is whether the READER carries the colour, which is a different
+  // question from who may set one.
+  db.setVoiceColour(campaignId, 'someone', 'green-bright');
+  const view = buildTranscriptView({ db, meetingId });
+  assert.equal(view.speakers.find((s) => s.userId === 'someone').colour, 'green-bright');
+
+  db.setVoiceColour(campaignId, 'someone', null);
+  assert.equal(buildTranscriptView({ db, meetingId }).speakers[0].colour, null);
+});
+
 // --- re-summarising ---
 
 test('a session with no transcript cannot be summarised', async (t) => {
@@ -786,6 +895,162 @@ test('a search is scoped to the campaign\'s own server', async (t) => {
 
   assert.equal(askedFor.guildId, 'guild-1', 'never a server the campaign does not belong to');
   assert.equal(askedFor.query, 'saf');
+});
+
+// --- the invite link ---
+//
+// The other way onto a roster, and the one that hands a stranger a URL. What is
+// pinned here is the three things that would make it a hole: a token that can be
+// guessed at by elimination, an acceptance that records somebody other than the
+// person doing the accepting, and a "yes" that was never actually said.
+
+const SEATED = '175407464513011713';
+const SOMEBODY_ELSE = '175407464513011799';
+const seated = (userId = SEATED) => ({ viewer: { userId, can: {} } });
+
+async function linkFor(db, cfg, campaignId, ctx = seated()) {
+  const res = await runAction({ pathname: '/actions/invite/link', body: { campaignId }, db, cfg, ctx });
+  return res.payload.token;
+}
+
+test('one campaign has one link, however many times it is asked for', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+
+  const first = await runAction({ pathname: '/actions/invite/link', body: { campaignId }, db, cfg, ctx: seated() });
+  const again = await runAction({ pathname: '/actions/invite/link', body: { campaignId }, db, cfg, ctx: seated() });
+
+  assert.equal(first.payload.ok, true);
+  assert.match(first.payload.token, /^[A-Za-z0-9_-]{20,}$/, 'random enough not to be walked through');
+  assert.equal(again.payload.token, first.payload.token, 'a second press is "show me the link", not "make another"');
+  assert.equal(first.payload.url, null, 'no DASHBOARD_URL means no address rather than half of one');
+});
+
+test('a link says which table it is for, and nothing else about it', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+
+  const res = await runAction({ pathname: '/actions/invite/peek', body: { token }, db, cfg, ctx: seated() });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.campaignName, 'Cipher');
+  assert.equal(res.payload.alreadyIn, false);
+  assert.equal(res.payload.characterName, null);
+  assert.ok(!('people' in res.payload) && !('sessions' in res.payload), 'a token is not a key to the campaign');
+});
+
+test('a token that was never one is refused in the same words as a revoked one', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+  await runAction({ pathname: '/actions/invite/revoke', body: { campaignId }, db, cfg, ctx: seated() });
+
+  const pulled = await runAction({ pathname: '/actions/invite/peek', body: { token }, db, cfg, ctx: seated() });
+  const invented = await runAction({
+    pathname: '/actions/invite/peek', body: { token: 'not-a-token-at-all' }, db, cfg, ctx: seated(),
+  });
+
+  assert.equal(pulled.status, 404);
+  assert.equal(invented.status, 404);
+  assert.equal(pulled.payload.message, invented.payload.message, 'telling them apart tells a stranger which guesses were warm');
+});
+
+test('an expired link is dead even though nobody revoked it', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  db.createInviteLink({
+    token: 'last-week', campaignId, createdBy: 'dm-1',
+    expiresAt: new Date(Date.now() - 1000).toISOString(),
+  });
+
+  const res = await runAction({ pathname: '/actions/invite/peek', body: { token: 'last-week' }, db, cfg, ctx: seated() });
+  assert.equal(res.status, 404);
+});
+
+test('accepting records the session, never a user id from the body', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+
+  const res = await runAction({
+    pathname: '/actions/invite/accept',
+    // The body names somebody else, twice over. It is ignored both times.
+    body: { token, consent: true, name: 'Marn', userId: SOMEBODY_ELSE, campaignId: 9999 },
+    db, cfg, ctx: seated(),
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.recorded, true);
+  assert.equal(db.mayRecord(campaignId, SEATED), true);
+  assert.equal(db.getCharacterName(campaignId, SEATED), 'Marn');
+  assert.equal(db.mayRecord(campaignId, SOMEBODY_ELSE), false, "the body cannot consent on anyone else’s behalf");
+});
+
+test('anything but a literal yes is recorded as a no', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+
+  for (const consent of [undefined, null, 'true', 1, 'yes', {}]) {
+    const res = await runAction({
+      pathname: '/actions/invite/accept',
+      body: { token, consent, name: 'Marn' },
+      db, cfg, ctx: seated(),
+    });
+    assert.equal(res.payload.recorded, false, `${JSON.stringify(consent)} is not agreement`);
+    assert.equal(db.mayRecord(campaignId, SEATED), false);
+  }
+});
+
+test('declining is an answer on file rather than silence', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+
+  await runAction({ pathname: '/actions/invite/accept', body: { token, consent: false }, db, cfg, ctx: seated() });
+
+  assert.equal(db.getConsent(campaignId, SEATED)?.state, 'declined');
+});
+
+// Somebody who will not be recorded is still at the table, and whoever runs it
+// still has to know who they are. The two facts are separate rows and the
+// capture path only ever asks the second one.
+test('a declined player is still named, and still not recorded', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+
+  const res = await runAction({
+    pathname: '/actions/invite/accept',
+    body: { token, consent: false, name: 'Orrin Vale' },
+    db, cfg, ctx: seated(),
+  });
+
+  assert.equal(res.payload.recorded, false);
+  assert.equal(res.payload.characterName, 'Orrin Vale');
+  assert.equal(db.getCharacterName(campaignId, SEATED), 'Orrin Vale', 'the table knows who they are');
+  assert.equal(db.mayRecord(campaignId, SEATED), false, 'and still never records them');
+  assert.equal(db.getConsent(campaignId, SEATED)?.state, 'declined', 'naming did not overwrite the answer');
+});
+
+test('a link cannot be accepted by somebody with no Discord session', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+
+  // The operator's own console: `everything`, and no account to consent as.
+  const res = await runAction({
+    pathname: '/actions/invite/accept',
+    body: { token, consent: true, name: 'Marn' },
+    db, cfg, ctx: { viewer: { userId: null, can: { everything: true } } },
+  });
+
+  assert.equal(res.status, 403);
+  assert.equal(db.listConsent(campaignId).length, 0, 'agreeing to be recorded is not the owner to do');
+});
+
+test('somebody already at the table is told so rather than asked again', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const token = await linkFor(db, cfg, campaignId);
+  db.setConsent(campaignId, SEATED, true);
+  db.setCharacterName(campaignId, SEATED, 'Marn');
+
+  const res = await runAction({ pathname: '/actions/invite/peek', body: { token }, db, cfg, ctx: seated() });
+
+  assert.equal(res.payload.alreadyIn, true);
+  assert.equal(res.payload.characterName, 'Marn');
 });
 
 // An async handler that rejects must be caught by the same net as a sync one:

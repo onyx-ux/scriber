@@ -534,6 +534,173 @@ for the first time.
       cheap model — and falls back to the stored note on any failure, because
       the question has a good answer in the database either way.
 
+## Implemented (2026-09-03)
+
+- [x] **The pressed chip lights up now** — clicking a speaker in the transcript
+      took the highlight off `everyone` and never put it on the name you
+      pressed, so the bar came back with nothing lit at all. Waiting did not
+      help: the five-second poll skipped it for the same reason, and the
+      highlight only appeared once you clicked somewhere else, which is why it
+      read as lag. The campaign tabs had it too.
+
+      The cause was one line in `dashboard/html/dash/morph.js`. The patcher
+      leaves the focused element alone so a poll cannot take a caret or a
+      half-typed word, and it was sparing **every** focused node — but on
+      Windows and Linux a click leaves focus sitting on the button it landed
+      on, so the one element that had just changed appearance was the one
+      element the repaint refused to touch. Focus was never the thing worth
+      protecting; unsent state is, and a button holds none. The guard now asks
+      for `INPUT`/`TEXTAREA`/`SELECT` or a caret in editable text.
+
+      Reproduced in headless Chrome against the real `morph.js` before it was
+      touched, and two of the three new tests in `pi-service/test/morph.test.js`
+      fail against the old guard.
+
+- [x] **Everyone gets a colour** — a speaker picks one of twenty-four and their
+      name is written in it, in transcripts and nowhere else. Twelve families
+      of two shades: the ten dragons, plus an eldritch purple and an ocean blue
+      that no dragon covers.
+
+      **Forty-eight values, not twenty-four.** The dashboard has a dark theme
+      and a light one, and a colour tuned for parchment is invisible on slate.
+      Both halves of every colour were measured rather than picked: each one
+      clears 4.5:1 as text on the LIGHTEST surface its own theme ever puts text
+      on — `--raise` on the dark theme, `--card` on the light one — so a name
+      stays legible on a selected row as well as on the page. The worst of the
+      forty-eight sits at 4.503:1.
+
+      The stylesheet holds them as `light-dark(light, dark)` rather than as
+      three copies of the palette. Every theme block on this page already
+      declares its own `color-scheme`, which is exactly what `light-dark()`
+      resolves against, so 24 rules do the work of 72 and the two themes cannot
+      drift apart by hand. A plain value in front of each is the fallback for a
+      browser without it, and it is the DARK one, because dark is the default.
+
+      What is stored is the **slug**, never a hex — `pi-service/src/web/palette.js`
+      says why at length. A stored colour outlives a retune; a stored hex would
+      freeze one theme into the database and let a client write any string it
+      liked into a class attribute.
+
+      Yours to set for yourself wherever you play, and the manager can set one
+      for a player who never opens the dashboard — the same rule as the
+      character name beside it, for the same reason. Unlike a character name it
+      does **not** enrol anybody: picking a colour is a claim about nothing, and
+      putting somebody on the roster as a side effect of a preference would add
+      a name to the list a DM reads as "these are my players".
+
+      `?` The picker marks colours already spoken for at this table by name and
+      dims them, rather than refusing them. Two people can share brass if they
+      want to — it is their table — but nobody should arrive there by accident,
+      and four warm metals in one palette is the part of this that crowds.
+
+      The switch is per browser, next to the theme, and it turns off the REST
+      of the table rather than everybody: finding your own line in four hours of
+      talk is the reason somebody picked a colour in the first place. It only
+      appears where somebody other than the reader has chosen one, so it is
+      never a control that visibly does nothing.
+
+      `test/palette.test.js` reads the stylesheet and the module and fails if
+      they disagree — on any of the forty-eight values, on the twelve family
+      names, or on their order. It re-measures every contrast ratio against the
+      theme tokens as they are on the day it runs, so retuning a theme is what
+      breaks it, which is the moment the palette does need looking at again.
+
+      Verified end to end in Chrome against a real status server: 24 coloured
+      names, the computed colours matching the palette exactly in both themes,
+      the picker, the switch, and no console errors.
+
+## Work in progress
+
+- [ ] **The threshold — the first-time landing page** (started 2026-09-02) — the
+      screen somebody gets once, on the first sign-in their account has ever
+      made. White writing in the dark that appears a character at a time, asks
+      only what the bot cannot already look up, and burns the page away from the
+      torch you pick. It is `welcomeScreen()` and the `.thr` block in
+      `dashboard/html/index.html`, and it says WIP on screen because it is.
+
+      Two roads out of the first question, because two entirely different
+      people press it.
+
+      **Create the Story.** The book asks what the story is called, which
+      Discord it is told in, and who else is at the table — `campaign/create`,
+      `roster/search` and `roster/invite`, the dashboard's own actions, asked
+      for in the book's own voice. Nobody is sent off to find a button.
+
+      **Join the Story.** A joiner has no table to make and no server to pick,
+      so walking them through the maker's questions would be four screens of
+      "not me". They are asked for an invitation instead, and the link does the
+      rest: it names the table, the table asks whether Quill may write them
+      down, and only then does it ask what to call them. See
+      **The invitation link** below.
+
+      Whether somebody is new comes from `db.countSignIns()` — the gatehouse's
+      sign-on log, asked about one account. Open it without a fresh account by
+      going to `/app/#welcome`.
+
+      **To finish it:**
+
+      - The four endings need their copy settled with a real first-time reader.
+        Two of them (the player with no table, the DM whose Discord has no Quill
+        in it) are written from the outside and have never been read by anyone
+        arriving cold.
+      - **Add Quill to a Discord** points at `/` because there is no install URL
+        anywhere yet — the same blank as `QUILL_INVITE` in `quill-landing.html`.
+        One value, two pages.
+      - `firstVisit` is derived from a log that `pruneAuthEvents` keeps to the
+        last 300 events across everybody, so an account that signed in a year
+        and three hundred events ago is greeted as new a second time. A
+        `first_seen_at` on `dashboard_access`, written once, would settle it.
+      - It is remembered as got-through in `localStorage`, so the same person on
+        a second machine sees it again. Same fix as above.
+      - There is no way back a step. Every move burns the page, and a burnt
+        page has nowhere to return to — a DM who mistypes the name of their
+        campaign has to finish and rename it from the dashboard.
+      - The roster step searches the one server the campaign was just made in,
+        which is right, but it says so nowhere. A DM who types the name of
+        somebody in a different Discord is told only that nobody matches.
+      - Asking somebody is fire-and-forget: the torch lights when the Pi
+        accepts it, and whether they ever answer the DM is only visible later,
+        on the campaign's own table tab.
+      - The consent block on the joining screen is the one place the screen's
+        own no-subtext rule is broken. It is broken on purpose — see the note on
+        `.thr-terms` — but it has never been read by somebody deciding for real,
+        and it is the paragraph that most needs to be.
+
+- [ ] **The invitation link** (started 2026-09-02) — one address per table,
+      handed round however the table already talks to each other, replacing
+      "find each player in a Discord member list first" as the only way onto a
+      roster. `/app/?join=<token>`, made by the `invite/link` action and opened
+      by the threshold's joining road.
+
+      The token is the whole of the authority, so it is treated like a password:
+      18 random bytes, revocable with `invite/revoke`, and dead after 14 days. A
+      token that was never one is refused in exactly the same words as a revoked
+      one, because telling them apart tells a stranger which guesses were warm.
+
+      It is not a way past consent. `invite/accept` records the answer under the
+      **session's** user id and never one from the body, anything but a literal
+      `true` is recorded as a decline. A player who declines is still asked what
+      to call them and still named, which does put them on the roster — being at
+      a table and being recorded at one are separate facts in this schema, and
+      `mayRecord()` is the only gate the capture path asks. It still answers no.
+
+      **To finish it:**
+
+      - The link is only offered on the threshold's roster step, which somebody
+        sees once. A table that gains a player in month four has nowhere to go
+        and ask for it — it belongs on the campaign's own table tab too.
+      - Nothing shows the manager who has come in through the link, or that a
+        live link exists at all. `invite/revoke` is written and tested and has
+        no button anywhere.
+      - `/app/?join=<token>` is the address because nginx serves the dashboard
+        from an exact `location = /app/`, which a query does not disturb. A
+        prettier `/join/<token>` needs a location block in
+        `dashboard/templates/default.conf.template` first.
+      - The token rides in `sessionStorage` across the Discord sign-in bounce,
+        so an invitation opened in one tab and signed into in another is lost.
+      - There is no rate limit on `invite/peek`. The token space makes guessing
+        hopeless, but a bot could still hammer it.
+
 ## Known faults, not fixed yet
 
 The note this section was kept under is worth keeping: these are the operator's

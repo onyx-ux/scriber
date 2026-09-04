@@ -681,6 +681,13 @@ test('the sign-in card offers one way in, and the far side of it works', async (
   assert.match(gate.body(), /href="\/api\/auth\/discord"/,
     'the one control on the card must point at the route that redirects to Discord');
 
+  // saf has signed in before. Without that, the walk below is this account's
+  // first ever sign-in and the page answers it with the threshold — the
+  // first-time screen — instead of the dashboard. That screen is tested in
+  // dashboard-render; what is under test here is the gate and the app behind
+  // it, which is what a returning viewer gets.
+  db.recordAuthEvent(PLAYER, 'saf', 'in');
+
   const cookie = await walkOAuth(base);
 
   const back = await driver({ base, signedInAs: cookie });
@@ -764,6 +771,13 @@ test('you can sign in before sign-in is required', async (t) => {
   // still optional and the operator may simply have been looking.
   const notNow = await page.fire(nav({ signinCancel: '' }, ['gate-btn', 'plain']));
   assert.ok(notNow.changed, 'the way back to the operator view does nothing');
+
+  // saf has signed in before. Without that, the walk below is this account's
+  // first ever sign-in and the page answers it with the threshold — the
+  // first-time screen — instead of the dashboard. That screen is tested in
+  // dashboard-render; what is under test here is the gate and the app behind
+  // it, which is what a returning viewer gets.
+  db.recordAuthEvent(PLAYER, 'saf', 'in');
 
   const cookie = await walkOAuth(base);
 

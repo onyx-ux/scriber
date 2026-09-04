@@ -228,6 +228,26 @@ test('the log is a convenience, not an archive — pruning keeps only the tail',
   assert.equal(kept[0].username, 'p11', 'the most recent survive the prune');
 });
 
+// The one question the log is asked outside the gatehouse: has this account
+// ever been here before? The dashboard greets a first arrival with a screen of
+// its own instead of dropping them into somebody else's campaign list.
+
+test('the log answers whether somebody has signed in before', async (t) => {
+  const { db, cfg } = await harness(t);
+  assert.equal(db.countSignIns(WHO.userId), 0, 'nobody has been here yet');
+
+  const { token } = openSession(db, cfg, WHO);
+  assert.equal(db.countSignIns(WHO.userId), 1, 'the sign-in happening now is the only one');
+
+  closeSession(db, cfg, token);
+  assert.equal(db.countSignIns(WHO.userId), 1, 'signing out is not a sign-in');
+
+  openSession(db, cfg, WHO);
+  assert.equal(db.countSignIns(WHO.userId), 2, 'and now they are a returning viewer');
+
+  assert.equal(db.countSignIns('99999999999999999'), 0, 'counted per account, not in total');
+});
+
 // --- the cookies ---
 
 test('the cookie is HttpOnly and SameSite, and only Secure on https', async () => {
