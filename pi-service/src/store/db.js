@@ -672,6 +672,60 @@ function migrate(db) {
     )
   `);
 
+  // --- corrections the table makes to a write-up -----------------------------
+  //
+  // A write-up that has been corrected, kept whole when it is replaced.
+  //
+  // setSummary overwrites meetings.summary_json, and that is right: there is
+  // one current write-up for a night. What it must not do is take the table's
+  // corrections down with it. Re-summarising is the one thing that genuinely
+  // destroys what a correction was written about — the text it strikes through
+  // stops existing — and that is the deletion this whole feature is a defence
+  // against, arriving by the back door.
+  //
+  // So the version being replaced is copied here first, and its corrections
+  // come with it by version_id. Nothing is re-anchored onto the new text: a
+  // correction is somebody's words about a sentence, and guessing which new
+  // sentence they meant would be inventing their opinion. The old write-up
+  // stays readable with its redlines intact, and the new one starts clean with
+  // a line saying where the others went.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recap_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      summary_json TEXT NOT NULL,
+      retired_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_recap_versions_meeting ON recap_versions(meeting_id)`);
+
+  // One correction: this line said that, it should say this, and I am the one
+  // who says so.
+  //
+  // version_id NULL means the write-up that is current. A correction is never
+  // moved between versions except by setSummary retiring the one it is on, so
+  // NULL is a fact about the correction rather than a lookup.
+  //
+  // `quoted` is the exact text struck through, kept so a line that has MOVED
+  // can still be found — see anchorOf() in notes/redline.js. `body` empty
+  // means struck out with nothing put back, which is how a line the summariser
+  // invented gets removed without anything being deleted.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recap_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      version_id INTEGER REFERENCES recap_versions(id) ON DELETE CASCADE,
+      part TEXT NOT NULL,
+      idx INTEGER NOT NULL,
+      quoted TEXT NOT NULL,
+      body TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      edited_at TEXT
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_recap_notes_meeting ON recap_notes(meeting_id, version_id)`);
+
   // Everyone already at a table when consent arrived keeps being recorded.
   // They have been playing on the old understanding and asking them to
   // re-consent mid-campaign would stop a running game dead; the ask applies
@@ -773,6 +827,22 @@ export function openDb(path) {
   migrate(db);
   return wrap(db);
 }
+
+// A correction row, as everything above the store speaks about it. `idx` is
+// the column name only because INDEX is a SQL keyword; nothing outside this
+// file should have to know that.
+const recapNote = (row) => ({
+  id: row.id,
+  meetingId: row.meeting_id,
+  versionId: row.version_id ?? null,
+  part: row.part,
+  index: row.idx,
+  quoted: row.quoted,
+  body: row.body,
+  userId: row.user_id,
+  createdAt: row.created_at,
+  editedAt: row.edited_at ?? null,
+});
 
 function wrap(db) {
   // A guild's DEFAULT campaign — its oldest, which for every campaign that
@@ -1488,11 +1558,129 @@ function wrap(db) {
         .get(meetingId);
     },
 
+    // Writing a new write-up over the old one, keeping anything the table
+    // said about the old one.
+    //
+    // The retirement only happens when there are corrections to protect. A
+    // night summarised twice with nobody having touched it leaves no version
+    // rows behind, because there is nothing about the first attempt worth
+    // keeping — the value here is the redlines, not the model's earlier draft.
     setSummary(meetingId, notesObj) {
-      db.prepare(`UPDATE meetings SET summary_json = ?, status = 'done' WHERE id = ?`).run(
-        JSON.stringify(notesObj),
-        meetingId
-      );
+      const write = db.transaction(() => {
+        const held = db
+          .prepare(`SELECT COUNT(*) AS n FROM recap_notes WHERE meeting_id = ? AND version_id IS NULL`)
+          .get(meetingId).n;
+        const old = held
+          ? db.prepare(`SELECT summary_json FROM meetings WHERE id = ?`).get(meetingId)?.summary_json
+          : null;
+
+        if (held && old) {
+          const version = db
+            .prepare(`INSERT INTO recap_versions (meeting_id, summary_json) VALUES (?, ?)`)
+            .run(meetingId, old).lastInsertRowid;
+          db.prepare(`UPDATE recap_notes SET version_id = ? WHERE meeting_id = ? AND version_id IS NULL`)
+            .run(version, meetingId);
+        }
+
+        db.prepare(`UPDATE meetings SET summary_json = ?, status = 'done' WHERE id = ?`).run(
+          JSON.stringify(notesObj),
+          meetingId
+        );
+      });
+      write();
+    },
+
+    // --- corrections the table makes to a write-up ---------------------------
+    //
+    // `idx` in SQL, `index` everywhere else: INDEX is a SQL keyword, and the
+    // column was not worth quoting at every call site. The mapping happens
+    // here so nothing above this line has to know.
+
+    addRecapNote({ meetingId, part, index, quoted, body, userId }) {
+      const id = db
+        .prepare(
+          `INSERT INTO recap_notes (meeting_id, part, idx, quoted, body, user_id)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(meetingId, String(part), Number(index), String(quoted ?? ''), String(body ?? ''), String(userId))
+        .lastInsertRowid;
+      // Read back rather than assembled from the arguments, so the row a
+      // caller gets is the row that is on disk — created_at included.
+      return recapNote(db.prepare(`SELECT * FROM recap_notes WHERE id = ?`).get(id));
+    },
+
+    getRecapNote(id) {
+      const row = db.prepare(`SELECT * FROM recap_notes WHERE id = ?`).get(Number(id));
+      return row ? recapNote(row) : null;
+    },
+
+    // Only ever your own, and enforced in the WHERE rather than by reading the
+    // row and comparing: a check that is part of the statement cannot be
+    // skipped by a caller that forgets to make it.
+    editRecapNote(id, userId, body) {
+      return db
+        .prepare(
+          `UPDATE recap_notes SET body = ?, edited_at = datetime('now')
+           WHERE id = ? AND user_id = ?`
+        )
+        .run(String(body ?? ''), Number(id), String(userId)).changes;
+    },
+
+    // `userId` null removes it whoever wrote it, which is the campaign
+    // manager's override. Every other caller passes an id.
+    removeRecapNote(id, userId = null) {
+      return userId == null
+        ? db.prepare(`DELETE FROM recap_notes WHERE id = ?`).run(Number(id)).changes
+        : db.prepare(`DELETE FROM recap_notes WHERE id = ? AND user_id = ?`)
+            .run(Number(id), String(userId)).changes;
+    },
+
+    // versionId null is the current write-up, which is what almost every
+    // caller wants. A number reads the corrections on a retired one.
+    listRecapNotes(meetingId, versionId = null) {
+      const rows = versionId == null
+        ? db.prepare(
+            `SELECT * FROM recap_notes WHERE meeting_id = ? AND version_id IS NULL
+             ORDER BY created_at, id`
+          ).all(meetingId)
+        : db.prepare(
+            `SELECT * FROM recap_notes WHERE meeting_id = ? AND version_id = ?
+             ORDER BY created_at, id`
+          ).all(meetingId, Number(versionId));
+      return rows.map(recapNote);
+    },
+
+    countRecapNotes(meetingId) {
+      return db
+        .prepare(`SELECT COUNT(*) AS n FROM recap_notes WHERE meeting_id = ? AND version_id IS NULL`)
+        .get(meetingId).n;
+    },
+
+    // The write-ups this night has had before the current one, newest first,
+    // each with how many corrections went with it. The page offers these as
+    // "6 corrections on the previous version" rather than as a version
+    // history: the point is the corrections, not the drafts.
+    listRecapVersions(meetingId) {
+      return db
+        .prepare(
+          `SELECT v.id, v.retired_at,
+                  (SELECT COUNT(*) FROM recap_notes n WHERE n.version_id = v.id) AS notes
+             FROM recap_versions v
+            WHERE v.meeting_id = ?
+            ORDER BY v.id DESC`
+        )
+        .all(meetingId)
+        .map((r) => ({ id: r.id, retiredAt: r.retired_at, notes: r.notes }));
+    },
+
+    getRecapVersion(id) {
+      const row = db.prepare(`SELECT * FROM recap_versions WHERE id = ?`).get(Number(id));
+      if (!row) return null;
+      // Written by a model and stored verbatim, exactly like the live one, so
+      // a malformed blob is a thing that can be on disk here too.
+      let notes = null;
+      try { notes = JSON.parse(row.summary_json); } catch { notes = null; }
+      return { id: row.id, meetingId: row.meeting_id, retiredAt: row.retired_at, notes };
     },
 
     // --- job queue ---

@@ -101,6 +101,9 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'invite/revoke',
       'model/choose',
       'pause',
+      'recap/note',
+      'recap/note-edit',
+      'recap/note-remove',
       'roster/character',
       'roster/colour',
       'roster/forget',
@@ -1232,4 +1235,161 @@ test('a correction for a campaign that does not exist is refused', async (t) => 
   assert.equal(res.payload.ok, false);
   assert.match(res.payload.message, /No such campaign/);
   assert.equal(db.raw.prepare('SELECT COUNT(*) AS n FROM corrections').get().n, 0, 'and no orphan row');
+});
+
+// --- corrections the table makes to a write-up -----------------------------
+//
+// The feature's whole safety claim is that none of these three can destroy
+// anything. What is checked here is the other half: that they cannot be aimed
+// at somebody else's words either.
+
+async function withWriteUp(t) {
+  const { db, cfg, campaignId } = await harness(t);
+  const meetingId = db.createMeeting({
+    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'The Cellar',
+    startedAt: '2026-08-01T19:00:00Z', audioDir: '/tmp',
+  });
+  db.setSummary(meetingId, {
+    tldr: 'They went through the front door.',
+    scenes: [{ title: 'The queue', points: ['Wren stamped the writ.'] }],
+    partyDecisions: [],
+  });
+  // ctx.viewer as the server builds it. `manage` alone is not enough — a
+  // creator manages the campaigns they run and no others, and mayManage()
+  // checks the list rather than the flag, which is the whole reason a creator
+  // at one table cannot reach another.
+  const as = (userId, manage = false) => ({
+    viewer: {
+      userId,
+      can: { manage, everything: false },
+      manageableCampaignIds: manage ? [campaignId] : [],
+    },
+  });
+  return { db, cfg, campaignId, meetingId, as };
+}
+
+const correct = (db, cfg, ctx, body) =>
+  runAction({ pathname: '/actions/recap/note', body, db, cfg, ctx });
+
+test('a correction is anchored to the write-up rather than to what was sent', async (t) => {
+  const { db, cfg, campaignId, meetingId, as } = await withWriteUp(t);
+
+  const res = correct(db, cfg, as('saf'), {
+    campaignId, meetingId, part: 'tldr', index: 0,
+    // A caller claiming to strike out something the summariser never wrote.
+    // The quote is what finds a moved line again, so taking it on trust would
+    // let a correction attach itself to a line of its own invention.
+    quoted: 'Something nobody said.',
+    body: 'It was the side door.',
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.equal(db.getRecapNote(res.payload.note.id).quoted, 'They went through the front door.');
+});
+
+test('a correction has to name a line that is really there', async (t) => {
+  const { db, cfg, campaignId, meetingId, as } = await withWriteUp(t);
+
+  for (const body of [
+    { part: 'constructor', index: 0 },
+    { part: 'scene:9', index: 0 },
+    { part: 'tldr', index: 4 },
+    { part: 'tldr', index: -1 },
+  ]) {
+    const res = correct(db, cfg, as('saf'), { campaignId, meetingId, ...body, body: 'no' });
+    assert.equal(res.payload.ok, false, JSON.stringify(body));
+  }
+  assert.equal(db.countRecapNotes(meetingId), 0);
+});
+
+test('a correction cannot be written onto another table’s session', async (t) => {
+  const { db, cfg, meetingId, as } = await withWriteUp(t);
+  const other = db.createCampaign('guild-1', 'Somewhere else', 'dm-2');
+
+  const res = correct(db, cfg, as('saf'), {
+    campaignId: other, meetingId, part: 'tldr', index: 0, body: 'no',
+  });
+
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /not at that table/);
+  assert.equal(db.countRecapNotes(meetingId), 0);
+});
+
+test('a correction on a night with no write-up yet is refused', async (t) => {
+  const { db, cfg, campaignId, as } = await withWriteUp(t);
+  const blank = db.createMeeting({
+    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'The Cellar',
+    startedAt: '2026-08-08T19:00:00Z', audioDir: '/tmp',
+  });
+
+  const res = correct(db, cfg, as('saf'), { campaignId, meetingId: blank, part: 'tldr', index: 0, body: 'no' });
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /no write-up/);
+});
+
+test('somebody else’s correction is not yours to change', async (t) => {
+  const { db, cfg, campaignId, meetingId, as } = await withWriteUp(t);
+  const { payload } = correct(db, cfg, as('saf'), { campaignId, meetingId, part: 'tldr', index: 0, body: 'Side door.' });
+
+  const res = runAction({
+    pathname: '/actions/recap/note-edit',
+    body: { campaignId, noteId: payload.note.id, body: 'Something Saf never said.' },
+    db, cfg, ctx: as('rhi'),
+  });
+
+  assert.equal(res.status, 403);
+  assert.equal(db.getRecapNote(payload.note.id).body, 'Side door.');
+});
+
+// The bug this was written for: the removal was being done first and judged
+// afterwards, so the null that means "the manager's override" was handed over
+// by anybody whose id simply did not match — which is exactly the case it has
+// to refuse.
+test('a player cannot remove another player’s correction', async (t) => {
+  const { db, cfg, campaignId, meetingId, as } = await withWriteUp(t);
+  const { payload } = correct(db, cfg, as('saf'), { campaignId, meetingId, part: 'tldr', index: 0, body: 'Side door.' });
+
+  const res = runAction({
+    pathname: '/actions/recap/note-remove',
+    body: { campaignId, noteId: payload.note.id },
+    db, cfg, ctx: as('rhi'),
+  });
+
+  assert.equal(res.status, 403);
+  assert.equal(db.countRecapNotes(meetingId), 1, 'it was removed before the answer was worked out');
+});
+
+test('whoever runs the table can take down a correction, and the line comes back', async (t) => {
+  const { db, cfg, campaignId, meetingId, as } = await withWriteUp(t);
+  const { payload } = correct(db, cfg, as('saf'), { campaignId, meetingId, part: 'tldr', index: 0, body: 'Side door.' });
+
+  const res = runAction({
+    pathname: '/actions/recap/note-remove',
+    body: { campaignId, noteId: payload.note.id },
+    db, cfg, ctx: as('dm-1', true),
+  });
+
+  assert.equal(res.payload.ok, true);
+  assert.match(res.payload.message, /original line is back/);
+  assert.equal(db.countRecapNotes(meetingId), 0);
+  // And it really is back: the write-up was never touched.
+  assert.match(db.getMeeting(meetingId).summary_json, /front door/);
+});
+
+test('every one of these says what it did', async (t) => {
+  const { db, cfg, campaignId, meetingId, as } = await withWriteUp(t);
+  const made = correct(db, cfg, as('saf'), { campaignId, meetingId, part: 'tldr', index: 0, body: 'Side door.' });
+  const struck = correct(db, cfg, as('saf'), { campaignId, meetingId, part: 'scene:0', index: 0, body: '' });
+
+  // server.js writes these to the audit log and the dashboard toasts them.
+  // Without one the log reads "ok: undefined" and the toast says "HTTP 200".
+  assert.match(made.payload.message, /Corrected in the opening/);
+  assert.match(struck.payload.message, /Struck out of/);
+
+  const edited = runAction({
+    pathname: '/actions/recap/note-edit',
+    body: { campaignId, noteId: made.payload.note.id, body: 'The side door.' },
+    db, cfg, ctx: as('saf'),
+  });
+  assert.match(edited.payload.message, /Correction changed/);
 });

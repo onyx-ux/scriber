@@ -35,7 +35,7 @@ import { applyCorrections } from '../campaign/corrections.js';
 import { ROLES } from '../pipeline/model-choice.js';
 // Whose name an act happens under. Asked rather than re-derived: four actions
 // here used to each decide for themselves what the operator's console is.
-import { actingUserId, listInForce } from './authority.js';
+import { actingUserId, listInForce, mayManage } from './authority.js';
 import { buildViewer, LEVELS, LEVEL_WORDS, HOW_TO_RAISE } from './viewer.js';
 import { TIERS, TOP_TIER, isTier, askLimitFor } from '../access/tiers.js';
 // Ending somebody's sessions goes through the module that owns credentials,
@@ -45,6 +45,7 @@ import { isOperator, isPrimaryOperator, runsThisBot, mayGrantHouseTier } from '.
 import { joinLink } from '../delivery/dashboard-link.js';
 import { isVoiceColour, voiceColour } from './palette.js';
 import { isEdition, EDITIONS, DEFAULT_EDITION } from './rules.js';
+import { linesOf, isPart, partName } from '../notes/redline.js';
 // The token has to be unguessable, not merely unique: it is the only thing
 // standing between a stranger and a table's name. Math.random is neither.
 import { randomBytes } from 'node:crypto';
@@ -949,6 +950,144 @@ export const ACTIONS = {
         campaignId: id,
         edition: asked,
         message: `Rules links now point at the ${EDITIONS[asked].label}.`,
+      },
+    };
+  },
+
+  // --- corrections the table makes to a write-up ---------------------------
+  //
+  // A correction strikes one line of the summariser's write-up through and
+  // says what it should say instead. It NEVER changes the write-up: the base
+  // stays underneath, and removing the correction brings the original line
+  // straight back. That is what makes this safe to hand to a whole table
+  // rather than to whoever runs it.
+  //
+  // Anyone at the table may write one — 'table' in ACTION_NEEDS — and that is
+  // the point rather than a concession. The people who can tell the model it
+  // misheard are the ones who were in the room, and most of them are not the
+  // DM. It is also the first thing on this dashboard a player can change that
+  // another player reads, which is why nothing here can destroy anything.
+  'recap/note': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    const meetingId = Number(body?.meetingId);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    if (!Number.isInteger(meetingId) || meetingId <= 0) return badRequest('A numeric meetingId is required.');
+
+    const who = actingUserId(ctx?.viewer, cfg);
+    if (!who) return badRequest('Sign in first — a correction has to be somebody’s.');
+
+    const meeting = db.getMeeting(meetingId);
+    if (!meeting || meeting.campaign_id !== id) return badRequest('That session is not at that table.');
+
+    // The write-up as it is on disk right now. A correction is anchored to a
+    // line of THIS text, and the exact words are stored with it, so a
+    // correction written against a write-up that has since been replaced can
+    // be told apart from one that still fits. See notes/redline.js.
+    let notes = null;
+    try { notes = meeting.summary_json ? JSON.parse(meeting.summary_json) : null; } catch { notes = null; }
+    if (!notes) return badRequest('There is no write-up for that session yet.');
+
+    const part = String(body?.part ?? '');
+    const index = Number(body?.index);
+    if (!isPart(notes, part)) return badRequest('That is not a part of this write-up.');
+    if (!Number.isInteger(index) || index < 0) return badRequest('A line number is required.');
+
+    // The quoted text is taken from the write-up, not from the request.
+    // Trusting the caller for it would let a correction claim to be striking
+    // out something the summariser never wrote, and the quote is the whole of
+    // how a moved line is found again.
+    const quoted = linesOf(notes).get(part)?.[index];
+    if (typeof quoted !== 'string') return badRequest('There is no line there to correct.');
+
+    const said = String(body?.body ?? '').trim();
+    if (said.length > 2000) return badRequest('A correction has to be shorter than 2000 characters.');
+
+    const note = db.addRecapNote({ meetingId, part, index, quoted, body: said, userId: who });
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        campaignId: id,
+        meetingId,
+        note,
+        message: said
+          ? `Corrected in ${partName(part, notes)}.`
+          : `Struck out of ${partName(part, notes)}.`,
+      },
+    };
+  },
+
+  // Changing your own correction. Only your own: the store enforces it in the
+  // WHERE clause rather than by reading the row first, so a caller that
+  // forgets to check cannot get past it.
+  'recap/note-edit': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    const noteId = Number(body?.noteId);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    if (!Number.isInteger(noteId) || noteId <= 0) return badRequest('A numeric noteId is required.');
+
+    const who = actingUserId(ctx?.viewer, cfg);
+    if (!who) return badRequest('Sign in first.');
+
+    const note = db.getRecapNote(noteId);
+    if (!note) return badRequest('That correction is not there any more.');
+    const meeting = db.getMeeting(note.meetingId);
+    if (!meeting || meeting.campaign_id !== id) return badRequest('That correction is not at that table.');
+
+    const said = String(body?.body ?? '').trim();
+    if (said.length > 2000) return badRequest('A correction has to be shorter than 2000 characters.');
+
+    const changed = db.editRecapNote(noteId, who, said);
+    if (!changed) {
+      return { status: 403, payload: { ok: false, message: 'That is somebody else’s correction.' } };
+    }
+    return {
+      status: 200,
+      payload: { ok: true, campaignId: id, meetingId: note.meetingId, noteId, message: 'Correction changed.' },
+    };
+  },
+
+  // Taking a correction back. Yours, always; anybody's if you run the table.
+  //
+  // The manager's override is here rather than left out because a correction
+  // is visible to the whole table and somebody has to be able to deal with one
+  // that should not be there. It is the only destructive act in this feature,
+  // and it destroys a correction rather than the write-up — the summariser's
+  // line comes back the moment it goes.
+  'recap/note-remove': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    const noteId = Number(body?.noteId);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    if (!Number.isInteger(noteId) || noteId <= 0) return badRequest('A numeric noteId is required.');
+
+    const who = actingUserId(ctx?.viewer, cfg);
+    if (!who) return badRequest('Sign in first.');
+
+    const note = db.getRecapNote(noteId);
+    if (!note) return badRequest('That correction is not there any more.');
+    const meeting = db.getMeeting(note.meetingId);
+    if (!meeting || meeting.campaign_id !== id) return badRequest('That correction is not at that table.');
+
+    // Decided BEFORE anything is deleted. Written the other way round once —
+    // remove first, then work out whether that was allowed — and the null
+    // that means "the manager's override" was being passed by anybody whose
+    // id simply did not match, which is exactly the case it must refuse.
+    const mine = note.userId === who;
+    const override = !mine && (mayManage(ctx?.viewer, id) || Boolean(ctx?.viewer?.can?.everything));
+    if (!mine && !override) {
+      return { status: 403, payload: { ok: false, message: 'That is somebody else’s correction.' } };
+    }
+
+    const changed = db.removeRecapNote(noteId, mine ? who : null);
+    if (!changed) return badRequest('That correction is not there any more.');
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        campaignId: id,
+        meetingId: note.meetingId,
+        noteId,
+        message: 'Correction removed — the original line is back.',
       },
     };
   },

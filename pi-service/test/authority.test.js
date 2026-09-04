@@ -237,6 +237,71 @@ test('a manage action with no campaign id is passed through to the action', asyn
   assert.equal(mayAct({ pathname: '/actions/corrections/add', body: {}, viewer: viewer(CREATOR), db }), null);
 });
 
+// --- at the table ---
+//
+// The tier that is neither "you run this" nor merely "you are signed in".
+// Correcting a write-up belongs to whoever was in the room, and most of them
+// do not run the campaign — so this is the first thing on the dashboard a
+// player can change that another player reads.
+
+test('anybody at the table may correct its write-up', async (t) => {
+  const { db, campaignId, viewer } = await world(t);
+  for (const name of ['recap/note', 'recap/note-edit', 'recap/note-remove']) {
+    assert.equal(ACTION_NEEDS[name], 'table', `${name} is not the manager's to keep`);
+    assert.equal(
+      mayAct({ pathname: `/actions/${name}`, body: { campaignId }, viewer: viewer(PLAYER), db }),
+      null,
+      `${name} should be allowed for somebody who plays there`
+    );
+    // And for whoever runs it, who is also at the table.
+    assert.equal(
+      mayAct({ pathname: `/actions/${name}`, body: { campaignId }, viewer: viewer(CREATOR), db }),
+      null
+    );
+  }
+});
+
+test('somebody with no claim on the table may not correct it', async (t) => {
+  const { db, campaignId, viewer } = await world(t);
+
+  const stranger = mayAct({
+    pathname: '/actions/recap/note', body: { campaignId }, viewer: viewer(STRANGER), db,
+  });
+  assert.equal(stranger?.status, 403);
+  assert.match(stranger.message, /not a table you play at/);
+
+  // Nobody at all is refused before the body is looked at, and told the one
+  // thing that would change the answer. The order matters: asking which
+  // campaign first meant a request with no session and no campaign id fell
+  // through to the action's validator and came back 400, which is the one
+  // shape on this table where nothing had asked who was calling.
+  const nobody = mayAct({
+    pathname: '/actions/recap/note', body: { campaignId }, viewer: viewer(null), db,
+  });
+  assert.equal(nobody?.status, 403);
+  assert.match(nobody.message, /Sign in first/);
+
+  assert.equal(
+    mayAct({ pathname: '/actions/recap/note', body: {}, viewer: viewer(null), db })?.status,
+    403,
+    'a request with no session and no campaign id has to fail closed'
+  );
+});
+
+// The same trap corrections/add fell into: deferring to the action's own
+// validator for a campaign id that names nothing. Answered here so every
+// future table-level action inherits it.
+test('a correction naming a campaign that does not exist is refused here', async (t) => {
+  const { db, viewer } = await world(t);
+  const denial = mayAct({
+    pathname: '/actions/recap/note',
+    body: { campaignId: 9999 },
+    viewer: viewer(CREATOR),
+    db,
+  });
+  assert.equal(denial.status, 403);
+});
+
 // --- your own business ---
 
 test('you may name your own character at a table you play at', async (t) => {

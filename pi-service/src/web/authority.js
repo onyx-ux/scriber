@@ -299,6 +299,24 @@ export const ACTION_NEEDS = {
   'roster/character': 'manage',
   'roster/forget': 'manage',
   'roster/colour': 'manage',
+  // Correcting a write-up: the first thing on this dashboard a player can
+  // change that another player reads, and deliberately not the manager's.
+  //
+  // The people who can tell the summariser it misheard are the ones who were
+  // in the room, and most of them do not run the campaign. Restricting this to
+  // `manage` would leave the correction of a four-hour night to one person and
+  // make the feature not worth having.
+  //
+  // What makes that safe is that none of these three can destroy anything. A
+  // correction is a layer over the write-up; the summariser's text stays
+  // underneath, unedited, and removing the correction brings the original line
+  // straight back. The worst a table can do to itself is strike every line
+  // through, which is visibly a redline rather than a deletion. Acting on
+  // somebody else's correction is refused inside the actions, which also carry
+  // the manager's override for taking one down.
+  'recap/note': 'table',
+  'recap/note-edit': 'table',
+  'recap/note-remove': 'table',
   'corrections/add': 'manage',
   'corrections/remove': 'manage',
   'corrections/replay': 'manage',
@@ -391,6 +409,35 @@ export function mayAct({ pathname, body, viewer, db }) {
     return viewer.userId || viewer.can.everything
       ? null
       : { status: 403, message: 'Sign in first — a campaign has to belong to somebody.' };
+  }
+
+  // Being at the table, which is a weaker claim than running it and a
+  // stronger one than being signed in.
+  //
+  // `maySee` rather than `mayManage`, and a campaign id that has to be there:
+  // an act at a table has to name which table, and one you cannot see is not
+  // one you are at. The campaign is resolved from the body and then checked,
+  // never trusted — the same rule the manage branch below follows, for the
+  // same reason.
+  if (needs === 'table') {
+    // Who before which, and that order is the whole of this branch being
+    // safe. Written the other way round once — resolve the campaign, and let
+    // a missing id fall through to the action's own validator, which says
+    // which field is wrong far better than this can. It does, and a request
+    // with no session and no campaign id then got a 400 out of the validator
+    // instead of a 403 out of the gate: the one shape where nothing had asked
+    // who was calling. Everything else on this table fails closed on the
+    // level first, so this does too.
+    if (!viewer.userId && !viewer.can.everything) {
+      return { status: 403, message: 'Sign in first — a correction has to be somebody\'s.' };
+    }
+
+    const at = Number(body?.campaignId);
+    if (!Number.isInteger(at) || at <= 0) return null; // now the action says which field
+    if (!db.getCampaign(at)) return { status: 403, message: 'That is not a table you play at.' };
+    return maySee(viewer, at)
+      ? null
+      : { status: 403, message: 'That is not a table you play at.' };
   }
 
   if (needs === 'restore') {

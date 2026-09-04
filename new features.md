@@ -714,6 +714,77 @@ for the first time.
 
 ## Work in progress
 
+
+### Correcting a write-up — the foundation is in, the page is not (2026-09-04)
+
+The summariser writes what it heard, and what it heard is sometimes wrong.
+A correction is a **layer over** the write-up and never a change to it: the
+summariser’s text stays underneath exactly as written, a correction strikes
+one line of it through and says what it should say instead, and removing the
+correction brings the original line straight back. That is the whole safety
+claim, and it is what makes this safe to hand to a table rather than to
+whoever runs it — **"delete everything" is not a gesture that exists here.**
+
+**The five questions are settled.**
+
+- **Who may correct.** Anybody at the table, which is a new tier in
+  `ACTION_NEEDS` called `table` — weaker than running the campaign, stronger
+  than being signed in. The people who can tell the model it misheard are the
+  ones who were in the room, and most of them are not the DM.
+- **What the other three audiences show.** The corrected reading, everywhere.
+  `/recap`, the Obsidian export and the Discord post all render what the table
+  says the night was; one document, one truth. The marks show in one place
+  only: the dashboard, with the switch set to edit.
+- **What Re-summarise does.** Keeps the old write-up **and its corrections**
+  as a previous version you can still open and read; the new one starts clean
+  with a line saying how many corrections belong to the old one. Nothing is
+  re-anchored onto the new text — a correction is somebody’s words about a
+  sentence, and guessing which new sentence they meant would be inventing
+  their opinion. This was the sharp one: re-summarising is the only act that
+  genuinely destroys what a correction was written about.
+- **How a correction is anchored.** To a LINE — one bullet, one paragraph,
+  one scene title — by part and index, never a character offset. A line has
+  an identity the write-up already gives it ("the third point of the second
+  scene"), which survives its neighbours changing. The exact text struck
+  through is stored with it, so a line that has MOVED is found again and a
+  line that has genuinely gone is shown apart rather than dropped.
+- **A commenter with no colour.** Falls back to the page’s own ink. The
+  colour is an affordance for reading a redline at a glance; the name is the
+  identity, and one is not missing because the other is.
+
+**Built and tested (27 new tests, 1494 passing):**
+
+- `src/notes/redline.js` — the whole of the reading logic, pure, knowing
+  nothing about the database or the page. `linesOf()` says what is there to
+  correct, `readingOf()` says what the write-up says once the corrections are
+  applied, `redlineOf()` says what it looks like with the marks showing.
+- `recap_versions` and `recap_notes` in the store, with `setSummary()` now
+  retiring a corrected write-up rather than overwriting it. A night
+  re-summarised with nobody having touched it leaves no version behind: the
+  value kept here is the redlines, not the model’s earlier drafts.
+- `recap/note`, `recap/note-edit`, `recap/note-remove`, and the `table` tier
+  in `authority.js`.
+
+**Two faults caught while writing it, both in the new code:**
+
+- `recap/note-remove` was deleting first and judging afterwards, so the
+  `null` that means *the manager’s override* was being handed over by anybody
+  whose id simply did not match — which is exactly the case it has to refuse.
+- The `table` tier resolved the campaign before asking who was calling, so a
+  request with no session and no campaign id fell through to the action’s own
+  validator and came back 400. Every other tier fails closed on the level
+  first; this one does now too. Caught by `no-session.test.js`, which
+  enumerates `ACTIONS` rather than listing them — it covered an action
+  written a year after it was.
+
+**Still to build:** the page. The view/edit switch, the strike-through drawn
+in the commenter’s own voice colour, the line offering the corrections on a
+previous version, and making `readingOf()` the text that `/recap`, the
+Obsidian export and the Discord post actually render — the decision is made
+and the function exists, but nothing calls it outside the tests yet.
+
+Not deployed. The migration is additive and harmless, but there is no reason
+to put half a feature on the Pi.
 - [ ] **The threshold — the first-time landing page** (started 2026-09-02) — the
       screen somebody gets once, on the first sign-in their account has ever
       made. White writing in the dark that appears a character at a time, asks
@@ -870,48 +941,9 @@ read the argument before deciding against it.
 ## Ideas not built yet
 
 - **The table can correct its own write-up, without being able to erase it**
-  (asked for 2026-09-04) — the summariser writes what it heard, and what it
-  heard is sometimes wrong. Today the only fixes are a correction rule, which
-  rewrites transcripts rather than notes, and re-summarising, which costs
-  money and rolls the dice again. Neither lets somebody who was there simply
-  say "no, it was the other door".
-
-  **The shape asked for is a redline, not an edit box.** Adding a comment
-  strikes the original text through and writes the correction beside it, in
-  the commenter’s own voice colour — the same twenty-four the transcript
-  already uses, so who said what is legible without a byline. A **view / edit**
-  switch decides what a reader sees: **view** shows only the corrected reading,
-  with the struck text hidden; **edit** shows both, and the marks. Anybody can
-  edit their own comments.
-
-  **What makes it safe is that nothing is destructive.** The summariser’s
-  write-up stays underneath as the base and is never overwritten — a comment
-  is a layer over it, so "delete everything" is not a gesture that exists.
-  The worst anybody can do is strike every line through, which is visibly a
-  redline and is undone by removing the comment.
-
-  The longer aim behind it is a write-up with real structure — headings,
-  sections, links — closer to an Obsidian file than to a rendered blob, so the
-  page and the vault export are the same document.
-
-  **To settle before building:**
-
-  - Who may comment. Everybody at the table is the obvious answer and the one
-    that makes it worth having; it is also the first thing on this dashboard a
-    player could change that another player reads.
-  - What `/recap`, the Discord post and the Obsidian export show — the base
-    text or the corrected reading. They are three different audiences and one
-    of them has already been posted.
-  - What `summary/again` does to the comments. Re-summarising replaces the
-    base, and the comments are anchored to text that no longer exists. That is
-    the deletion this feature exists to prevent, arriving by the back door.
-  - How a comment is anchored at all — an offset into a string breaks the
-    moment the string does. Anchoring to a scene and a sentence index survives
-    more, and still not a re-summarise.
-  - What a commenter with no colour looks like. Twenty-four colours and a
-    table of six means most people have one, but the fallback has to read as
-    somebody rather than as a fault.
-
+  (asked for 2026-09-04) — moved to Work in progress below; the five open
+  questions are answered there and the half of it that is not the page is
+  built.
 - **Limits behind the tiers** — the tier is set, stored and visible, and it
   governs exactly one ceiling: the daily `/campaign ask` allowance, via
   `TIER_ASK_LIMITS`. The two the operator actually has in mind are not built.
