@@ -200,6 +200,13 @@ export function scopeCampaign(view, viewer) {
           characterName: p.characterName,
           lines: p.lines,
           enrolled: p.enrolled,
+          // Kept in the cut, unlike everything else here. A colour is not a
+          // fact about somebody's account, it is how their name is drawn —
+          // it is already on every line of a transcript and beside every
+          // correction they make to a write-up, and a player who could not
+          // read their own back would have no way of knowing what they had
+          // chosen. The id beside it is still nulled for everybody else.
+          colour: p.colour ?? null,
           consent: p.userId === viewer?.userId ? p.consent : { state: 'hidden', label: '', mayRecord: false },
         })),
     viewerCan: { manage, transcripts: Boolean(viewer?.can?.transcripts) },

@@ -248,6 +248,30 @@ test('a player is not shown the rest of the table\'s consent states', async (t) 
   assert.equal(them.userId, null, "and somebody else's Discord id is not theirs at all");
 });
 
+// The one thing that stays in the roster cut, and it stays on purpose.
+//
+// A colour is not a fact about somebody's account, it is how their name is
+// drawn — already on every line of a transcript and beside every correction
+// they make to a write-up. It is also the only setting on this bot a player
+// can change about themselves, and the picker has to be able to show them what
+// they already chose. Cutting it made the account panel say "No colour yet" to
+// somebody who had picked one an hour before.
+test('a player can read the colours, including their own', async (t) => {
+  const { db, cipher } = await world(t);
+  db.setVoiceColour(cipher, PLAYER, 'eldritch-deep');
+  db.setVoiceColour(cipher, CREATOR, 'gold-bright');
+
+  const scoped = scopeCampaign(buildCampaignView({ db, campaignId: cipher }), viewerFor(db, PLAYER));
+  const me = scoped.roster.find((p) => p.userId === PLAYER);
+
+  assert.equal(me.colour, 'eldritch-deep');
+  // Somebody else's colour comes through too, and their id still does not:
+  // the transcript already draws the whole table in theirs.
+  const them = scoped.roster.find((p) => p.displayName === 'Kez');
+  assert.equal(them.colour, 'gold-bright');
+  assert.equal(them.userId, null);
+});
+
 test('a player gets no corrections list and cannot manage', async (t) => {
   const { db, cipher } = await world(t);
   const scoped = scopeCampaign(buildCampaignView({ db, campaignId: cipher }), viewerFor(db, PLAYER));

@@ -1100,11 +1100,34 @@ export const ACTIONS = {
     };
   },
 
-  'roster/colour': (db, cfg, body) => {
+  // The colour your own name is written in, and nobody else's.
+  //
+  // It used to be the manager's as well, on the reasoning that a transcript
+  // where one voice is coloured and four are not is worse than none being —
+  // so somebody had to be able to colour in the players who never open the
+  // dashboard. That was the wrong trade. This is the one setting on this bot
+  // that is purely about how a person is depicted, and the only opinion worth
+  // having about it belongs to the person it depicts. A DM assigning colours
+  // to their table is a DM deciding what everyone else looks like.
+  //
+  // So the acting user is the subject, always. `userId` in the body is still
+  // read and still has to match, rather than being quietly ignored: a page
+  // asking to colour somebody else in should be told no, not silently handed
+  // its own reflection.
+  'roster/colour': (db, cfg, body, ctx) => {
     const id = campaignId(body);
-    const who = userId(body);
+    const me = actingUserId(ctx?.viewer, cfg);
     if (!id) return badRequest('A numeric campaignId is required.');
-    if (!who) return badRequest('A Discord user id is required.');
+    if (!me) return badRequest('Sign in first — a colour belongs to somebody.');
+
+    const asking = userId(body);
+    if (asking && asking !== me) {
+      return {
+        status: 403,
+        payload: { ok: false, message: 'A colour is the choice of whoever is written in it.' },
+      };
+    }
+    const who = me;
 
     const asked = String(body?.colour ?? '').trim();
     if (asked && !isVoiceColour(asked)) return badRequest('That is not one of the colours.');

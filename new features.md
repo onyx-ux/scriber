@@ -556,6 +556,46 @@ for the first time.
       touched, and two of the three new tests in `pi-service/test/morph.test.js`
       fail against the old guard.
 
+- [x] **A colour is yours, and you pick it where it shows** (asked for
+      2026-09-04) — the picker was a Voice column on the roster, and the
+      manager could set one for anybody at the table. Both halves of that were
+      wrong.
+
+      **Wrong place.** A colour only ever appears in a transcript. Choosing
+      one from a table of names meant picking blind and then going to look. It
+      is on your own name in the transcript legend now, with a swatch beside
+      it, where the thing it changes is on the screen while you change it.
+
+      **Wrong person.** The column let whoever ran the campaign colour in the
+      whole table. That reads as helpful and is not: this is the one setting on
+      this bot purely about how a person is depicted, and the only opinion
+      worth having about it belongs to the person it depicts. Refused twice
+      now — the gate will not let a player reach another player’s row, and the
+      action refuses the manager as well, rather than quietly retargeting the
+      request at whoever sent it.
+
+      **The thing that nearly made this useless.** A player cannot open a
+      transcript at all, deliberately and correctly: a recap is the table’s
+      shared account of an evening, a transcript is every word five people
+      said, and being at the table is not the same as being handed that. So a
+      picker that lived only in the legend would have been a picker only the DM
+      could reach, with everybody else colourless forever — the exact opposite
+      of the point. The same choice is on the account panel, which is the one
+      place every signed-in person can reach, shown while you are inside a
+      campaign because a colour belongs to one table rather than to an account.
+
+      Found by walking it signed in as a player rather than as the operator.
+      The operator passes every gate, so a walk that runs as one cannot see a
+      wall that only stands in front of somebody else.
+
+      **And a second fault behind that one.** The scoped campaign payload cut
+      `colour` out of the roster for anybody who does not manage the table, so
+      a player’s own row came back colourless and the panel said "No colour
+      yet" to somebody who had picked one an hour earlier. It stays in the cut
+      now, on purpose and with a test naming it: a colour is not a fact about
+      an account, it is how a name is drawn — already on every line of a
+      transcript and beside every correction in a write-up. The Discord id
+      beside it is still nulled for everybody but you.
 - [x] **The table can correct its own write-up, and cannot erase it**
       (asked for 2026-09-04) — the summariser writes what it heard, and what
       it heard is sometimes wrong. Until now the only fixes were a correction

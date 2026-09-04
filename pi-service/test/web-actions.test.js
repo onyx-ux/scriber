@@ -595,6 +595,54 @@ test('forgetting a character keeps the player on the roster', async (t) => {
 });
 
 // --- what colour a voice is written in ---
+//
+// Your own, and nobody else's. It used to be the manager's as well, so that a
+// DM could colour in the players who never open the dashboard — and that was
+// the wrong trade: this is the one setting here that is purely about how a
+// person is depicted, and the only opinion worth having about it belongs to
+// the person it depicts.
+//
+// So every call below says who is asking, and two of them ask about somebody
+// else.
+const asMe = (userId, manage = false) => ({
+  viewer: { userId, can: { manage, everything: false }, manageableCampaignIds: [] },
+});
+
+test('a colour is the choice of whoever is written in it, not the table’s', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const saf = '175407464513011713';
+  const rhi = '175407464513011714';
+
+  // A player reaching for another player's row.
+  const player = runAction({
+    pathname: '/actions/roster/colour',
+    body: { campaignId, userId: rhi, colour: 'gold-bright' },
+    db, cfg, ctx: asMe(saf),
+  });
+  assert.equal(player.status, 403);
+  assert.match(player.payload.message, /choice of whoever is written in it/);
+
+  // And the manager, who used to be allowed and is not any more.
+  const dm = runAction({
+    pathname: '/actions/roster/colour',
+    body: { campaignId, userId: rhi, colour: 'gold-bright' },
+    db, cfg, ctx: asMe('dm-1', true),
+  });
+  assert.equal(dm.status, 403);
+
+  assert.equal(db.getVoiceColour(campaignId, rhi), null, 'somebody else picked it for them');
+});
+
+test('a colour with nobody behind it is refused', async (t) => {
+  const { db, cfg, campaignId } = await harness(t);
+  const res = runAction({
+    pathname: '/actions/roster/colour',
+    body: { campaignId, colour: 'gold-bright' },
+    db, cfg, ctx: { viewer: { userId: null, can: {} } },
+  });
+  assert.equal(res.payload.ok, false);
+  assert.match(res.payload.message, /Sign in first/);
+});
 
 test('a colour from the palette is stored against the person, per campaign', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
@@ -605,6 +653,7 @@ test('a colour from the palette is stored against the person, per campaign', asy
     body: { campaignId, userId: who, colour: 'eldritch-deep' },
     db,
     cfg,
+    ctx: asMe(who),
   });
 
   assert.equal(res.payload.ok, true);
@@ -616,7 +665,7 @@ test('picking a colour does not put anybody at the table', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
   const who = '175407464513011713';
 
-  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'gold-bright' }, db, cfg });
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'gold-bright' }, db, cfg, ctx: asMe(who) });
 
   // The one way this differs from roster/character beside it. Naming a
   // character is a claim about who plays here; choosing a colour is a claim
@@ -637,7 +686,7 @@ test('a colour that is not in the palette is refused, and nothing is stored', as
     'red-deep" onmouseover="x',
     '#ff0000',
   ]) {
-    const res = runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: bad }, db, cfg });
+    const res = runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: bad }, db, cfg, ctx: asMe(who) });
     assert.equal(res.payload.ok, false, bad);
     assert.equal(res.status, 400, bad);
     assert.equal(db.getVoiceColour(campaignId, who), null, bad);
@@ -647,9 +696,9 @@ test('a colour that is not in the palette is refused, and nothing is stored', as
 test('an empty colour clears the one on file rather than being refused', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
   const who = '175407464513011713';
-  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'ocean-deep' }, db, cfg });
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'ocean-deep' }, db, cfg, ctx: asMe(who) });
 
-  const res = runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: '' }, db, cfg });
+  const res = runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: '' }, db, cfg, ctx: asMe(who) });
   assert.equal(res.payload.ok, true);
   assert.equal(res.payload.colour, null);
   assert.equal(db.getVoiceColour(campaignId, who), null);
@@ -660,8 +709,8 @@ test('the same person can be a different colour at each of their tables', async 
   const other = db.createCampaign('guild-2', 'Ashfall', 'dm-2');
   const who = '175407464513011713';
 
-  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'red-deep' }, db, cfg });
-  runAction({ pathname: '/actions/roster/colour', body: { campaignId: other, userId: who, colour: 'blue-bright' }, db, cfg });
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'red-deep' }, db, cfg, ctx: asMe(who) });
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId: other, userId: who, colour: 'blue-bright' }, db, cfg, ctx: asMe(who) });
 
   assert.equal(db.getVoiceColour(campaignId, who), 'red-deep');
   assert.equal(db.getVoiceColour(other, who), 'blue-bright');
@@ -671,7 +720,7 @@ test('leaving a table takes the colour with you', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
   const who = '175407464513011713';
   runAction({ pathname: '/actions/roster/character', body: { campaignId, userId: who, name: 'Vex' }, db, cfg });
-  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'silver-deep' }, db, cfg });
+  runAction({ pathname: '/actions/roster/colour', body: { campaignId, userId: who, colour: 'silver-deep' }, db, cfg, ctx: asMe(who) });
 
   db.removeFromCampaign(campaignId, who);
 

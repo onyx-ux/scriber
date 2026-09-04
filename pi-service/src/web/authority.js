@@ -298,6 +298,11 @@ export const ACTION_NEEDS = {
   'invite/accept': 'signed-in',
   'roster/character': 'manage',
   'roster/forget': 'manage',
+  // Aimed at yourself it is OWN_BUSINESS below and needs only a seat at the
+  // table. Aimed at anybody else it is refused twice: here, because a player
+  // may not reach for another player's row, and again inside the action,
+  // which refuses the manager too. Two layers saying the same no, because
+  // this one moved — it used to be a thing the DM could do to the table.
   'roster/colour': 'manage',
   // Correcting a write-up: the first thing on this dashboard a player can
   // change that another player reads, and deliberately not the manager's.

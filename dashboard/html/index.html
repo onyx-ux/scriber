@@ -617,10 +617,10 @@
   .grid .tr { padding: 15px 0; border-bottom: 1px solid var(--rule); }
   .grid .tr:last-child { border-bottom: 0; }
   .grid .r { text-align: right; }
-  .roster .hd, .roster .tr { grid-template-columns: 1.4fr 1.4fr 62px 90px 150px 190px; }
+  .roster .hd, .roster .tr { grid-template-columns: 1.4fr 1.4fr 90px 150px 190px; }
   /* Nobody left to hear from: the consent column has nothing to say that the
      heading has not, so the table closes up around it. */
-  .roster.settled .hd, .roster.settled .tr { grid-template-columns: 1.4fr 1.4fr 62px 90px 150px; }
+  .roster.settled .hd, .roster.settled .tr { grid-template-columns: 1.4fr 1.4fr 90px 150px; }
 
   /* Two boxes and the arrow between them: the shape of the thing being
      written, which is a substitution. Used where the grid would otherwise be
@@ -768,6 +768,19 @@
   .voice-dot.pick:hover { border-color: var(--edge); }
   .voice-dot.on { box-shadow: 0 0 0 2px var(--card), 0 0 0 3px var(--voice, var(--edge)); }
   .voice-dot.big { width: 30px; height: 30px; }
+  /* Beside your own name in the transcript legend, which is the one place a
+     colour can be chosen. Small enough to sit in a line of 13.5px type. */
+  .voice-dot.tiny { width: 12px; height: 12px; }
+  /* The same choice on the account panel, which is the one place every signed-in
+     person can reach — see myInkRow(). */
+  .sheet-ink { display: flex; align-items: center; gap: 9px; width: 100%;
+               font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+               background: transparent; border: 1px solid var(--line); border-radius: 7px;
+               padding: 8px 10px; margin-bottom: 10px; color: var(--text-2);
+               transition: border-color .13s, color .13s; }
+  .sheet-ink:hover { border-color: var(--edge); color: var(--text); }
+  .sheet-ink .what { color: var(--voice, var(--text-2)); }
+  .sheet-ink .quiet { margin-left: auto; font-size: 11px; }
   /* Already somebody else’s at this table. Dimmed, not disabled: two people
      CAN share brass if they want to, but nobody should arrive there by
      accident. */
@@ -793,6 +806,7 @@
      picker from the screen the colours are actually for. Dashed underline
      rather than a button, because it is a name first. */
   .voice-pick { font: inherit; font-size: 13.5px; width: 104px; text-align: left;
+                display: flex; align-items: center; gap: 7px;
                 padding: 0 0 1px; background: none; border: 0; cursor: pointer;
                 border-bottom: 1px dashed var(--dash); color: var(--text-2); }
   .voice-pick:hover { border-bottom-color: var(--edge); }
@@ -3917,6 +3931,7 @@ function accountSheet() {
           <span class="pill" style="margin-left:auto;padding:1px 7px">${esc(me.level)}</span>
         </div>
         <div class="quiet" style="margin-bottom:13px">sees ${esc(me.sees ?? '')}</div>
+        ${myInkRow()}
         <button class="btn sm" data-logout style="width:100%">Sign out</button>`
       : me?.signInAvailable ? `
         <div style="margin-bottom:10px;color:var(--text-2)">the operator</div>
@@ -6984,7 +6999,7 @@ function rosterTab() {
 
       <div class="grid roster${waiting.length ? '' : ' settled'}" style="margin-top:30px">
         <div class="hd">
-          <div>Player</div><div>Character</div><div>Voice</div>
+          <div>Player</div><div>Character</div>
           <div class="r">Lines</div><div class="r">Share</div>
           ${waiting.length ? '<div class="r">Consent</div>' : ''}
         </div>
@@ -6994,7 +7009,6 @@ function rosterTab() {
           return `<div class="tr">
             <div>${esc(who)}</div>
             <div>${characterCell(p, who)}</div>
-            <div>${voiceCell(p, who)}</div>
             <div class="r mono">${p.lines ? n(p.lines) : '—'}</div>
             <div class="r"><span class="share">
               <i class="${p.lines ? '' : 'quiet'}"><b style="width:${p.lines ? pct : 0}%"></b></i>
@@ -7119,21 +7133,18 @@ function characterCell(p, who) {
   }</button>`;
 }
 
-// The colour this person is written in, and the way to change it.
+// The roster used to carry a Voice column, and it is gone from here on
+// purpose — twice over.
 //
-// Same rule as the character name beside it: yours wherever you are welcome,
-// anybody else’s needs the table. The manager can set one for a player who
-// never opens the dashboard, which is most of them — a transcript where one
-// voice is coloured and four are not is worse than none being.
-function voiceCell(p, who) {
-  const mine = Boolean(me?.signedIn && p.userId && String(p.userId) === String(me.userId));
-  const on = p.colour && realVoice(p.colour) ? ` v-${p.colour}` : ' unset';
-  if (!canManage() && !mine) {
-    return `<span class="voice-dot${on}" title="${p.colour ? esc(voiceName(p.colour)) : 'no colour'}"><i class="swatch"></i></span>`;
-  }
-  return `<button type="button" class="voice-dot pick${on}" data-voice-for="${esc(p.userId)}"
-            title="${p.colour ? `${esc(voiceName(p.colour))} — click to change` : `Pick a colour for ${esc(who)}`}"><i class="swatch"></i></button>`;
-}
+// It was in the wrong place: a colour only ever shows in a transcript, and a
+// control lives where the thing it changes can be seen. Picking one from a
+// table of names meant choosing blind and then going to look.
+//
+// And it was the wrong person’s: the column let whoever ran the campaign
+// colour in the whole table. That reads as helpful and is not. This is the
+// one setting on this bot purely about how a person is depicted, and the
+// only opinion worth having about it belongs to the person it depicts. The
+// picker is in the transcript legend now, on your own name and no other.
 
 // "brass-deep" as somebody would say it out loud.
 function voiceName(slug) {
@@ -7514,6 +7525,60 @@ function showVoices(on) {
   } catch (e) { /* a browser with storage turned off keeps them on */ }
 }
 
+// The second way in, and the only one most of a table has.
+//
+// The picker belongs in the transcript, where the colour is the whole point of
+// looking. The trouble is that a PLAYER cannot open a transcript — deliberately
+// and correctly: a recap is the table's shared account of an evening, and a
+// transcript is every word five people said, which being at the table does not
+// entitle you to. See viewer.js.
+//
+// So a picker that lives only in the transcript legend is a picker only the DM
+// can reach, and everybody else is colourless forever — which is the opposite
+// of "your own, and nobody else's". This is the same dialog, on the panel that
+// is already about you, shown while you are inside a campaign because a colour
+// belongs to one table rather than to an account.
+function myInkRow() {
+  if (!me?.signedIn || !view.campaignId || !detail) return '';
+  const mine = (detail.roster ?? []).find((r) => String(r.userId) === String(me.userId));
+  const colour = mine?.colour ?? null;
+  const ink = voiceClass(me.userId, colour);
+  return `
+    <button type="button" class="sheet-ink${ink}" data-voice-for="${esc(me.userId)}"
+            title="How your name is written in transcripts at ${esc(detail.label || detail.name || 'this table')}">
+      <i class="voice-dot tiny${colour && realVoice(colour) ? '' : ' unset'}"><i class="swatch"></i></i>
+      <span class="what">${colour ? esc(voiceName(colour)) : 'No colour yet'}</span>
+      <span class="quiet">in ${esc(detail.label || detail.name || 'this table')}</span>
+    </button>`;
+}
+
+// A way to pick your colour on a night you did not speak.
+//
+// The picker sits on your own name in the legend, and the legend is who
+// spoke — so somebody who sat out a session, or joined the table afterwards,
+// would have nowhere to set one from. Shown only in that case, so there are
+// never two ways to open the same dialog in one panel.
+function myVoiceRow() {
+  if (!me?.signedIn || !view.campaignId) return '';
+  if ((script?.speakers ?? []).some((sp) => String(sp.userId) === String(me.userId))) return '';
+
+  const mine = (detail?.roster ?? []).find((r) => String(r.userId) === String(me.userId));
+  const colour = mine?.colour ?? null;
+  const ink = voiceClass(me.userId, colour);
+  return `
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--rule)">
+      <div class="${ink.trim()}" style="display:flex;align-items:center;gap:11px">
+        <button type="button" class="voice-pick${ink ? ' voiced' : ''}" data-voice-for="${esc(me.userId)}"
+                style="width:auto"
+                title="${colour ? `${esc(voiceName(colour))} — press to change how your name is written`
+                  : 'Pick the colour your name is written in'}">
+          <i class="voice-dot tiny${colour && realVoice(colour) ? '' : ' unset'}"><i class="swatch"></i></i>
+          <span>Your colour</span></button>
+        <span class="quiet" style="font-size:11.5px">you did not speak in this one</span>
+      </div>
+    </div>`;
+}
+
 // The classes that write something in somebody's colour, or nothing at all.
 // Both classes or neither, deliberately: `voiced` on its own would ask for a
 // property that is not set anywhere.
@@ -7585,7 +7650,10 @@ function transcriptScreen() {
               <div class="${ink.trim()}" style="display:flex;align-items:center;gap:11px">
                 ${mine
                   ? `<button type="button" class="voice-pick${ink ? ' voiced' : ''}" data-voice-for="${esc(sp.userId)}"
-                             title="Pick the colour your name is written in here">${esc(sp.name)}</button>`
+                             title="${sp.colour ? `${esc(voiceName(sp.colour))} — press to change how your name is written here`
+                               : 'Pick the colour your name is written in here'}">
+                       <i class="voice-dot tiny${sp.colour && realVoice(sp.colour) ? '' : ' unset'}"><i class="swatch"></i></i>
+                       <span>${esc(sp.name)}</span></button>`
                   : `<span class="${ink ? 'voiced' : ''}" style="font-size:13.5px;width:104px;${!ink && sp.manager ? 'color:var(--brass)' : ''}">${esc(sp.name)}</span>`}
                 <i style="flex:1;height:5px;border-radius:3px;background:var(--line);display:block;overflow:hidden">
                   <b style="display:block;height:100%;width:${sp.share}%;background:var(--voice, ${sp.manager ? 'var(--brass)' : 'var(--edge)'})"></b>
@@ -7594,6 +7662,7 @@ function transcriptScreen() {
               </div>`;
             }).join('')}
           </div>
+          ${myVoiceRow()}
         </div>
         ${script.corrections.length ? `
           <div class="keep">
@@ -7981,13 +8050,16 @@ function deleteDialog() {
 }
 
 function voiceDialog() {
-  // Reachable from two screens with two different shapes of list behind them:
-  // the campaign table, which knows the whole roster, and the transcript
-  // legend, which knows only who spoke in that session. Either answers the two
-  // questions this needs — who is being coloured, and what is already taken.
+  // Always about the person who opened it — there is one place to open it
+  // from now, and it is your own name in the transcript legend.
+  //
+  // Both lists are still read for what is already TAKEN: the roster knows the
+  // whole table, the legend knows only who spoke tonight, and whichever is to
+  // hand is better than neither. Sharing a colour is allowed, but nobody
+  // should arrive at it by accident.
   const from = detail?.roster?.length ? detail.roster : (script?.speakers ?? []);
   const p = from.find((r) => String(r.userId) === String(view.picking));
-  const label = p?.characterName || p?.name || (p ? whoIs(p) : 'this voice');
+  const label = p?.characterName || p?.name || (p ? whoIs(p) : 'you');
 
   const taken = new Map();
   for (const r of from) {
@@ -8000,11 +8072,13 @@ function voiceDialog() {
     <div class="backdrop" data-backdrop>
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Pick a colour">
         <div class="kicker">${esc(label)}</div>
-        <h1>How this name is written</h1>
+        <h1>How your name is written</h1>
         <div class="say-2" style="font-size:14.5px;margin-top:12px;max-width:58ch">
-          In transcripts, and nowhere else. It changes nothing about what is recorded,
-          what the notes say, or what anybody is called — only how quickly you can find
-          one voice in four hours of talking.
+          In transcripts, and in corrections you make to a write-up. Nowhere else, and
+          nobody else&rsquo;s: it changes nothing about what is recorded, what the notes say,
+          or what anybody is called &mdash; only how quickly you can find one voice in four
+          hours of talking. Per table, so the ranger you play on Tuesdays and the wizard
+          you play on Fridays need not be the same colour.
         </div>
 
         <div class="voices">
@@ -8873,8 +8947,13 @@ document.addEventListener('click', async (event) => {
 
   const openVoice = t.closest('[data-voice-for]');
   if (openVoice) {
+    // Yours, and only ever yours. Nothing on the page draws this button for
+    // anybody else any more, so this is the belt to the server's braces: a
+    // page that has been edited in a console cannot open the dialog on
+    // somebody else's row and then send their id with the answer.
+    if (!me?.signedIn || String(openVoice.dataset.voiceFor) !== String(me.userId)) return;
     closeDialogs();
-    view.picking = openVoice.dataset.voiceFor;
+    view.picking = me.userId;
     return paint();
   }
 
