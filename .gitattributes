@@ -1,0 +1,18 @@
+# Line endings, decided once, for the repo and the working tree both.
+#
+# This file exists because of a fault that cost two patch attempts in one
+# session before anybody spotted it: an editing tool would write a file back
+# with CRLF, the repo was LF, and nothing anywhere said which was right. It is
+# invisible until something matches on exact text — and then it fails on two
+# strings that look identical on screen. By the time this was written down,
+# 42 of the 200 tracked files had been committed with CRLF and the rest were
+# LF, so the repo no longer had one answer at all.
+#
+# `eol=lf` rather than `text=auto` alone, and that is the whole point: without
+# it the working tree still gets CRLF on Windows whenever core.autocrlf says
+# so, which is exactly the state this is here to end. Checked out on Windows,
+# edited on Windows, deployed to a Pi — one ending, everywhere, always.
+* text=auto eol=lf
+
+# Bytes, not text. `text=auto` guesses well and does not need to guess here.
+*.png binary
