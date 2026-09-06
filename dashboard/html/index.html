@@ -864,9 +864,36 @@
     .pane-main { padding: 26px 24px 40px; }
     .tr-bar { position: static; }
   }
+  /* The band between a phone and a laptop — a window docked to half a
+     screen, which is where a DM reads a write-up beside Discord, so it is not
+     a rare width. The bar needs 1018px at its narrowest: the campaign name,
+     two health readings, two pause buttons, the theme switch and the account
+     marks. Below 820 it wrapped and was fine; above 1024 it fits; in between
+     it pushed the whole page sideways.
+
+     The bar takes a second row here, and nothing gives way. That is the
+     decision, and it was between three things: hide the health readings,
+     shorten the pause buttons, or wrap. Wrapping is the only one of those
+     that costs no information — and it is not a new behaviour to reason
+     about, it is the behaviour the same bar already has on a phone, started
+     200px earlier.
+
+     Both halves matter and the first attempt at this shipped only one. A
+     wrap rule on its own puts a second row inside a bar still pinned to
+     `flex: 0 0 76px`, and the pause buttons come out sliced along the top.
+     The height has to be released in the same breath. */
+  @media (max-width: 1023px) {
+    .top { height: auto; flex: none; flex-wrap: wrap; padding: 13px 22px 13px 26px; }
+    /* Off the right-hand edge and onto the left one. `margin-left: auto` is
+       what pins the controls to the far end of a single row; left where it
+       is, the second row would hang off the right of the page with the
+       quill above nothing. */
+    .top .right { margin-left: 0; flex-wrap: wrap; }
+    .theme { margin-left: 0; }
+  }
   @media (max-width: 820px) {
     .app { flex-direction: column; }
-    .top { height: auto; flex: none; padding: 14px 18px; gap: 14px; flex-wrap: wrap; }
+    .top { padding: 14px 18px; gap: 14px; }
     .banner, .banner-more { padding: 18px 20px; }
     /* The banner is a row of dot, sentence and buttons, and on a phone the
        buttons were keeping their full width and squeezing the sentence into a
@@ -1898,9 +1925,9 @@
   @media (max-width: 820px) {
     /* The top bar carries two pause buttons and the theme switch. At 430px
        that is wider than the phone, and .right pinning itself to the end with
-       margin-left:auto meant it overflowed rather than wrapped. */
-    .top .right { margin-left: 0; flex-wrap: wrap; }
-    .theme { margin-left: 0; }
+       margin-left:auto meant it overflowed rather than wrapped. Both rules
+       that answer that live in the 1023px band now, which contains this one:
+       the same failure starts 200px above a phone. */
 
     /* Five tabs do not fit a phone. The strip scrolls inside itself rather
        than widening the page — nothing else on the page scrolls sideways. */
@@ -6697,9 +6724,15 @@ function syncParts() {
   const slot = document.querySelector('.parts-slot');
   if (!slot) return;
 
-  const want = [...document.querySelectorAll('[data-part]')].map((el) => `${el.id} ${el.dataset.part}`);
+  // Joined on a separator that cannot occur in either half, so "Scene 1" in
+  // one part and "1" in the next cannot compare equal by accident. Written as
+  // the ESCAPE and not as the byte: a raw NUL in the file makes every text
+  // tool call this an 8,000-line binary and skip it silently, which is how it
+  // sat out a repo-wide line-ending sweep that was looking for exactly this
+  // kind of invisible byte.
+  const want = [...document.querySelectorAll('[data-part]')].map((el) => `${el.id}\u0000${el.dataset.part}`);
   const have = [...slot.querySelectorAll('[data-part-to]')]
-    .map((b) => `${b.dataset.partTo} ${b.querySelector('.t')?.textContent ?? ''}`);
+    .map((b) => `${b.dataset.partTo}\u0000${b.querySelector('.t')?.textContent ?? ''}`);
   if (have.length === want.length && have.every((row, i) => row === want[i])) return;
 
   slot.innerHTML = partsRail();
