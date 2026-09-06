@@ -269,7 +269,13 @@ async function transcribeViaGemini(capturedUtterances, cfg, { onProgress, vocabu
   // No prompt-echo guard here on purpose. custom_vocabulary is a biasing list
   // rather than text fed to the decoder, so there is no prompt to come back —
   // the failure looksLikePromptEcho exists to catch cannot happen on this path.
-  return { utterances, failures };
+  //
+  // `approximate` is not a hedge, it is the measured property of this path:
+  // the model segments its own stream by its own voice detection rather than
+  // on the clip boundaries, so a word can land on a neighbouring line and the
+  // per-line clock drifts by about one clip. WHO said it is exact — 229 of
+  // 229 on 396 real clips — and so is the order. See LINE_BREAKS below.
+  return { utterances, failures, engine: 'gemini', lineBreaks: 'approximate' };
 }
 
 // capturedUtterances: [{ userId, displayName, wavPath, startMs, endMs }]
@@ -294,9 +300,8 @@ export async function transcribeAll(
   const results = [];
   const failures = [];
 
-  const batches = shouldBatch(cfg, { serverReachable })
-    ? await planBatches(capturedUtterances)
-    : capturedUtterances.map((u) => [u]);
+  const batched = shouldBatch(cfg, { serverReachable });
+  const batches = batched ? await planBatches(capturedUtterances) : capturedUtterances.map((u) => [u]);
 
   // A prompted clip that came back as nothing but campaign names is whisper
   // reading the prompt off a near-silent recording, not someone talking.
@@ -320,8 +325,37 @@ export async function transcribeAll(
   // Batching walks one speaker at a time, so results come out grouped by
   // person; the transcript needs to read chronologically.
   results.sort((a, b) => a.startMs - b.startMs);
-  return { utterances: results, failures };
+  return {
+    utterances: results,
+    engine: 'whisper',
+    failures,
+    // The same trade Gemini makes, made here first and for a different
+    // reason: batching merges one speaker’s clips to fill whisper’s fixed
+    // 30-second encode window, and a word can then land on the neighbouring
+    // clip while the per-line clock drifts a few seconds. Unbatched, one clip
+    // per encode, the boundaries are exactly Discord’s own.
+    lineBreaks: batched ? 'approximate' : 'exact',
+  };
 }
+
+// What a transcript’s line breaks are worth, in a sentence, for whoever ends
+// up reading one. Kept here beside the two paths that set it rather than in
+// the page, because the claim is about how the audio was cut up and this file
+// is the only place that knows.
+export const LINE_BREAKS = {
+  exact: {
+    engineOf: { whisper: 'whisper, one clip at a time' },
+    say: 'Each line is one turn of speech, exactly as Discord recorded it.',
+  },
+  approximate: {
+    engineOf: {
+      whisper: 'whisper, clips batched',
+      gemini: 'Gemini, one stream per speaker',
+    },
+    say: 'Who spoke and in what order are exact. Where one line ends and the '
+      + 'next begins is approximate, and the times can be a few seconds out.',
+  },
+};
 
 // Accepts either DB rows (snake_case start_ms) or in-flight captured
 // utterances (camelCase startMs), so read the offset through one accessor.

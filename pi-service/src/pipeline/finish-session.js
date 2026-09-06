@@ -81,7 +81,7 @@ export async function finishSession(
     // meeting as forever in progress.
     endTranscription(meetingId);
   }
-  const { utterances, failures } = result;
+  const { utterances, failures, engine, lineBreaks } = result;
 
   if (utterances.length === 0) {
     db.setMeetingStatus(meetingId, 'transcription_failed');
@@ -107,6 +107,8 @@ export async function finishSession(
   const job = db.finalizeTranscription(meetingId, utterances, {
     requireApproval: cfg.summaryRequireApproval,
     provider: pinProvider,
+    engine,
+    lineBreaks,
   });
 
   // Collapse the session's per-utterance fragments into one compressed

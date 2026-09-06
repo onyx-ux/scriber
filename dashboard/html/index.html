@@ -683,6 +683,18 @@
 
   /* --- the transcript reader ------------------------------------------ */
 
+  /* How the transcript was made, under the facts about the session it is a
+     fact about. Quiet by default; `rough` is the state that has something to
+     warn about, and it borrows the brass the page already uses for "held" and
+     "paused" rather than the red it uses for "broken" — approximate line
+     breaks are a property of a working transcript, not a failure of one. */
+  .made { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule);
+          font-size: 12px; color: var(--dim); }
+  .made .mono { font-family: var(--mono); font-size: 11.5px; letter-spacing: .02em; }
+  .made.rough .mono { color: var(--brass-lit); }
+  .made .why { margin-top: 7px; font-family: var(--sans); font-size: 12.5px;
+               line-height: 1.55; color: var(--text-2); }
+
   .tr-bar { padding: 20px 36px; border-bottom: 1px solid var(--rule);
             display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
             position: sticky; top: 76px; z-index: 3; background: var(--ink); }
@@ -7715,6 +7727,7 @@ function transcriptScreen() {
             ${esc(n(script.total))} lines · ${plural(script.speakers.length, 'voice')}<br>
             ${esc(script.channel ? `#${script.channel}` : '')}
           </div>
+          ${howItWasMade()}
         </div>
         <div class="quiet" style="margin-top:auto">
           ${script.hasNotes
@@ -7722,6 +7735,30 @@ function transcriptScreen() {
             : 'No notes exist for this session yet.'}
         </div>
       </aside>`;
+}
+
+// What made this transcript, and what that means for the lines above.
+//
+// It sits under the date and the line count because it is the same kind of
+// fact — how this evening was turned into words — and both readings say what
+// they are worth, not just the awkward one. A page that only spoke up when
+// something was approximate would make silence mean "exact", and silence here
+// already means something else: a session recorded before any of this was
+// written down, which gets nothing at all rather than a flattering guess.
+//
+// The brass is on the grade and not on the sentence. `rough` marks a
+// transcript whose line breaks are approximate — the Pi’s batched whisper path
+// as much as Gemini — and it borrows the colour this page already uses for
+// "held" and "paused" rather than the red it uses for "broken", because these
+// are working transcripts with one soft edge, not failed ones.
+function howItWasMade() {
+  const p = script?.provenance;
+  if (!p) return '';
+  return `
+    <div class="made${p.lineBreaks === 'approximate' ? ' rough' : ''}">
+      <span class="mono">${esc(p.how)}</span>
+      ${p.say ? `<div class="why">${esc(p.say)}</div>` : ''}
+    </div>`;
 }
 
 // Whether anybody OTHER THAN THE READER has picked a colour here.

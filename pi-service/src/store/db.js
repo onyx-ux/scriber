@@ -337,6 +337,28 @@ function migrate(db) {
     console.log(`[db] migrated: added meetings.session_number (backfilled ${guilds.length} campaign(s))`);
   }
 
+  // Which engine turned this evening into words, and what its line breaks are
+  // worth. Two facts rather than one, because they do not follow from each
+  // other: whisper gives exact boundaries one clip at a time and approximate
+  // ones when it batches, and which of those ran is decided at transcription
+  // time from whether the GPU answered.
+  //
+  // Recorded because a transcript whose lines are approximate is otherwise
+  // indistinguishable from one whose lines are exact, and the difference is
+  // not recoverable afterwards from anything in this database. That was the
+  // whole reason the Gemini rung stayed switched off: not that its line breaks
+  // are ragged — the Pi’s batched path has the same raggedness and ships —
+  // but that nothing anywhere said so.
+  //
+  // NULL means a session transcribed before this column existed. Left null on
+  // purpose rather than backfilled with a guess: the honest answer for those
+  // is 'nobody wrote it down', and a made-up 'exact' is worse than a blank.
+  if (!meetingColumns.includes('transcribed_by')) {
+    db.exec(`ALTER TABLE meetings ADD COLUMN transcribed_by TEXT`);
+    db.exec(`ALTER TABLE meetings ADD COLUMN line_breaks TEXT`);
+    console.log('[db] migrated: added meetings.transcribed_by / line_breaks');
+  }
+
   // Campaign display name (set with /campaign) and the session counter.
   // Keyed by guild so one bot can serve several tables; the guild id never
   // changes, unlike the channel name this used to be derived from.
@@ -1502,13 +1524,25 @@ function wrap(db) {
     // the choice was made at /leave rather than left to the global default —
     // e.g. a one-off /summarise that must not use the configured default.
     // null keeps the existing behaviour of deferring to the config at run time.
-    finalizeTranscription(meetingId, utterances, { requireApproval = false, provider = null } = {}) {
+    finalizeTranscription(
+      meetingId,
+      utterances,
+      { requireApproval = false, provider = null, engine = null, lineBreaks = null } = {}
+    ) {
       const del = db.prepare(`DELETE FROM utterances WHERE meeting_id = ?`);
       const ins = db.prepare(
         `INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text)
          VALUES (?, ?, ?, ?, ?, ?)`
       );
-      const setStatus = db.prepare(`UPDATE meetings SET status = 'awaiting_summary' WHERE id = ?`);
+      // The engine goes in with the status, inside the same transaction as the
+      // utterances it describes — a transcript and the claim about how it was
+      // cut up must never be able to disagree.
+      const setStatus = db.prepare(
+        `UPDATE meetings SET status = 'awaiting_summary',
+                transcribed_by = COALESCE(?, transcribed_by),
+                line_breaks = COALESCE(?, line_breaks)
+          WHERE id = ?`
+      );
       const existingJob = db.prepare(
         `SELECT id FROM jobs WHERE meeting_id = ? AND type = 'summarize'
            AND status IN ('awaiting_approval', 'pending', 'running')`
@@ -1541,7 +1575,7 @@ function wrap(db) {
         for (const userId of new Set(rows.map((u) => u.userId))) {
           if (userId && userId !== 'imported') enrol.run(userId, meetingId);
         }
-        setStatus.run(meetingId);
+        setStatus.run(engine, lineBreaks, meetingId);
         // Don't stack a duplicate job if one is already waiting for this meeting.
         if (!existingJob.get(meetingId)) {
           enqueue.run(meetingId, requireApproval ? 'awaiting_approval' : 'pending', provider);

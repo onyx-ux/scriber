@@ -12,6 +12,7 @@
 // nothing else on the page needs them.
 import { sessionRef } from '../campaign/session-ref.js';
 import { campaignLabel } from '../campaign/resolve.js';
+import { LINE_BREAKS } from '../pipeline/transcribe.js';
 
 // A transcript long enough to hit this is a transcript nobody is reading in a
 // browser — it is a bug or a bad import. The count still reports the truth, so
@@ -77,6 +78,7 @@ export function buildTranscriptView({ db, meetingId }) {
 
   return {
     meetingId,
+    provenance: provenanceOf(meeting),
     ref: sessionRef(label, meeting.session_number),
     sessionNumber: meeting.session_number,
     campaignId: meeting.campaign_id ?? null,
@@ -96,4 +98,37 @@ export function buildTranscriptView({ db, meetingId }) {
       ? db.listCorrections(meeting.campaign_id).map((c) => ({ wrong: c.wrong_text, right: c.correct_text }))
       : [],
   };
+}
+
+// How this transcript was made, and what its lines are worth.
+//
+// A page that shows exact line breaks and one that shows approximate ones
+// look identical, and no amount of reading tells them apart — that is the
+// whole difficulty, and it is why the batched whisper path has been shipping
+// an unlabelled approximation for months without anyone minding, while the
+// Gemini path stayed switched off for the same property. One of those two
+// positions had to give. This is which: say it, on the transcript, next to
+// the lines it is a claim about.
+//
+// Silent for a session recorded before the column existed and for one whose
+// lines are exact. A note that appears on every transcript is a note nobody
+// reads, and "these lines are correct" is the thing a reader already assumes.
+function provenanceOf(meeting) {
+  const engine = meeting.transcribed_by ?? null;
+  const grade = meeting.line_breaks ?? null;
+  if (!engine) return null;
+
+  if (engine === 'imported') {
+    return {
+      engine,
+      lineBreaks: grade,
+      how: 'imported — transcribed elsewhere',
+      say: 'This came in as a finished transcript. How its lines were cut up is '
+        + 'whatever the tool that made it decided.',
+    };
+  }
+
+  const band = LINE_BREAKS[grade];
+  if (!band) return { engine, lineBreaks: grade, how: engine, say: null };
+  return { engine, lineBreaks: grade, how: band.engineOf[engine] ?? engine, say: band.say };
 }

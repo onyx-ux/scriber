@@ -140,8 +140,13 @@ export async function importAudio({
   });
   db.endMeeting(meetingId, new Date(Date.parse(startedAt) + lastOffset).toISOString());
 
+  // An import arrives already transcribed by somebody else’s tool, so the one
+  // honest thing to record is that this bot did not do it. Its line breaks are
+  // whatever the file it came from had, which is not a question this can
+  // answer — left null rather than claimed.
   const job = db.finalizeTranscription(meetingId, utterances, {
     requireApproval: cfg.summaryRequireApproval,
+    engine: 'imported',
   });
 
   return { meetingId, utteranceCount: utterances.length, job };
