@@ -28,6 +28,11 @@ export const TRANSCRIBE_PREFIX = 'scriber:tsched:';
 export const ACTION_NOW = 'now';
 export const ACTION_LATER = 'later';
 export const ACTION_PI = 'pi';
+// Same shape as ACTION_PI and for the same reason: a machine that is not the
+// PC, chosen on purpose, which therefore has no business waiting on the GPU
+// schedule. The value matches TARGET_GEMINI in pipeline/transcribe-target.js,
+// because what this sets is that target.
+export const ACTION_GEMINI = 'gemini';
 
 // The container runs in UTC; the person does not. Every hour/day decision
 // here is made in an explicit IANA zone so "8am" means 8am where the PC is,
@@ -170,7 +175,7 @@ export function parseTranscribeAction(customId) {
   const [rawJobId, action] = customId.slice(TRANSCRIBE_PREFIX.length).split(':');
   const jobId = parseInt(rawJobId, 10);
   if (!Number.isInteger(jobId)) return null;
-  if (![ACTION_NOW, ACTION_LATER, ACTION_PI].includes(action)) return null;
+  if (![ACTION_NOW, ACTION_LATER, ACTION_PI, ACTION_GEMINI].includes(action)) return null;
   return { jobId, action };
 }
 

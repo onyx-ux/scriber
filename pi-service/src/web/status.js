@@ -283,6 +283,14 @@ export function buildStatus({
       // the URL are stripped rather than published, and a private-range
       // address is not a secret worth hiding from its own operator.
       whisperServerHost: hostOf(cfg.whisperServerUrl),
+      // Whether the cloud is an option for transcription at all. The page needs
+      // this to decide whether to OFFER it — a button that always shows and
+      // sometimes refuses would be teaching people that Quill sends recordings
+      // to Google when, on almost every install, it does not.
+      //
+      // Behind the same gate as the rest of this block, which is right: this is
+      // a fact about the owner’s configuration and their bill.
+      cloudTranscribe: Boolean(cfg.geminiTranscribe && cfg.geminiApiKey),
       // When the dots were last true. A dashboard that says "reachable" is
       // making a claim about a minute ago, and on the screen that exists
       // because a machine went down, the age of the claim is the point.

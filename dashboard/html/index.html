@@ -6493,7 +6493,16 @@ function transcribePane(s) {
         <button type="button" class="btn go big" data-act="transcribe" data-job="${s.job.id}" data-action="now">Transcribe now</button>
         <button type="button" class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="later">Not yet</button>
         <button type="button" class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="pi">On the Pi instead</button>
+        ${status?.health?.cloudTranscribe ? `
+          <button type="button" class="btn big" data-act="transcribe" data-job="${s.job.id}" data-action="gemini"
+                  data-confirm="Transcribe this session with Gemini? The recording itself is uploaded to Google — this is the only part of Quill that does that.">Send to Gemini</button>` : ''}
       </div>
+      ${status?.health?.cloudTranscribe ? `
+        <div class="quiet" style="margin-top:14px;color:var(--brass-lit)">
+          “Send to Gemini” uploads the recording to Google. Minutes rather than hours,
+          and better on names — but the line breaks and times come back approximate,
+          and the transcript will say so.
+        </div>` : ''}
       <div class="quiet" style="margin-top:14px">
         “On the Pi” needs no GPU at all, and takes hours rather than minutes.
         ${status?.schedule?.nextAutoWindowAt

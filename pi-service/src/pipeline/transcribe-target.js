@@ -16,6 +16,29 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 // because the local summariser lived on the same PC as the GPU and choosing
 // the Pi implied that PC was off.
 
+// ── A WARNING ABOUT HALF THIS FILE ───────────────────────────────
+//
+// `buildTranscribeChoiceRow`, `transcribeChoicePrompt`, `parseTranscribeChoice`
+// and `defaultTarget` describe a Discord prompt at /leave that DOES NOT EXIST.
+// Nothing outside this file’s own test imports them. The comments above are
+// written in the present tense and describe a product nobody has ever used,
+// which is a trap: read top to bottom, this file says the table is offered a
+// Gemini button when they finish a session, and they are not.
+//
+// That is `docs/adr/0004` working as intended rather than a bug — the choice
+// moved to the dashboard, the same way the three scheduling buttons did (see
+// the note at the foot of transcribe-schedule.js). **The real choice is the
+// row of buttons on the "Waiting to transcribe" pane**, which calls
+// `transcribeAction` in pipeline/job-actions.js with ACTION_NOW, ACTION_LATER,
+// ACTION_PI or ACTION_GEMINI, and that is the only thing that writes
+// `transcribe_target_<jobId>`.
+//
+// Kept rather than deleted because the Discord half may come back — a choice
+// made in the channel where the session just ended is a genuinely better
+// shape than one made on a web page, if it is ever wired up. What is alive
+// here and load-bearing: TARGET_*, isValidTarget and applyTranscribeTarget,
+// all three read by pipeline/transcribe-worker.js on every tick.
+
 export const TRANSCRIBE_PREFIX = 'scriber:tx:';
 
 export const TARGET_PC = 'pc';

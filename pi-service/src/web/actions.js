@@ -26,7 +26,7 @@ import {
   forgetCharacter,
   setOutput,
 } from '../pipeline/job-actions.js';
-import { ACTION_NOW, ACTION_LATER, ACTION_PI } from '../pipeline/transcribe-schedule.js';
+import { ACTION_NOW, ACTION_LATER, ACTION_PI, ACTION_GEMINI } from '../pipeline/transcribe-schedule.js';
 import { createCampaign, guildsCreatableBy } from '../campaign/create.js';
 import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js';
 import { handOverCampaign } from '../campaign/handover.js';
@@ -83,7 +83,7 @@ function badRequest(message) {
   return { status: 400, payload: { ok: false, message } };
 }
 
-const TRANSCRIBE_ACTIONS = new Set([ACTION_NOW, ACTION_LATER, ACTION_PI]);
+const TRANSCRIBE_ACTIONS = new Set([ACTION_NOW, ACTION_LATER, ACTION_PI, ACTION_GEMINI]);
 
 export const ACTIONS = {
   'summary/approve': (db, cfg, body) => {

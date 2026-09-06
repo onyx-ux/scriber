@@ -21,7 +21,7 @@ import {
   summariserLabel,
   withProvider,
 } from './model-client.js';
-import { snoozeUntil, ACTION_LATER, ACTION_PI, ACTION_NOW } from './transcribe-schedule.js';
+import { snoozeUntil, ACTION_LATER, ACTION_PI, ACTION_GEMINI, ACTION_NOW } from './transcribe-schedule.js';
 
 // A provider the caller explicitly asked for but that isn't set up (no API
 // key) should say so plainly, rather than silently falling back to the default
@@ -166,6 +166,37 @@ export function transcribeAction(db, cfg, { jobId, action = ACTION_NOW } = {}) {
       ok: true,
       meetingId: job.meeting_id,
       message: '🐌 Queued on the Pi instead — no GPU needed, but expect hours rather than minutes.',
+    };
+  }
+
+  if (action === ACTION_GEMINI) {
+    // Refused rather than silently downgraded. Every other unavailable path
+    // here has somewhere sensible to fall to; this one does not, because the
+    // whole content of the request is WHERE the audio goes. Quietly running it
+    // on the PC instead would be the right transcript by the wrong route — and
+    // if the operator is doing this to compare the two engines, an unannounced
+    // substitution is the one outcome that wastes the whole exercise.
+    if (!cfg.geminiTranscribe || !cfg.geminiApiKey) {
+      return {
+        ok: false,
+        message:
+          '⚠️ Cloud transcription is off. It is the one setting that sends the '
+          + 'recording itself to Google, so it is not something this button can turn '
+          + 'on for you — set GEMINI_TRANSCRIBE=true on the Pi and restart the bot.',
+      };
+    }
+
+    // Same bypass as the Pi, and for the same reason: Gemini does not need the
+    // PC, so it must not be gated on the PC answering.
+    db.approveTranscribeNow(job.id);
+    db.setSetting(`transcribe_target_${job.id}`, 'gemini');
+    return {
+      ok: true,
+      meetingId: job.meeting_id,
+      message:
+        '☁️ Queued on Gemini — minutes rather than hours, and the recording is '
+        + 'being sent to Google. Line breaks and times will be approximate; the '
+        + 'transcript will say so.',
     };
   }
 
