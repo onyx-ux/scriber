@@ -310,17 +310,22 @@ export const config = validate({
   // pick until Google cut new API keys off from it (HTTP 404, "no longer
   // available to new users"), then gemini-3.1-flash-lite replaced it.
   //
-  // gemini-3.6-flash is the current default — a full flash model rather than
-  // a lite one, because at 3.6 there IS no lite: gemini-3.6-flash-lite and
-  // gemini-3.6-pro both 404 on a free key, and 3.6-flash is what the NPC and
-  // location note builders already use to read whole transcripts. Verified
-  // against a real key on 2026-08-09.
+  // gemini-3.7-flash is the current default, probed against a real key on
+  // 2026-09-06. It is the same probe that kept it OUT of this file three
+  // weeks earlier, when it answered 503 "high demand" on every attempt —
+  // which is the argument for probing rather than reading a version number:
+  // a model can be announced, unavailable, and then available, and only one
+  // of those three states is visible from the outside.
+  //
+  // There is still no lite and no pro at the top of the range: 3.7-flash-lite
+  // and 3.7-pro both 404 on this key, exactly as 3.6’s did. So the ladder is
+  // full flash models the whole way down.
   //
   // Note that 3.6-flash is missing from ListModels even though it serves
   // requests, so "not in the list" is not evidence a model is unavailable —
   // probe it with a real generateContent call before believing otherwise.
   geminiApiKey: optional('GEMINI_API_KEY', null),
-  geminiModel: optional('GEMINI_MODEL', 'gemini-3.6-flash'),
+  geminiModel: optional('GEMINI_MODEL', 'gemini-3.7-flash'),
 
   // --- which model does which job ---
   //
@@ -336,10 +341,19 @@ export const config = validate({
   //
   // The fallbacks are walked ONLY when the provider says it is out of quota,
   // never on an ordinary failure: a refusal or a timeout is the request's
-  // fault and would fail again, one model cheaper. Probed on the same date;
-  // gemini-3.7-flash is deliberately absent because it was answering 503
-  // ("high demand"), and gemini-3.1-flash does not exist — only the lite.
-  geminiModelFallbacks: optional('GEMINI_MODEL_FALLBACKS', 'gemini-3.5-flash,gemini-3.1-flash-lite'),
+  // fault and would fail again, one model cheaper. gemini-3.1-flash is not on
+  // the ladder because it does not exist — only the lite does.
+  //
+  // 3.6-flash is the first rung down and it is there for a stronger reason
+  // than being next in the numbering: it is the model every session on this
+  // install was written up with until today, and the one the NPC and location
+  // note builders still read whole transcripts on. If the new top rung is out
+  // of quota mid-evening, the write-up that lands is the one this table has
+  // been reading for months rather than something two generations older.
+  geminiModelFallbacks: optional(
+    'GEMINI_MODEL_FALLBACKS',
+    'gemini-3.6-flash,gemini-3.5-flash,gemini-3.1-flash-lite'
+  ),
   geminiAskModel: optional('GEMINI_ASK_MODEL', 'gemini-3.1-flash-lite'),
   anthropicModelFallbacks: optional('ANTHROPIC_MODEL_FALLBACKS', 'claude-sonnet-5'),
   anthropicAskModel: optional('ANTHROPIC_ASK_MODEL', 'claude-haiku-4-5'),

@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -248,4 +250,71 @@ test('the question counter holds no more than a count and a date', async (t) => 
 
   const usage = db.raw.prepare(`SELECT name FROM pragma_table_info('model_usage')`).all().map((r) => r.name);
   assert.equal(usage.includes('user_id'), false, 'the cost table names no people');
+});
+
+// --- the ladder this install actually ships ------------------------------
+
+// Everything above runs on a cfg the test hands in, which is the right way to
+// test the CHOOSING and says nothing about what an operator gets out of the
+// box. That is a separate claim and it is the one that changes when a model is
+// swapped, so it is pinned here — read out of config/env.js rather than
+// restated, because a test that repeats the constant it is guarding passes
+// whatever the constant says.
+//
+// config/env.js cannot be imported: it validates a real environment at module
+// load and exits the process when there is no Discord token. The defaults are
+// the second argument to optional(), so they are read from the source.
+
+const ENV_JS = fileURLToPath(new URL('../src/config/env.js', import.meta.url));
+const EXAMPLE = fileURLToPath(new URL('../.env.example', import.meta.url));
+
+const defaultOf = (source, name) => {
+  const re = new RegExp(`optional\\(\\s*'${name}',\\s*'([^']*)'`);
+  const found = source.match(re);
+  assert.ok(found, `${name} no longer has a literal default in config/env.js`);
+  return found[1];
+};
+
+test('the summariser ships on 3.7 and falls back to 3.6', async () => {
+  const env = await readFile(ENV_JS, 'utf8');
+
+  const top = defaultOf(env, 'GEMINI_MODEL');
+  const rungs = defaultOf(env, 'GEMINI_MODEL_FALLBACKS').split(',');
+
+  assert.equal(top, 'gemini-3.7-flash', 'the default summariser moved');
+  assert.equal(
+    rungs[0],
+    'gemini-3.6-flash',
+    'the first rung down is no longer 3.6 — which is the model every session on '
+      + 'this install was written up with before 3.7, and what a table falls back '
+      + 'to reading when the top rung is out of quota mid-evening'
+  );
+
+  // A ladder has to descend. A rung equal to or above the one before it is
+  // either a duplicate request or a step UP into something more expensive at
+  // the exact moment the provider has said it is out of quota.
+  const ladder = [top, ...rungs];
+  assert.equal(new Set(ladder).size, ladder.length, `a model appears twice: ${ladder.join(' > ')}`);
+
+  // /ask does not climb. It starts cheap and stays there, because a question
+  // asked in passing is not worth reaching for the summariser’s bill.
+  assert.equal(defaultOf(env, 'GEMINI_ASK_MODEL'), 'gemini-3.1-flash-lite');
+});
+
+test('the example env tells an operator the same thing the code does', async () => {
+  // These two drift silently: nothing loads .env.example, so a stale model name
+  // in it is copied into a real .env and quietly pins a new install to whatever
+  // was current a year ago.
+  const env = await readFile(ENV_JS, 'utf8');
+  const example = await readFile(EXAMPLE, 'utf8');
+
+  for (const name of ['GEMINI_MODEL', 'GEMINI_MODEL_FALLBACKS']) {
+    const line = example.match(new RegExp(`^${name}=(.*)$`, 'm'));
+    assert.ok(line, `${name} is not in .env.example at all`);
+    assert.equal(
+      line[1].trim(),
+      defaultOf(env, name),
+      `.env.example and config/env.js disagree about ${name}`
+    );
+  }
 });

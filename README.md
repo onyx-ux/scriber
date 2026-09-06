@@ -884,11 +884,20 @@ overwrote the other's archive with its own sessions.
   to `claude-opus-5`. Anthropic's API is paid-tier only (no free tier).
 - `gemini` — sends the finished **transcript text** to Gemini. Set
   `GEMINI_API_KEY` (free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey));
-  `GEMINI_MODEL` defaults to `gemini-3.6-flash` — pick this provider if the
-  goal is a cloud recap at low cost rather than Claude's higher quality. Note
-  that `gemini-3.6-flash` does not appear in Gemini's ListModels response even
-  though it serves requests, so probe a model with a real call before
-  concluding it is unavailable.
+  `GEMINI_MODEL` defaults to `gemini-3.7-flash` — pick this provider if the
+  goal is a cloud recap at low cost rather than Claude's higher quality. If
+  that model is out of quota mid-session, `GEMINI_MODEL_FALLBACKS` steps down
+  through `3.6-flash`, `3.5-flash` and `3.1-flash-lite` — but only for "out of
+  quota", never for an ordinary failure, since a refusal would fail the same
+  way one model cheaper.
+
+  Model names are pinned rather than using the `-latest` aliases: a pinned name
+  that disappears fails loudly on the next call, where an alias quietly changes
+  what you are paying for and how your sessions read. And Gemini's ListModels
+  is wrong in both directions — `gemini-3.6-flash` served requests for months
+  without appearing in it, and `gemini-3.7-flash` answered 503 "high demand"
+  for weeks after being announced — so probe a model with a real
+  `generateContent` call before concluding anything about it either way.
 
 **A summariser only ever sees text.** Neither provider is sent audio under any
 setting — what leaves here is a transcript that was already produced

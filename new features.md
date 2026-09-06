@@ -458,6 +458,75 @@ for the first time.
       Drive. (There is no `summaries` table — the recap lives in
       `meetings.summary_json`.)
 
+## Implemented (2026-08-30)
+
+Written up on 2026-09-06, six days late. This landed in `61880fc` and this
+file simply had no section for the date — which is the kind of gap that turns
+into "why does the config have a setting nobody can explain" a year from now.
+
+- [x] **A second voice for the table next door** — `DISCORD_VOICE_TOKENS`.
+      Discord gives one bot USER one voice connection per SERVER. Not one per
+      channel — one per server, and no permission, intent or setting changes
+      it. So two tables playing in one Discord on a Friday could not both be
+      recorded, whatever the bookkeeping said, and the only thing that answers
+      that is another bot user. One extra token, one extra table, in every
+      server it is invited to.
+
+      **The extras are not second copies of this bot. They are microphones.**
+      They register no commands, answer no interactions, run no queue and
+      never touch the database — they log in, hold a voice connection, and
+      feed the same pipeline. Everything else stays on the primary, which is
+      what keeps this cheap: the table sees one Quill and one `/join`,
+      delivery never learns that mules exist, and there is still one database
+      and one GPU schedule. Running the whole bot twice would have meant two
+      processes claiming the same queue job out of one SQLite file, and an
+      evening summarised twice at twice the API bill.
+
+      **Two things here fail silently, so both are written down where somebody
+      will meet them.** `@discordjs/voice` keys connections by guild inside a
+      group that defaults to `default`, and `createVoiceConnection` REUSES
+      what it finds rather than opening a second — so two bots joining one
+      guild is the first table’s connection being dragged into the second
+      table’s channel, mid-session, with nothing raised anywhere. One group per
+      bot. And an adapter belongs to the socket of the client that made it, so
+      joining as a second bot means fetching the channel through that bot’s own
+      client; handing it the interaction’s copy moves the primary instead and
+      the bot you meant never connects.
+
+- [x] **The guild stops being the session** — `activeSessions` was keyed by
+      guild, which was another way of writing "one session per Discord". It is
+      keyed by meeting now and carries its own guild, voice channel, campaign
+      and bot. That key had spread further than it looked, and three of the
+      four places it reached were already wrong or about to be:
+
+      - The dashboard flagged a campaign as recording when its DISCORD had a
+        session open, so a server with two tables and one `/join` lit up both
+        of them. **That was a bug before any of this** and is fixed by the flag
+        becoming a question about the table.
+      - The import guard asked `activeSessions.has(guild_id)`. Left alone it
+        would not have been merely imprecise — it would have answered no every
+        time, and the guard would have quietly stopped existing.
+      - `scopeStatus` filtered live sessions by guild, which was harmless while
+        a Discord held one. With two it would have handed a player at one table
+        the other group’s session: its channel, its clip count, who is speaking
+        in it. Filtered by campaign now.
+
+      `/leave` works out which session it is ending — the campaign named, else
+      the voice channel the person is standing in, else the only one — and
+      lists what is live rather than guessing when it cannot tell. It still
+      demands the campaign option wherever it did before; standing in the room
+      decides which table the question is about, not whether it gets asked.
+
+      `/join` **refuses rather than queues** when every voice is busy, and says
+      how many there are. A `/join` that quietly succeeded forty minutes later,
+      when some other table finished, would start recording mid-scene with
+      nobody aware of it and nobody in the channel asked.
+
+      Not covered: the voice socket itself, which needs a real Discord to say
+      anything about. The tests stop at the line where `startCapture` is
+      called — which bot, which channel, and every consequence downstream of
+      the key. `test/two-tables.test.js` and `test/voice-pool.test.js`.
+
 ## Implemented (2026-08-31)
 
 - [x] **A cloud voice for the nights the PC is dark** — `GEMINI_TRANSCRIBE=true`
@@ -845,6 +914,127 @@ for the first time.
       names, the computed colours matching the palette exactly in both themes,
       the picker, the switch, and no console errors.
 
+## Implemented (2026-09-06)
+
+The whole of "Known faults, not fixed yet" — all four — plus the model swap
+they were cleared to make room for. That section is empty again.
+
+- [x] **One line ending, decided in a file rather than by whichever tool wrote
+      last** — and by the time it was fixed the fault’s own description had
+      stopped being true in the worse direction. It was written down as "the
+      working tree writes CRLF into an all-LF repo"; the CRLF had since been
+      committed. 42 tracked files were wholly CRLF in `HEAD` and the rest were
+      LF, so the repo no longer had one answer, and nothing in it said what the
+      answer should be.
+
+      `.gitattributes` with `* text=auto eol=lf`, and `eol=lf` is the
+      load-bearing half: `text=auto` alone normalises what goes INTO the repo
+      and still hands Windows a CRLF working tree whenever `core.autocrlf` says
+      so, which is the exact state this was here to end. It also quietly closes
+      a failure nobody had met yet — a shell script or an nginx template
+      checked out with CRLF is a file Linux will not run.
+
+      The 42 conversions were verified rather than asserted: every one hashes
+      identically to its `HEAD` blob with the carriage returns removed, and
+      `git diff --ignore-cr-at-eol` came back empty.
+
+- [x] **Five raw control bytes, in four files** — found because the sweep above
+      lied. It skipped `dashboard/html/index.html` entirely and said nothing,
+      because `grep -I` calls that file binary: it had two NUL bytes in
+      `syncParts()`. A guard looking for the same thing then found nine more in
+      `export/linkify.js`, `export/naming.js` and `notes/redline.js`.
+
+      **Every one of them was correct and doing real work** — a NUL delimiter
+      that cannot collide with prose, a NUL-to-unit-separator range for the
+      characters a filename may not carry. That is the whole point. They were
+      right, and still wrong to type as bytes rather than escapes, because what
+      it costs is not correctness: it is that every text tool downstream then
+      classifies an 8,000-line page as binary and skips it in silence, which is
+      precisely how they survived a sweep looking for exactly this class of
+      invisible character. `\u0000` and `\x00-\x1f` now, same values.
+
+- [x] **The page scrolls sideways between 821px and 1023px wide** — fixed, and
+      the decision the old note asked for was between three things: hide the
+      health readings, shorten the pause buttons, or wrap. **The bar takes a
+      second row and nothing gives way.** Wrapping is the only one of the three
+      that costs no information, and it is not a new behaviour to reason about
+      — it is what the same bar already does on a phone, started 200px earlier.
+      It reads better than the old single row, too: the health line stops being
+      squeezed and gets its full text back (192px against 114px at 1024).
+
+      Both halves are in one rule, which is what the earlier attempt got wrong.
+      A wrap inside a bar still declaring `flex: 0 0 76px` puts a second row in
+      a box pinned to one row’s height, and the pause buttons come out sliced
+      along the top. The height has to be released in the same breath.
+      Measured across thirteen widths from 1600 down to 420 — every one fits,
+      where 821-1023 was a flat 1018px `scrollWidth` before.
+
+- [x] **A transcript says how it was made** — which is what the Gemini rung was
+      actually missing, rather than accuracy.
+
+      The old note had it as "the Gemini rung is off because its line breaks
+      are wrong": attribution exact (229/229 on 396 real clips), 1.74x realtime
+      against the Pi’s 0.38x, and line boundaries that drift by about a clip
+      because the model segments its own stream by its own voice detection. The
+      note also observed, correctly, that **this is the same trade the batched
+      whisper path already makes** — and that path is the default on the Pi and
+      ships. Those two positions could not both be right. One engine was being
+      held to a standard the other was not.
+
+      What was genuinely missing was the label. Nothing recorded how a
+      transcript had been made, so an approximate one and an exact one were
+      indistinguishable on the page and unrecoverable afterwards from anything
+      in the database. `meetings.transcribed_by` and `meetings.line_breaks` now
+      go in inside the same transaction as the utterances they describe, so a
+      transcript and the claim about how it was cut up can never disagree.
+
+      The transcript says it, under the date and the line count, because it is
+      the same kind of fact. **Both readings speak**, not only the awkward one:
+      a page that spoke up only about approximate lines would make silence mean
+      "exact", and silence here already means something else — a session
+      recorded before any of this existed, which gets nothing at all rather
+      than a flattering guess. An imported transcript says this bot did not
+      make it.
+
+      Drawn in the brass this page uses for "held" and "paused" rather than the
+      red it uses for "broken", because approximate line breaks are a property
+      of a working transcript and not a failure of one.
+
+      **What is still the operator’s and is not a fault:** `GEMINI_TRANSCRIBE`
+      is off on this install, which is why a session that missed the GPU went
+      to the Pi. That switch is the one setting in this bot that sends
+      RECORDINGS off the network, so it stays a thing somebody turns on
+      deliberately rather than something that gets turned on for them while
+      clearing a fault list.
+
+- [x] **The two-tables work is written down** — see the 2026-08-30 section
+      above, added six days after the fact.
+
+- [x] **Gemini 3.7 Flash writes the sessions, and 3.6 catches it** — 3.7-flash
+      was deliberately absent from the ladder three weeks ago because it
+      answered 503 "high demand" on every probe. Probed again against the live
+      key on 2026-09-06: 200. Which is the argument for probing rather than
+      reading a version number — a model can be announced, unavailable, and
+      then available, and only one of those three states is visible from
+      outside.
+
+      There is still no lite and no pro at the top of the range: `3.7-flash-lite`
+      and `3.7-pro` both 404 on this key, exactly as 3.6’s did, so the ladder is
+      full flash models the whole way down.
+
+      **3.6 is the first rung down for a better reason than being next in the
+      numbering.** It is the model every session on this install was written up
+      with until today, and the one the NPC and location note builders still
+      read whole transcripts on. If the top rung is out of quota mid-evening,
+      the write-up that lands is the one this table has been reading for months
+      rather than something two generations older. `/ask` does not move: it
+      starts on `3.1-flash-lite` and still does not climb.
+
+      `.env.example` and `config/env.js` are now held to agreeing by a test.
+      Nothing loads `.env.example`, so a stale model name in it is copied into
+      a real `.env` and quietly pins a new install to whatever was current a
+      year ago.
+
 ## Work in progress
 
 
@@ -940,66 +1130,26 @@ for the first time.
 
 ## Known faults, not fixed yet
 
-The note this section was kept under is worth keeping: these are the operator's
-own reports, written down before they are argued with, and some of them will
-collide with a design decision recorded on purpose. Whoever picks one up should
-read the argument before deciding against it.
+The note this section is kept under is worth keeping, for the next time it has
+anything in it: these are the operator’s own reports, written down before they
+are argued with, and some of them will collide with a design decision recorded
+on purpose. Whoever picks one up should read the argument before deciding
+against it.
 
-- [ ] **The page scrolls sideways between 821px and 1023px wide** — the top
-      bar’s min-content is 1018px: the campaign name, the health readings, two
-      pause buttons and the theme switch. There is a wrap rule for exactly this
-      and it is filed under the phone breakpoint, on the reasonable-sounding
-      assumption that a bar this wide could only fail on a phone. Below 820 it
-      wraps and is fine; above 1024 it fits. The band between is a laptop
-      window docked to half the screen — which is where a DM reads a write-up
-      beside Discord, so it is not a rare width.
+**Empty**, as of 2026-09-06. All four went in the section above.
 
-      **Not a regression** — measured identically against `HEAD` before and
-      after the write-up work, and it has nothing to do with either job.
+Three of them had been sitting here long enough to be worth a note about the
+shape they turned out to have. Not one was a broken feature. Two were invisible
+in every rendered page and every test — line endings, and control bytes that
+made whole files invisible to the tools looking for line endings. One was a
+layout that only failed in a 200px band nobody develops at. And the fourth was
+a decision written down as a fault: the Gemini rung was not inaccurate, it was
+unlabelled, and the batched whisper path had been shipping the identical trade
+unlabelled for months without anyone minding.
 
-      Left alone on purpose, having tried it twice. Moving the wrap rule out to
-      1024 makes the second row spill two pixels through a bar pinned to 76px,
-      and the pause buttons come out sliced along the top; letting the bar grow
-      as well fixes that but then `.right` stops shrinking and starts wrapping
-      at 1100, where today it fits. What gives way in that band — the health
-      readings, the word on the pause buttons, the campaign name — is a
-      decision about the bar, not a bug fix, and it belongs to whoever wants to
-      make it.
-- [ ] **The Gemini rung is off because its line breaks are wrong** — attribution
-      is exact (validated 229/229 on 396 real clips, zero failures) and it runs
-      at 1.74x realtime against the Pi's 0.38x. What is not right is *when*
-      each line was said: alignment drifts by about one clip, and roughly 4 in
-      10 clips come back with no text at all, because the model segments its own
-      stream by its own voice detection rather than on the clip boundaries.
-
-      This is the ceiling of continuous streaming, not a tuning knob — per-clip
-      text needs per-clip boundaries, and both ways of giving it those were
-      measured and failed. It is also, for what it is worth, **the same trade
-      the whisper batching note already describes** ("a word can land on the
-      neighbouring clip"), and that path ships. So the honest framing is that
-      this competes with the Pi's batched CPU path, not the GPU's clean one.
-
-      Worth deciding before turning it on: whether ragged line breaks matter
-      for a transcript whose main consumer is a summariser that reads the whole
-      thing anyway.
-
-- [ ] **The working tree writes CRLF into an all-LF repo** — `HEAD` is LF
-      throughout, but files come back from an edit with CRLF: `commands/index.js`
-      was sitting at **1,863** CRLF lines on 2026-08-31. It is invisible until
-      something matches on exact text, and then it fails on strings that look
-      identical — it broke two patch attempts in one session before the cause
-      was spotted, and it silently turned `dashboard/html/index.html`
-      mixed-ending once before that.
-
-      The fix is a `.gitattributes` with `* text=auto eol=lf`, which is a
-      one-line change that touches how git handles every file in the repo —
-      left for the operator to agree to rather than slipped in. Until then:
-      sweep `git diff --name-only` for `\r\n` before committing.
-
-- [ ] **The two-tables work is not written down here** — `DISCORD_VOICE_TOKENS`
-      and the voice pool landed in `61880fc` on 2026-08-30 and this file has no
-      section for that date. Not a fault in the code; a gap in the record, and
-      this file is the record.
+Which is an argument for how this section gets used rather than for anything in
+particular: the entries that sit longest are the ones where nothing looks wrong
+on screen.
 
 ## Ideas not built yet
 
