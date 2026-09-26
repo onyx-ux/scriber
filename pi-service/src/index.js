@@ -1,7 +1,11 @@
 import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
 import { config } from './config/env.js';
 import { openDb } from './store/db.js';
-import { commandDefs, registerCommandHandlers, activeSessions } from './commands/index.js';
+import {
+  commandDefs, registerCommandHandlers, activeSessions, endRecordingSession, announceAutoEnd,
+} from './commands/index.js';
+import { startSessionWatch } from './voice/session-watch.js';
+import { notifyOwner } from './delivery/transcribe-notify.js';
 import { installProcessGuards } from './lifecycle.js';
 import { startQueueWorker } from './pipeline/queue-worker.js';
 import { startTranscribeWorker } from './pipeline/transcribe-worker.js';
@@ -174,6 +178,31 @@ async function main() {
     );
 
     startStatusServer({ db, cfg: config, client, activeSessions, startedAtMs });
+
+    // Recordings nobody is watching: an empty channel ends its session, and a
+    // silent one with people in it tells the owner. See voice/session-watch.js.
+    startSessionWatch({
+      client,
+      db,
+      cfg: config,
+      sessions: activeSessions,
+      endSession: (session) => endRecordingSession({ db, cfg: config, client, session }),
+      tell: async (session, action) => {
+        if (action.kind === 'close') {
+          await announceAutoEnd({ client, session, reason: action.reason });
+          return;
+        }
+        await notifyOwner({
+          discordClient: client,
+          cfg: config,
+          content:
+            `🎧 Nothing has been recorded in **#${session.channelName}** for ${action.minutes} minutes, ` +
+            'but people who agreed to be recorded are in the channel. If they are talking, I may have dropped ' +
+            'out of voice: `/campaign leave` and `/campaign join` will start a fresh session.',
+          context: `meeting ${session.meetingId} silent for ${action.minutes} min`,
+        });
+      },
+    });
 
     startRetentionTimer(db, config);
     console.log(`Retention timer started (${config.audioRetentionDays || 'disabled'} day(s)).`);

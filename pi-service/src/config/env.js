@@ -153,6 +153,18 @@ export const config = validate({
   //   * nothing else. No user install, no message content, no commands.
   voiceTokens: voiceTokenList(optional('DISCORD_VOICE_TOKENS', ''), optional('DISCORD_TOKEN', '')),
 
+  // A session whose voice channel has had nobody in it for this many minutes
+  // is ended as if somebody had run /campaign leave, and the owner is told.
+  // The forgotten /leave used to leave a meeting open indefinitely, holding a
+  // voice slot. 0 turns it off. See voice/session-watch.js.
+  voiceEmptyCloseMinutes: parseInt(optional('VOICE_EMPTY_CLOSE_MINUTES', '10'), 10),
+
+  // How long a session may go with people in the channel who agreed to be
+  // recorded and not one clip arriving, before the owner is told something is
+  // wrong. That silence is what a bot dropped from voice looks like from the
+  // inside. 0 turns it off.
+  voiceSilenceAlertMinutes: parseInt(optional('VOICE_SILENCE_ALERT_MINUTES', '15'), 10),
+
   dataDir: optional('DATA_DIR', '/data'),
 
   // whisper.cpp — WHISPER_MODEL_PATH defaults from WHISPER_MODEL_NAME rather

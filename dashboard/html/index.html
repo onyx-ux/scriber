@@ -6535,11 +6535,36 @@ function recordingPane(s) {
         ${n(live?.clips ?? 0)} clips · ${plural(live?.speakers ?? 0, 'speaker')}
       </div>
     </div>
+    ${quietWarning(live)}
     <div class="say-2">
-      Audio is being written to the Pi and nothing has left your network. Transcription starts when the
-      last person leaves the channel${status?.schedule?.requireApproval ? ' — and Quill will ask before it uses the PC' : ''}.
+      Audio is being written to the Pi. Transcription is queued when the session ends${status?.schedule?.requireApproval ? ', and Quill will ask before it uses the PC' : ''}.
     </div>
-    <div class="quiet" style="margin-top:20px">End it from Discord with <code>/campaign leave</code>.</div>`;
+    <div class="quiet" style="margin-top:20px">
+      End it from Discord with <code>/campaign leave</code>.${live?.emptyCloseMinutes > 0
+        ? ` If everyone leaves the channel, it ends on its own after ${plural(live.emptyCloseMinutes, 'minute')}.`
+        : ''}
+    </div>`;
+}
+
+// A live session that has heard nothing for a long while. From the inside this
+// is what a bot dropped out of voice looks like, so it is said on the page as
+// well as in the owner's DM. The threshold is the bot's own
+// VOICE_SILENCE_ALERT_MINUTES, sent with the session.
+function quietWarning(live) {
+  const limit = live?.silenceAlertMinutes;
+  if (!live || !(limit > 0)) return '';
+  const heard = live.lastAudioAt ?? (lastSeen ? lastSeen - (live.recordingForMs ?? 0) : null);
+  if (!heard) return '';
+  const quietMin = Math.floor((Date.now() - heard) / 60000);
+  if (quietMin < limit) return '';
+  return `
+    <div class="card" role="status" style="margin-top:18px;border-color:var(--amber)">
+      <div class="cap" style="color:var(--amber)">Nothing heard for ${plural(quietMin, 'minute')}</div>
+      <div class="quiet" style="margin-top:8px">
+        If the table is talking, Quill may have dropped out of voice. <code>/campaign leave</code> then
+        <code>/campaign join</code> starts a fresh session; everything recorded so far is kept.
+      </div>
+    </div>`;
 }
 
 function failedPane(s) {

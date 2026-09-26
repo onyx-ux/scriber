@@ -1107,6 +1107,15 @@ async function handleJoin(interaction, db, cfg, pool = voicePool(interaction.cli
       onUtterance: (userId, displayName, wavPath, startMs, endMs) => {
         capturedUtterances.push({ userId, displayName, wavPath, startMs, endMs });
       },
+      // The connection dropped and could not be got back. End the session so
+      // everything captured so far is queued, and say so where /join was run.
+      onLost: (reason) => {
+        const live = [...activeSessions.values()].find((s) => s.handle === handle);
+        if (!live) return;
+        endRecordingSession({ db, cfg, client: interaction.client, session: live })
+          .then((ended) => announceAutoEnd({ client: interaction.client, session: live, reason, ended }))
+          .catch((err) => console.error(`[voice] could not end lost session ${live.meetingId}: ${err.message}`));
+      },
     });
 
     try {
@@ -1145,6 +1154,9 @@ async function handleJoin(interaction, db, cfg, pool = voicePool(interaction.cli
       capturedUtterances,
       audioDir,
       channelName: voiceChannel.name,
+      // Where /join was run, so an ending nobody asked for (an empty channel,
+      // a dropped connection) can be announced to the same people.
+      textChannelId: interaction.channelId,
       startedAtMs: Date.now(),
     });
     // Name the campaign when the server holds more than one — otherwise the
@@ -1329,25 +1341,12 @@ async function handleLeave(interaction, db, cfg) {
     }
   }
 
+  // Out of the map before the first await, so a second /leave arriving while
+  // this one replies cannot end the same session twice.
   activeSessions.delete(session.meetingId);
 
   await interaction.reply(pick(LEAVE_START));
-  session.handle.disconnect();
-  db.endMeeting(session.meetingId, new Date().toISOString());
-
-  // Transcription is NOT started here any more. It needs the PC's GPU, and a
-  // session usually ends in the evening — precisely when someone is most
-  // likely to be using that PC. So the recording is queued, the owner is
-  // asked, and transcribe-worker.js runs it when approved or inside the
-  // automatic window. See pipeline/transcribe-schedule.js.
-  db.setMeetingStatus(session.meetingId, 'awaiting_transcription');
-  const job = db.enqueueTranscribeJob(session.meetingId, {
-    requireApproval: cfg.transcribeRequireApproval,
-  });
-
-  const clipCount = session.capturedUtterances.length;
-  const serverReachable = await isWhisperServerReachable(cfg);
-  const meeting = db.getMeeting(session.meetingId);
+  const { clipCount, meeting } = await endRecordingSession({ db, cfg, client: interaction.client, session });
 
   // Ephemeral on purpose. Clip counts, queue state and GPU scheduling are
   // operational detail for whoever runs the bot — the table just played a
@@ -1364,10 +1363,33 @@ async function handleLeave(interaction, db, cfg) {
         : `Transcription is queued and will start when the PC is available.`),
     flags: MessageFlags.Ephemeral,
   });
+}
+
+// Ending a recording, however it ends: /campaign leave, an empty channel, or a
+// voice connection that dropped and could not be got back.
+//
+// Transcription is NOT started here. It needs the PC's GPU, and a session
+// usually ends in the evening — precisely when someone is most likely to be
+// using that PC. So the recording is queued, the owner is asked, and
+// transcribe-worker.js runs it when approved or inside the automatic window.
+// See pipeline/transcribe-schedule.js.
+export async function endRecordingSession({ db, cfg, client, session }) {
+  activeSessions.delete(session.meetingId);
+  session.handle.disconnect();
+  db.endMeeting(session.meetingId, new Date().toISOString());
+
+  db.setMeetingStatus(session.meetingId, 'awaiting_transcription');
+  const job = db.enqueueTranscribeJob(session.meetingId, {
+    requireApproval: cfg.transcribeRequireApproval,
+  });
+
+  const clipCount = session.capturedUtterances.length;
+  const meeting = db.getMeeting(session.meetingId);
 
   if (cfg.transcribeRequireApproval) {
+    const serverReachable = await isWhisperServerReachable(cfg);
     await notifyTranscribeReady({
-      discordClient: interaction.client,
+      discordClient: client,
       cfg,
       meeting,
       jobId: job.id,
@@ -1375,6 +1397,26 @@ async function handleLeave(interaction, db, cfg) {
       serverReachable,
     });
   }
+  return { job, clipCount, meeting };
+}
+
+// Said in the channel /join was run in when a recording ends without anybody
+// asking, so the table does not find out from a short transcript next week.
+const AUTO_END_WORDS = {
+  empty: (s) => `🎲 Everyone has left **#${s.channelName}**, so I've stopped recording.`,
+  dropped: (s) => `🎲 I lost my connection to **#${s.channelName}** and couldn't get back in, so I've stopped recording.`,
+  removed: (s) => `🎲 I was removed from **#${s.channelName}**, so I've stopped recording.`,
+};
+
+export async function announceAutoEnd({ client, session, reason, ended }) {
+  const say = AUTO_END_WORDS[reason]?.(session);
+  if (!say || !session.textChannelId) return;
+  const clips = ended?.clipCount ?? session.capturedUtterances?.length ?? 0;
+  const more =
+    ` Everything up to now is saved: ${clips} clip${clips === 1 ? '' : 's'}, queued to be written up.` +
+    (reason === 'empty' ? '' : ' Run `/campaign join` to start a new session if you are still playing.');
+  const channel = await client.channels.fetch(session.textChannelId).catch(() => null);
+  await channel?.send?.(say + more).catch((err) => console.warn(`[voice] could not announce end: ${err.message}`));
 }
 
 // A typed reference ("Cipher_02") resolved against the campaigns this caller

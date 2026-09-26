@@ -75,3 +75,9 @@ export function notifyTranscribeReminder({ discordClient, cfg, meeting, jobId, n
     `reminder for meeting ${meeting.id} (job ${jobId})`
   );
 }
+
+// A plain DM to the owner, for the things that are not a transcription request
+// and have no buttons: a recording that went quiet, one that ended by itself.
+export function notifyOwner({ discordClient, cfg, content, context }) {
+  return dmOwner(discordClient, cfg, { content }, context);
+}

@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { unlink, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { wavDurationMs } from '../pipeline/wav-merge.js';
+import { watchConnection } from './session-watch.js';
 
 const DISCORD_SAMPLE_RATE = 48000;
 const DISCORD_CHANNELS = 2;
@@ -96,6 +97,11 @@ export function startCapture({
   // ...options }` with an explicit `group: undefined` in options overwrites
   // it, and every connection would land in a group literally keyed undefined.
   group = 'default',
+  // Called once if the connection drops and cannot be got back, with
+  // 'removed' or 'dropped'. The caller ends the session so everything
+  // captured so far is queued. See voice/session-watch.js.
+  onLost,
+  onRejoined,
 }) {
   const connection = joinVoiceChannel({
     channelId: channel.id,
@@ -122,8 +128,19 @@ export function startCapture({
     }
   });
 
+  watchConnection(connection, { entersState, onLost, onRejoined });
+
   const receiver = connection.receiver;
   const sessionStart = Date.now();
+
+  // When audio last arrived, for the silence watchdog in session-watch.js.
+  let lastAudioAt = null;
+
+  // Every audio stream still open, so disconnect() can end them. Destroying
+  // the connection alone left each speaker's last stream open forever: its
+  // ffmpeg never saw end-of-input, the WAV was never finished, and the
+  // process stayed behind (four of them were still running on 26 Sep 2026).
+  const openStreams = new Set();
 
   // Discord's per-user "speaking" flag flickers off and back on during
   // ordinary mid-sentence pauses (far shorter than our 1000ms AfterSilence
@@ -160,11 +177,13 @@ export function startCapture({
     }
 
     activeUsers.add(userId);
+    lastAudioAt = Date.now();
 
     const startMs = Date.now() - sessionStart;
     const opusStream = receiver.subscribe(userId, {
       end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
     });
+    openStreams.add(opusStream);
     const decoder = new prism.opus.Decoder({
       rate: DISCORD_SAMPLE_RATE,
       channels: DISCORD_CHANNELS,
@@ -181,6 +200,7 @@ export function startCapture({
     try {
       await resampleToWav(pcmStream, wavPath);
       const endMs = Date.now() - sessionStart;
+      lastAudioAt = Date.now();
       if ((await wavDurationMs(wavPath)) >= MIN_UTTERANCE_MS) {
         onUtterance(userId, displayName, wavPath, startMs, endMs);
       } else {
@@ -189,6 +209,7 @@ export function startCapture({
     } catch (err) {
       console.error(`[capture] stream error for user ${userId}:`, err.message);
     } finally {
+      openStreams.delete(opusStream);
       activeUsers.delete(userId);
     }
   });
@@ -198,8 +219,21 @@ export function startCapture({
     async waitUntilReady() {
       await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
     },
+    lastAudioAt: () => lastAudioAt,
+    // Where the bot is sitting now. Somebody can drag it to another channel
+    // and it keeps recording there; the library tracks the move.
+    channelId: () => connection.joinConfig?.channelId ?? channel.id,
     disconnect() {
-      connection.destroy();
+      // End every open stream first, so each speaker's last clip is finished
+      // and saved rather than abandoned mid-write.
+      for (const stream of openStreams) {
+        try {
+          stream.push(null);
+        } catch {
+          /* already ended */
+        }
+      }
+      if (connection.state?.status !== 'destroyed') connection.destroy();
     },
   };
 }

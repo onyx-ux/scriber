@@ -120,7 +120,7 @@ function permissionsOf(guild) {
 // map is keyed by meeting now — a Discord can hold two tables at once, and the
 // key had to become the thing there is one of per session. See
 // commands/index.js.
-function sessionView(session, guildName, now) {
+function sessionView(session, guildName, now, cfg = {}) {
   const startedMs = session.startedAtMs ?? null;
   return {
     guildId: session.guildId ?? null,
@@ -136,6 +136,15 @@ function sessionView(session, guildName, now) {
     clips: session.capturedUtterances?.length ?? 0,
     speakers: new Set((session.capturedUtterances ?? []).map((u) => u.userId)).size,
     recordingForMs: startedMs ? now - startedMs : null,
+    // When audio last arrived, as a timestamp rather than an age so it only
+    // changes when something is heard (see statusEtag). The page warns when a
+    // live session has gone quiet for a long time, which is what a bot dropped
+    // from voice looks like. See voice/session-watch.js.
+    lastAudioAt: session.handle?.lastAudioAt?.() ?? null,
+    // So the page can say when an empty channel will end the session and when
+    // a quiet one counts as worrying, rather than hard-coding either number.
+    emptyCloseMinutes: cfg.voiceEmptyCloseMinutes ?? 0,
+    silenceAlertMinutes: cfg.voiceSilenceAlertMinutes ?? 0,
   };
 }
 
@@ -196,7 +205,7 @@ export function buildStatus({
     : [];
 
   const recording = [...activeSessions.values()].map((session) =>
-    sessionView(session, guilds.find((g) => g.id === session.guildId)?.name ?? session.guildId, now)
+    sessionView(session, guilds.find((g) => g.id === session.guildId)?.name ?? session.guildId, now, cfg)
   );
 
   // The queue and the live transcription progress are machinery on both sides
