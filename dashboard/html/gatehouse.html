@@ -736,7 +736,7 @@
      tabs rather than one long page: they are three different errands. */
   .gh-nav {
     display: flex; gap: 4px; flex-wrap: wrap;
-    margin: 0 0 30px; padding-bottom: 10px; border-bottom: 1px solid var(--edge);
+    margin: 34px 0 30px; padding-bottom: 10px; border-bottom: 1px solid var(--edge);
   }
   .gh-nav button {
     font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
@@ -754,7 +754,8 @@
   .arch-row:last-child { border-bottom: 0; }
   .arch-row .nm { font-size: 17px; color: var(--iron); }
   .arch-row .meta { font: 12px/1.6 var(--mono); color: var(--faint); margin-top: 3px; }
-  .arch-row .why { font-size: 14.5px; color: var(--faint); margin-top: 6px; max-width: 62ch; }
+  .arch-row .why { font: 400 15px/1.55 'Newsreader', Georgia, serif; letter-spacing: 0; text-transform: none;
+                   color: var(--faint); margin-top: 6px; max-width: 62ch; }
   .arch-row .why b { color: var(--iron); font-weight: 500; }
   .arch-row .late { color: var(--seal); }
   .arch-do { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
@@ -764,7 +765,7 @@
   .use-bar { height: 8px; border-radius: 4px; background: var(--sunk); overflow: hidden; margin-top: 16px; max-width: 520px; }
   .use-bar i { display: block; height: 100%; background: var(--bronze); }
   .use-days { display: flex; align-items: flex-end; gap: 3px; height: 64px; margin-top: 14px; max-width: 520px; }
-  .use-days i { flex: 1; min-width: 4px; background: var(--bronze); opacity: .7; border-radius: 1px; }
+  .use-days i { flex: 1; min-width: 4px; max-width: 34px; background: var(--bronze); opacity: .7; border-radius: 1px; }
   .use-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14.5px; }
   .use-table th, .use-table td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--rule); }
   .use-table th { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
@@ -1486,6 +1487,13 @@ function admitForm() {
 // ==========================================================================
 
 const n = (v) => Number(v ?? 0).toLocaleString();
+// "asked 5 min ago", or "asked just now" rather than "now ago".
+const agoWords = (ms) => {
+  const s = since(ms);
+  return s === 'now' ? 'asked just now' : s === '—' ? 'asked' : `asked ${esc(s)} ago`;
+};
+// A Discord id as the name the roster knows it by, when it knows one.
+const nameOf = (userId) => (access?.people ?? []).find((p) => p.userId === userId)?.name || userId;
 const plural = (count, word) => `${n(count)} ${word}${count === 1 ? '' : 's'}`;
 
 function rooms() {
@@ -1518,7 +1526,7 @@ function archiveRoom() {
     <div class="arch-row" data-key="req-${esc(String(r.id))}">
       <div>
         <div class="nm">${esc(r.name)}</div>
-        <div class="meta">${esc(r.requesterName || r.requestedBy)} asked ${esc(since(stamp(r.askedAt)))} ago ·
+        <div class="meta">${esc(r.requesterName || r.requestedBy)} ${agoWords(stamp(r.askedAt))} ·
           ${r.isTheCreator ? 'they deleted it' : 'they played here'} · ${plural(r.sessions, 'session')} ·
           ${r.daysLeft > 0 ? `${plural(r.daysLeft, 'day')} left` : '<span class="late">past the window</span>'}</div>
         ${r.reason ? `<div class="why"><b>Why:</b> ${esc(r.reason)}</div>` : ''}
@@ -1535,7 +1543,7 @@ function archiveRoom() {
     <div class="arch-row" data-key="arch-${esc(String(c.id))}">
       <div>
         <div class="nm">${esc(c.name)}</div>
-        <div class="meta">${plural(c.sessions, 'session')} · deleted ${esc(on(c.deletedAt))}${c.deletedBy ? ` by ${esc(c.deletedBy)}` : ''} ·
+        <div class="meta">${plural(c.sessions, 'session')} · deleted ${esc(on(c.deletedAt))}${c.deletedBy ? ` by ${esc(nameOf(c.deletedBy))}` : ''} ·
           ${c.daysLeft > 0 ? `${plural(c.daysLeft, 'day')} left to restore` : '<span class="late">past the 30-day window</span>'}</div>
       </div>
       <div class="arch-do">
@@ -1827,6 +1835,14 @@ document.addEventListener('submit', async (e) => {
   btn.disabled = true;
   const sent = await send('access/invite', { userId: id });
   if (sent?.ok) input.value = '';
+});
+
+// Following a link to /gatehouse/#usage while already on this page changes the
+// hash without reloading, so the room follows it.
+window.addEventListener?.('hashchange', () => {
+  const next = String(location.hash ?? '').slice(1);
+  room = ROOMS.includes(next) ? next : 'people';
+  paint();
 });
 
 // Escape disarms a half-pressed button, the same as clicking away.

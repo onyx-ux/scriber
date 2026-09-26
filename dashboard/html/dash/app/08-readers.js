@@ -241,13 +241,16 @@ const USAGE_PREVIEW = [
 ];
 
 function usageScreen() {
+  // Name and figure on one line, the bar under both at full width, so every
+  // bar starts and ends at the same place whatever the figure says.
   const row = ({ what, used, limit, unit }) => `
-    <div class="set-row" style="align-items:flex-start">
-      <div style="flex:1;min-width:0">
+    <div style="padding:16px 0;border-bottom:1px solid var(--rule)">
+      <div style="display:flex;justify-content:space-between;gap:16px;align-items:baseline;flex-wrap:wrap">
         <div class="what">${esc(what)}</div>
-        <div class="bar" style="height:8px;margin-top:10px;max-width:420px"><i style="width:${Math.round((used / limit) * 100)}%"></i></div>
+        <div class="mono" style="font-size:13px;color:var(--text-2);white-space:nowrap">${used} of ${plural(limit, unit)}</div>
       </div>
-      <div class="mono" style="font-size:13px;color:var(--text-2);white-space:nowrap">${used} of ${plural(limit, unit)}</div>
+      <div class="bar" style="height:8px;margin-top:10px" role="img" aria-label="${used} of ${limit} (example)">
+        <i style="width:${Math.round((used / limit) * 100)}%"></i></div>
     </div>`;
 
   return `
@@ -279,7 +282,8 @@ function usageScreen() {
               <div class="cap">The whole bot</div>
               <div class="quiet" style="margin-top:10px">What the models have cost, and which one does which
                 job, is in the gatehouse.</div>
-              <a class="btn wide" style="margin-top:14px" href="/gatehouse/#usage">Open the gatehouse</a>
+              <a class="btn wide" style="display:flex;justify-content:center;margin-top:14px;text-decoration:none"
+                 href="/gatehouse/#usage">Open the gatehouse</a>
             </div>` : ''}
         </div>
       </div>

@@ -363,8 +363,9 @@ function settingsTab() {
 
         <div class="cap" style="margin:28px 0 6px">What it is called</div>
         ${row('Name', 'Also the folder its notes are filed in, and the start of every session reference',
-          `<span class="val">${esc(detail.name || detail.label || '')}</span>${canRename()
-            ? ' <button type="button" class="btn sm" data-rename>Rename</button>' : ''}`)}
+          `<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
+             <span class="val">${esc(detail.name || detail.label || '')}</span>${canRename()
+               ? '<button type="button" class="btn sm" data-rename>Rename</button>' : ''}</div>`)}
 
         <div class="cap" style="margin:28px 0 6px">Which rules you play</div>
         ${row('Rulebook', 'Only decides where a spell named in a write-up links to',
