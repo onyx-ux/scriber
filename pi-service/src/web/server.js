@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 
-import { buildStatus } from './status.js';
+import { buildStatus, statusEtag } from './status.js';
 import { accessRoster } from './access.js';
 import { allowanceFor } from '../access/tiers.js';
 import { buildCampaignView } from './campaign-view.js';
@@ -576,8 +576,15 @@ export function startStatusServer({
         }));
       }
 
+      // Twelve polls a minute per open tab, and most of them find nothing new.
+      // An unchanged snapshot answers 304 with no body; see statusEtag.
+      const etag = statusEtag(payload);
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag }).end();
+        return;
+      }
       const body = JSON.stringify(payload);
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end(body);
+      res.writeHead(200, { 'Content-Type': 'application/json', ETag: etag }).end(body);
     } catch (err) {
       console.error('[status] failed to build snapshot:', err.message);
       send(res, 500, { ok: false, message: 'snapshot failed' });

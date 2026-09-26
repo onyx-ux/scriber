@@ -4,6 +4,19 @@ import { detectOpusBackend } from '../voice/opus-backend.js';
 import { configuredProviders } from '../pipeline/model-client.js';
 import { topModel, ladderFor, knownModels } from '../pipeline/model-choice.js';
 import { lastBackupCheck } from '../maintenance/backup-check.js';
+import { createHash } from 'node:crypto';
+
+// The fields that move on every request whether or not anything happened.
+// Hashing them in would make every tag unique; the page advances them itself
+// by the time since the payload it is holding (see getStatus in the dashboard).
+const CLOCK_FIELDS = new Set(['generatedAt', 'uptimeMs', 'recordingForMs']);
+
+// A weak ETag over everything in a snapshot except the clock fields, so an
+// unchanged poll can be answered 304 with no body.
+export function statusEtag(payload) {
+  const stable = JSON.stringify(payload, (key, value) => (CLOCK_FIELDS.has(key) ? undefined : value));
+  return `W/"${createHash('sha1').update(stable).digest('base64url')}"`;
+}
 
 // The snapshot the dashboard renders.
 //

@@ -12,9 +12,7 @@
      the landing page's world; the whole dashboard lives there now, so they load
      once, up front. Every one has a system fallback, because a LAN dashboard
      pointed at a Raspberry Pi is opened from machines with no internet. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1;1,9..144,300..700,0..100,0..1&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/dash/fonts/fonts.css">
 
 <!-- Theme before paint. Reading it here rather than in the app script keeps a
      dark-theme reader from being flashed a page of white paper while the rest
@@ -1968,8 +1966,8 @@
      untouched — everything below is scoped to body.gate-open or .gate, and
      nothing here leaks into a signed-in page.
 
-     The typefaces load on demand, from loadGateFonts(). Most visits to this
-     page never see this screen and should not pay for three extra families.  */
+     The typefaces come from /dash/fonts/fonts.css, which every page already
+     loads, so the gate costs nothing extra to draw.  */
   body.gate-open { background: #E6E8E3; }
   /* The palette is the light one here whatever the theme says, so the
      selection has to be too. Left to the token, a dark-theme reader gets the
@@ -4212,23 +4210,6 @@ function diagnosis() {
 // three ways it could fail that had nothing to do with you (the bot not
 // sharing a server with you, the name typed a shade wrong, DMs turned off for
 // the server), none of which exist here.
-// The landing page's typefaces, fetched the first time the gate is drawn.
-// Kept out of <head> because this is the only screen that uses them and most
-// visits here never see it — a signed-in operator should not pay for three
-// families they will never render.
-let gateFontsAsked = false;
-function loadGateFonts() {
-  if (gateFontsAsked) return;
-  gateFontsAsked = true;
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href =
-    'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1' +
-    '&family=Newsreader:opsz,wght@6..72,300..600' +
-    '&family=Spline+Sans+Mono:wght@400;500&display=swap';
-  document.head.appendChild(link);
-}
-
 // What a sign-in can fail on, said in words rather than in the five the server
 // puts on the end of the URL. The reason travels as a fragment because the
 // callback is a redirect and has no body to put it in — see auth-routes.js.
@@ -4276,8 +4257,6 @@ async function askForInvite() {
 // and not their fault. So: say what Quill is, say plainly that the door is
 // shut for now, and give them the one thing they can actually do about it.
 function notInvitedScreen() {
-  loadGateFonts();
-
   return `
     <div class="gate">
       <div class="gate-inner">
@@ -4327,8 +4306,6 @@ function notInvitedScreen() {
 }
 
 function signInScreen() {
-  loadGateFonts();
-
   return `
     <div class="gate">
       <div class="gate-inner">
@@ -4854,7 +4831,7 @@ async function welcomeSeat(form) {
   // They are on a roster they were not on a second ago. Asked for now rather
   // than waited for: the next poll is up to five seconds away, and the dashboard
   // they are about to land on would open without their table on it.
-  status = await get('/status').catch(() => status);
+  status = await getStatus().catch(() => status);
 
   // A yes is finished, and goes out through the fire that is already crossing
   // the page.
@@ -5331,8 +5308,6 @@ function thrEnd() {
 }
 
 function welcomeScreen() {
-  loadGateFonts();
-
   // One exchange on the page at a time. It used to keep every answer above the
   // one being asked, which made a written record of the arrival — a good idea
   // for a book and the wrong one here, because the fire has to have something
@@ -8473,6 +8448,28 @@ async function get(path) {
   return res.json();
 }
 
+// The poll, sent with the tag of the snapshot already held. Most polls find
+// nothing new, and the bot then answers 304 with no body instead of the whole
+// snapshot again. The only fields that move without anything happening are the
+// clocks, which the tag leaves out, so they are advanced here by the time since
+// the snapshot arrived. See statusEtag in pi-service/src/web/status.js.
+let statusTag = null;
+async function getStatus() {
+  const headers = statusTag && status ? { 'If-None-Match': statusTag } : {};
+  const res = await fetch(`${API}/status`, { cache: 'no-store', headers });
+  if (res.status === 304 && status) {
+    const moved = lastSeen ? Date.now() - lastSeen : 0;
+    if (status.bot?.uptimeMs != null) status.bot.uptimeMs += moved;
+    for (const r of status.recording ?? []) {
+      if (r.recordingForMs != null) r.recordingForMs += moved;
+    }
+    return status;
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  statusTag = res.headers?.get?.('etag') ?? null;
+  return res.json();
+}
+
 async function loadCampaign(id, { keepScreen = false } = {}) {
   // Set before the fetch so the campaign opens on the click rather than
   // whenever the network gets back.
@@ -8615,7 +8612,7 @@ async function tick() {
       return;
     }
 
-    status = await get('/status');
+    status = await getStatus();
     lastSeen = Date.now();
     document.body.classList.remove('stale');
 
@@ -8693,7 +8690,7 @@ async function send(action, body) {
   }
   // Straight to a refresh rather than waiting for the next poll: the whole
   // point of pressing the button is to watch the thing move.
-  status = await get('/status').catch(() => status);
+  status = await getStatus().catch(() => status);
   if (view.campaignId) detail = await get(`/campaign?id=${view.campaignId}`).catch(() => detail);
   if (view.meetingId) await syncNotes();
   paint();
