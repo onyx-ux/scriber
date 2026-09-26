@@ -300,6 +300,30 @@ CREATE TABLE IF NOT EXISTS guilds (
 CREATE INDEX IF NOT EXISTS idx_guilds_left ON guilds(left_at);
 `;
 
+// A thread's text folded for matching: the summariser words the same open
+// question slightly differently each time ("Who else has a key?" / "who else
+// has a key"), and those are one thread.
+export function threadKey(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+const threadRow = (row) => ({
+  id: row.id,
+  campaignId: row.campaign_id,
+  text: row.text,
+  status: row.status,
+  openedMeetingId: row.opened_meeting_id ?? null,
+  closedMeetingId: row.closed_meeting_id ?? null,
+  closedBy: row.closed_by ?? null,
+  proposal: row.proposed_meeting_id
+    ? { meetingId: row.proposed_meeting_id, evidence: row.proposed_evidence ?? '' }
+    : null,
+  updatedAt: row.updated_at,
+});
+
 // CREATE TABLE IF NOT EXISTS won't add a column to a table that already
 // exists, so an existing deployment's jobs table needs the new column added
 // explicitly. Checked-then-added rather than blindly ALTERing, since
@@ -801,6 +825,66 @@ function migrate(db) {
     )
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_recap_notes_meeting ON recap_notes(meeting_id, version_id)`);
+
+  // --- a campaign's open threads, with a status ------------------------------
+  //
+  // Every write-up lists its unresolved threads, and nothing ever closed one,
+  // so "still unresolved" was the sum of every mystery the campaign had ever
+  // had. A thread is now a row: opened by the session that first raised it,
+  // closed (resolved or dropped) by whoever runs the table. The summariser may
+  // PROPOSE that a session settled one (proposed_*), and never closes one
+  // itself. `key` is the text folded for matching, so the same thread worded
+  // with different capitals or punctuation is one thread. See
+  // campaign/threads.js.
+  const hadThreads = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'campaign_threads'`)
+    .get();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
+      text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      opened_meeting_id INTEGER,
+      closed_meeting_id INTEGER,
+      closed_by TEXT,
+      proposed_meeting_id INTEGER,
+      proposed_evidence TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (campaign_id, key)
+    )
+  `);
+  // A database from before this has threads only inside its write-ups. Open
+  // each one once, attributed to the session that first raised it.
+  if (!hadThreads) {
+    const insert = db.prepare(
+      `INSERT INTO campaign_threads (campaign_id, key, text, opened_meeting_id)
+       VALUES (?, ?, ?, ?) ON CONFLICT(campaign_id, key) DO NOTHING`
+    );
+    const meetings = db
+      .prepare(
+        `SELECT id, campaign_id, summary_json FROM meetings
+          WHERE campaign_id IS NOT NULL AND summary_json IS NOT NULL
+          ORDER BY started_at ASC, id ASC`
+      )
+      .all();
+    let opened = 0;
+    for (const m of meetings) {
+      let threads = [];
+      try {
+        threads = JSON.parse(m.summary_json)?.unresolvedThreads ?? [];
+      } catch {
+        threads = [];
+      }
+      for (const text of Array.isArray(threads) ? threads : []) {
+        if (typeof text !== 'string' || !threadKey(text)) continue;
+        opened += insert.run(m.campaign_id, threadKey(text), text.trim(), m.id).changes;
+      }
+    }
+    if (opened) console.log(`[db] migrated: opened ${opened} thread(s) from existing write-ups`);
+  }
 
   // Everyone already at a table when consent arrived keeps being recorded.
   // They have been playing on the old understanding and asking them to
@@ -1721,6 +1805,86 @@ function wrap(db) {
         ? db.prepare(`DELETE FROM recap_notes WHERE id = ?`).run(Number(id)).changes
         : db.prepare(`DELETE FROM recap_notes WHERE id = ? AND user_id = ?`)
             .run(Number(id), String(userId)).changes;
+    },
+
+    // --- open threads (see campaign/threads.js) ---
+
+    // Opens a thread unless the campaign already has one worded the same way.
+    // Returns true when a new one was opened.
+    openThread(campaignId, text, meetingId = null) {
+      const key = threadKey(text);
+      if (!key) return false;
+      return (
+        db
+          .prepare(
+            `INSERT INTO campaign_threads (campaign_id, key, text, opened_meeting_id)
+             VALUES (?, ?, ?, ?) ON CONFLICT(campaign_id, key) DO NOTHING`
+          )
+          .run(campaignId, key, String(text).trim(), meetingId).changes > 0
+      );
+    },
+
+    listThreads(campaignId) {
+      return db
+        .prepare(
+          `SELECT * FROM campaign_threads WHERE campaign_id = ?
+            ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, opened_meeting_id ASC, id ASC`
+        )
+        .all(campaignId)
+        .map(threadRow);
+    },
+
+    findOpenThread(campaignId, text) {
+      const row = db
+        .prepare(`SELECT * FROM campaign_threads WHERE campaign_id = ? AND key = ? AND status = 'open'`)
+        .get(campaignId, threadKey(text));
+      return row ? threadRow(row) : null;
+    },
+
+    getThread(id) {
+      const row = db.prepare(`SELECT * FROM campaign_threads WHERE id = ?`).get(Number(id));
+      return row ? threadRow(row) : null;
+    },
+
+    proposeThreadClose(threadId, meetingId, evidence) {
+      return db
+        .prepare(
+          `UPDATE campaign_threads
+              SET proposed_meeting_id = ?, proposed_evidence = ?, updated_at = datetime('now')
+            WHERE id = ? AND status = 'open'`
+        )
+        .run(meetingId, String(evidence ?? ''), threadId).changes;
+    },
+
+    // Sets a thread's status and clears any proposal. Closing records the
+    // session that settled it (the proposal's, when there was one) and who
+    // decided; reopening clears both.
+    setThreadStatus(threadId, status, { by = null } = {}) {
+      const row = db.prepare(`SELECT * FROM campaign_threads WHERE id = ?`).get(Number(threadId));
+      if (!row) return 0;
+      const closing = status !== 'open';
+      return db
+        .prepare(
+          `UPDATE campaign_threads
+              SET status = ?, closed_meeting_id = ?, closed_by = ?,
+                  proposed_meeting_id = NULL, proposed_evidence = NULL, updated_at = datetime('now')
+            WHERE id = ?`
+        )
+        .run(
+          status,
+          closing ? row.proposed_meeting_id ?? row.closed_meeting_id ?? null : null,
+          closing ? by : null,
+          row.id
+        ).changes;
+    },
+
+    clearThreadProposal(threadId) {
+      return db
+        .prepare(
+          `UPDATE campaign_threads SET proposed_meeting_id = NULL, proposed_evidence = NULL, updated_at = datetime('now')
+            WHERE id = ?`
+        )
+        .run(Number(threadId)).changes;
     },
 
     // versionId null is the current write-up, which is what almost every

@@ -1,3 +1,4 @@
+import { openThreadTexts, recordSessionThreads } from '../campaign/threads.js';
 import { summarizeTranscript } from './summarize-client.js';
 import { withProvider, summariserLabel } from './model-client.js';
 import { buildTranscriptText } from './transcribe.js';
@@ -117,6 +118,10 @@ export async function tick(db, discordClient, cfg) {
       // than their Discord name was being written up as a stranger the party
       // met — see campaign/character-names.js.
       playerCharacters: rosterNames(db, campaignId),
+      // The campaign's open threads, most recent forty, so the summariser can
+      // say which this session settled. It only proposes; see
+      // campaign/threads.js.
+      openThreads: openThreadTexts(db, campaignId).slice(-40),
     };
 
     if (job.provider) {
@@ -178,6 +183,18 @@ export async function tick(db, discordClient, cfg) {
     // Store the FULL summary — /recap, /funny and the ledger all read this,
     // and it should stay the complete record of the session.
     db.setSummary(meeting.id, notes);
+
+    // Open the threads this session raised and record any it says it settled
+    // as proposals for the manager. Best-effort: a thread list that could not
+    // be updated must not fail a finished write-up.
+    try {
+      const threads = recordSessionThreads(db, { campaignId, meetingId: meeting.id, notes });
+      if (threads.opened || threads.proposed) {
+        console.log(`[threads] meeting ${meeting.id}: ${threads.opened} opened, ${threads.proposed} proposed closed`);
+      }
+    } catch (err) {
+      console.warn(`[threads] meeting ${meeting.id}: not updated: ${err.message}`);
+    }
 
     const known = await readKnownEntities(cfg, folder);
     const displayNotes = withoutAlreadyKnown(notes, known);

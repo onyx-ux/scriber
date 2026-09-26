@@ -37,6 +37,7 @@ markdown fences, no commentary) with this exact shape:
   ],
   "partyDecisions": ["string - choices the party made that will matter later"],
   "unresolvedThreads": ["string - mysteries, plot hooks, or things the party still needs to figure out"],
+  "resolvedThreads": [{ "thread": "string - an OPEN THREAD from the list in the message, copied exactly", "evidence": "string - one sentence: what happened in this transcript that settles it" }],
   "followUps": [
     { "assignee": "player's Discord display name or null for DM/party-wide",
       "task": "string - something to follow up on before next session" }
@@ -70,7 +71,14 @@ Rules:
 - Be genuinely selective about "funnyMoments" — most sessions have one or
   two moments like this at most, and plenty of sessions have none at all.
   Do not force it or stretch a merely-notable moment into a "funny" one;
-  an empty array is a completely normal result for this field.`;
+  an empty array is a completely normal result for this field.
+
+OPEN THREADS FROM EARLIER SESSIONS may be listed in the message. Put one in
+"resolvedThreads" only when the transcript clearly answers or settles it,
+copy its wording exactly from that list, and give the evidence in one
+sentence. Never list a thread that is not in that list, and never list one
+because it merely came up again. An empty array is the normal result. A
+thread this session opens still goes in "unresolvedThreads".`;
 
 // The people at the table, and the one line that stops them being written up
 // as NPCs.
@@ -90,6 +98,11 @@ function sessionHeader(meta) {
     `Attendees: ${attendees || 'unknown'}`,
     players
       ? `PLAYER CHARACTERS (these are the party — never list any of them as an NPC): ${players}`
+      : null,
+    // The campaign's open threads, so the model can say which this session
+    // settled. See campaign/threads.js: it only proposes, the table decides.
+    (meta.openThreads || []).length
+      ? `OPEN THREADS FROM EARLIER SESSIONS:\n${meta.openThreads.map((t) => `- ${t}`).join('\n')}`
       : null,
   ]
     .filter(Boolean)
@@ -154,6 +167,7 @@ Return ONLY a JSON object (no prose, no markdown fences) with this shape:
   ],
   "partyDecisions": ["string - choices made in this slice that will matter later"],
   "unresolvedThreads": ["string - mysteries or open questions raised in this slice"],
+  "resolvedThreads": [{ "thread": "string - an OPEN THREAD from the list in the message, copied exactly", "evidence": "string - one sentence: what happened in this transcript that settles it" }],
   "followUps": [
     { "assignee": "player's display name exactly as it appears in the transcript, or null",
       "task": "string - something to follow up on before next session" }
@@ -170,7 +184,14 @@ the transcript with a name that differs from their character's — both are
 listed, and both are the same person.
 
 Never omit a key — use an empty array (or empty string for "narrative") when
-there is nothing to report.`;
+there is nothing to report.
+
+OPEN THREADS FROM EARLIER SESSIONS may be listed in the message. Put one in
+"resolvedThreads" only when the transcript clearly answers or settles it,
+copy its wording exactly from that list, and give the evidence in one
+sentence. Never list a thread that is not in that list, and never list one
+because it merely came up again. An empty array is the normal result. A
+thread this session opens still goes in "unresolvedThreads".`;
 
 export const DND_REDUCE_PROMPT = `You are assembling the final session summary for a tabletop D&D session
 from ordered notes that were extracted slice-by-slice from one long
@@ -203,6 +224,7 @@ shape:
   ],
   "partyDecisions": ["string - choices the party made that will matter later"],
   "unresolvedThreads": ["string - mysteries, plot hooks, or things still unresolved"],
+  "resolvedThreads": [{ "thread": "string - an OPEN THREAD from the list in the message, copied exactly", "evidence": "string - one sentence: what happened in this transcript that settles it" }],
   "followUps": [
     { "assignee": "player's display name or null for DM/party-wide",
       "task": "string - something to follow up on before next session" }
@@ -220,7 +242,14 @@ listed, and both are the same person.
 
 Cover the WHOLE session chronologically — the slice notes at the start
 matter as much as the ones at the end. Be thorough rather than terse; this
-summary stands in for reading the full transcript. Never omit a key.`;
+summary stands in for reading the full transcript. Never omit a key.
+
+OPEN THREADS FROM EARLIER SESSIONS may be listed in the message. Put one in
+"resolvedThreads" only when the transcript clearly answers or settles it,
+copy its wording exactly from that list, and give the evidence in one
+sentence. Never list a thread that is not in that list, and never list one
+because it merely came up again. An empty array is the normal result. A
+thread this session opens still goes in "unresolvedThreads".`;
 
 export function buildChunkUserMessage(chunk, meta, index, total) {
   return `${sessionHeader(meta)}

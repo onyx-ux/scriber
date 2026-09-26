@@ -32,6 +32,7 @@ import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js
 import { handOverCampaign } from '../campaign/handover.js';
 import { requestRestore, decideRestoreRequest } from '../campaign/restore-request.js';
 import { applyCorrections } from '../campaign/corrections.js';
+import { THREAD_STATUSES } from '../campaign/threads.js';
 import { ROLES } from '../pipeline/model-choice.js';
 // Whose name an act happens under. Asked rather than re-derived: four actions
 // here used to each decide for themselves what the operator's console is.
@@ -952,6 +953,43 @@ export const ACTIONS = {
         edition: asked,
         message: `Rules links now point at the ${EDITIONS[asked].label}.`,
       },
+    };
+  },
+
+  // --- a campaign's open threads (campaign/threads.js) ----------------------
+  //
+  // Closing a thread, dropping it, or opening it again. The manager's, like
+  // the rest of a campaign's records: a thread the DM is saving for later is
+  // not one a player should be able to mark resolved.
+  'threads/set': (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    const thread = db.getThread(body?.threadId);
+    if (!thread || thread.campaignId !== id) return badRequest('That thread is not at this table.');
+    const status = String(body?.status ?? '');
+    if (!THREAD_STATUSES.includes(status)) {
+      return badRequest(`A thread is ${THREAD_STATUSES.join(', ')}; "${status}" is not one of them.`);
+    }
+
+    db.setThreadStatus(thread.id, status, { by: actingUserId(ctx?.viewer, cfg) });
+    const words = { open: 'Opened again', resolved: 'Marked resolved', dropped: 'Dropped' };
+    return {
+      status: 200,
+      payload: { ok: true, campaignId: id, threadId: thread.id, status, message: `${words[status]}: “${thread.text}”.` },
+    };
+  },
+
+  // Turning down the summariser's suggestion that a session settled a thread.
+  // The thread stays open and the suggestion goes.
+  'threads/keep-open': (db, cfg, body) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    const thread = db.getThread(body?.threadId);
+    if (!thread || thread.campaignId !== id) return badRequest('That thread is not at this table.');
+    db.clearThreadProposal(thread.id);
+    return {
+      status: 200,
+      payload: { ok: true, campaignId: id, threadId: thread.id, message: `Kept open: “${thread.text}”.` },
     };
   },
 

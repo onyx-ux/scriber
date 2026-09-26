@@ -334,6 +334,11 @@ export const ACTION_NEEDS = {
   // page drew the buttons enabled for anyone who may manage the campaign, and
   // the answer that came back was about somebody else's GPU.
   'campaign/edition': 'manage',
+  // Closing, dropping or reopening one of the campaign's open threads, and
+  // turning down the summariser's suggestion that a session settled one. The
+  // manager's: a thread the DM is saving is not one a player should close.
+  'threads/set': 'manage',
+  'threads/keep-open': 'manage',
   // Not 'manage', and the odd one out on this table for a reason.
   //
   // Every other entry here names an act ON something — a roster, a correction,

@@ -13,6 +13,7 @@ const EMPTY_NOTES = {
   scenes: [],
   partyDecisions: [],
   unresolvedThreads: [],
+  resolvedThreads: [],
   followUps: [],
   npcsIntroduced: [],
   locationsVisited: [],
@@ -109,6 +110,11 @@ function normalizeNotes(parsed) {
       })),
     partyDecisions: asStringArray(p.partyDecisions),
     unresolvedThreads: asStringArray(p.unresolvedThreads),
+    // Proposals only: see campaign/threads.js. Anything without a thread name
+    // is dropped rather than guessed at.
+    resolvedThreads: (Array.isArray(p.resolvedThreads) ? p.resolvedThreads : [])
+      .filter((r) => r && typeof r === 'object' && typeof r.thread === 'string' && r.thread.trim())
+      .map((r) => ({ thread: r.thread.trim(), evidence: typeof r.evidence === 'string' ? r.evidence.trim() : '' })),
     followUps: (Array.isArray(p.followUps) ? p.followUps : [])
       // Models sometimes emit a placeholder {assignee: null, task: ""} rather
       // than an empty list; those would render as empty checklist bullets.

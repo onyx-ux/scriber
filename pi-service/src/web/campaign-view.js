@@ -121,6 +121,10 @@ export function buildCampaignView({ db, campaignId }) {
     edition: campaign.rules_edition || DEFAULT_EDITION,
     outputChannelId: campaign.output_channel_id ?? null,
 
+    // The campaign's open questions and what became of them, with any
+    // suggestion that a session settled one. See campaign/threads.js.
+    threads: threadsOf(db, campaignId),
+
     // listRoster is already the union of "on the roster", "has a character"
     // and "has actually spoken", which is the right list to manage: someone
     // the bot has recorded but nobody ever added is exactly the person whose
@@ -201,4 +205,26 @@ export function buildCampaignView({ db, campaignId }) {
       };
     }),
   };
+}
+
+// Threads with session numbers rather than meeting ids, which is how the page
+// names a night everywhere else.
+function threadsOf(db, campaignId) {
+  const numbers = new Map();
+  const session = (meetingId) => {
+    if (!meetingId) return null;
+    if (!numbers.has(meetingId)) numbers.set(meetingId, db.getMeeting(meetingId)?.session_number ?? null);
+    return numbers.get(meetingId);
+  };
+  return db.listThreads(campaignId).map((t) => ({
+    id: t.id,
+    text: t.text,
+    status: t.status,
+    openedSession: session(t.openedMeetingId),
+    openedMeetingId: t.openedMeetingId,
+    closedSession: session(t.closedMeetingId),
+    proposal: t.proposal
+      ? { session: session(t.proposal.meetingId), meetingId: t.proposal.meetingId, evidence: t.proposal.evidence }
+      : null,
+  }));
 }

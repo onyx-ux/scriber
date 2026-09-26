@@ -114,6 +114,8 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'summary/approve',
       'summary/approve-all',
       'summary/park',
+      'threads/keep-open',
+      'threads/set',
       'transcribe',
     ],
     'adding one has to be a decision someone makes on purpose'

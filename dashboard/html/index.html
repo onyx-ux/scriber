@@ -5718,10 +5718,12 @@ const SHELVES = [
   ['npcs', 'NPCs'],
   ['places', 'Places'],
   ['items', 'Items'],
+  ['threads', 'Threads'],
 ];
 
 const shelfCount = (id) => {
   if (id === 'sessions') return detail?.sessions?.length ?? 0;
+  if (id === 'threads') return (detail?.threads ?? []).filter((t) => t.status === 'open').length;
   if (!compendium || compendium.campaignId !== view.campaignId || compendium.loading) return null;
   const list = id === 'npcs' ? compendium.npcs : id === 'places' ? compendium.places : compendium.items;
   return (list ?? []).length;
@@ -5743,6 +5745,7 @@ function shelfChooser() {
     npcs: 'everyone the party met',
     places: 'everywhere they went',
     items: 'what they came away with',
+    threads: 'what is still unanswered',
   };
   return `
     <div class="head"><div class="cap">This campaign</div></div>
@@ -5763,7 +5766,7 @@ function shelfChooser() {
 function shelfHeader() {
   const name = SHELVES.find(([id]) => id === view.shelf)?.[1] ?? '';
   const count = shelfCount(view.shelf);
-  const order = view.shelf === 'sessions' ? 'newest first' : 'first seen first';
+  const order = view.shelf === 'sessions' ? 'newest first' : view.shelf === 'threads' ? 'open first' : 'first seen first';
   return `
     <div class="head">
       <button type="button" class="shelf-back" data-shelf-back
@@ -5777,6 +5780,7 @@ function shelfHeader() {
 
 function columnList() {
   if (view.shelf === 'sessions') return sessionColumn();
+  if (view.shelf === 'threads') return threadColumn();
 
   if (!compendium || compendium.campaignId !== view.campaignId) {
     buildCompendium();
@@ -5834,6 +5838,76 @@ function columnList() {
     </button>`).join('')}</div>`;
 }
 
+// --- Threads ---------------------------------------------------------------
+//
+// The campaign's open questions, and what became of them. Every write-up lists
+// the threads a session left open, and nothing used to close one, so "still
+// unresolved" only ever grew. They are rows with a status now (see
+// pi-service/src/campaign/threads.js). The summariser may suggest a session
+// settled one; the person running the table decides, here.
+
+const THREAD_WORD = { open: 'open', resolved: 'resolved', dropped: 'dropped' };
+
+// The column is an index into the pane, like the cast: one row per thread,
+// open ones first, and a mark on any the summariser thinks were settled.
+function threadColumn() {
+  const list = detail?.threads ?? [];
+  if (!list.length) {
+    return `<div class="empty"><div class="say">Nothing open.</div>
+      <div class="quiet">Every question a write-up leaves open collects here.</div></div>`;
+  }
+  return `<div class="sess-list index">${list.map((th) => `
+    <button class="sess thin" data-jump="thread-${th.id}" data-key="thread-row-${th.id}">
+      <span class="ref">${esc(th.text)}</span>
+      <span class="when">${th.proposal && canManage() ? 'maybe settled' : esc(THREAD_WORD[th.status] ?? th.status)}</span>
+    </button>`).join('')}</div>`;
+}
+
+function threadsPane() {
+  const list = detail?.threads ?? [];
+  const manage = canManage();
+  const open = list.filter((t) => t.status === 'open');
+  const suggested = manage ? open.filter((t) => t.proposal) : [];
+  const stillOpen = open.filter((t) => !(manage && t.proposal));
+  const closed = list.filter((t) => t.status !== 'open');
+  const night = (n) => (n ? `Session ${n}` : 'an earlier session');
+
+  const card = (th, body, buttons) => `
+    <div class="card" id="thread-${th.id}" data-key="thread-${th.id}" style="margin-top:12px">
+      <div class="big">${wiki(th.text)}</div>
+      <div class="quiet" style="margin-top:6px">${body}</div>
+      ${manage && buttons ? `<div class="row-btns" style="margin-top:12px">${buttons}</div>` : ''}
+    </div>`;
+  const setBtn = (th, status, label, cls = '') =>
+    `<button type="button" class="btn sm ${cls}" data-act="threads/set" data-campaign="${detail.id}"
+             data-thread="${th.id}" data-thread-status="${status}">${label}</button>`;
+
+  return `
+    ${ledgerHead('Threads', open.length ? `${plural(open.length, 'thread')} still open` : 'Nothing left open',
+      'Every question a write-up leaves open, from the night it was raised. When a later session seems to answer one, Quill suggests closing it, and whoever runs the table decides.')}
+
+    ${suggested.length ? `
+      <div class="cap" style="margin-top:30px;color:var(--amber)">Maybe settled</div>
+      ${suggested.map((th) => card(th,
+        `Raised in ${night(th.openedSession)}. ${esc(night(th.proposal.session))} may have answered it: ${wiki(th.proposal.evidence || 'no reason given')}`,
+        setBtn(th, 'resolved', 'Mark resolved', 'go') +
+        `<button type="button" class="btn sm" data-act="threads/keep-open" data-campaign="${detail.id}" data-thread="${th.id}">Keep it open</button>`
+      )).join('')}` : ''}
+
+    ${stillOpen.length ? `
+      <div class="cap" style="margin-top:30px">Open</div>
+      ${stillOpen.map((th) => card(th, `Raised in ${night(th.openedSession)}.`,
+        setBtn(th, 'resolved', 'Resolved') + setBtn(th, 'dropped', 'Drop it'))).join('')}` : ''}
+
+    ${closed.length ? `
+      <div class="cap" style="margin-top:30px">Closed</div>
+      ${closed.map((th) => card(th,
+        `${th.status === 'resolved' ? 'Resolved' : 'Dropped'}${th.closedSession ? ` in Session ${th.closedSession}` : ''}. Raised in ${night(th.openedSession)}.`,
+        setBtn(th, 'open', 'Open it again'))).join('')}` : ''}
+
+    ${!list.length ? '<div class="quiet" style="margin-top:24px">No write-up has left a question open yet.</div>' : ''}`;
+}
+
 // The shelf, as one document.
 //
 // Items, people and places are the same shape now: a list, read down the page,
@@ -5843,6 +5917,7 @@ function columnList() {
 // pages to collect what one list could hold, and reading down the cast is the
 // thing anybody actually wants from this shelf.
 function shelfPane() {
+  if (view.shelf === 'threads') return threadsPane();
   if (!compendium || compendium.campaignId !== view.campaignId || compendium.loading) {
     return '<div class="quiet" style="padding-top:30px">Reading back through the campaign…</div>';
   }
@@ -9118,6 +9193,8 @@ document.addEventListener('click', async (event) => {
   if (d.paused) body.paused = d.paused === 'true';
   if (d.request) body.requestId = Number(d.request);
   if (d.approve) body.approve = d.approve === 'true';
+  if (d.thread) body.threadId = Number(d.thread);
+  if (d.threadStatus) body.status = d.threadStatus;
 
   // Moving the destination anywhere else closes the channel list. Left open it
   // would sit under a switch that no longer says "channel", offering to change

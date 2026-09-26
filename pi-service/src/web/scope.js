@@ -189,6 +189,9 @@ export function scopeCampaign(view, viewer) {
     // Corrections are the table's shared vocabulary and reading them is
     // harmless; changing them is gated on the action side.
     corrections: manage ? view.corrections : [],
+    // The table's open questions are the table's to read. A proposal to close
+    // one is a decision waiting on the manager, so only they see it.
+    threads: manage ? (view.threads ?? []) : (view.threads ?? []).map(({ proposal, ...t }) => t),
     roster: manage
       ? view.roster
       // Who else is at the table, without the accounts or the consent states.
