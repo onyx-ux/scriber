@@ -11,7 +11,6 @@ import { isSummariserReachable, summariserLabel } from '../pipeline/model-client
 import { askCampaign, askAllowance, gatherContext } from '../pipeline/ask-client.js';
 import { loadCampaignNames, expandTerms, closeSpellings } from '../campaign/lookup.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
-import { campaignFolderFor } from '../export/naming.js';
 import { TRANSCRIBE_PREFIX } from '../pipeline/transcribe-schedule.js';
 import { notifyTranscribeReady } from '../delivery/transcribe-notify.js';
 import { resolveSpeakerName } from '../campaign/character-names.js';
@@ -20,8 +19,6 @@ import {
   resolveMemberCampaign,
   resolveManagedCampaign,
   campaignLabel,
-  campaignNameClash,
-  nameIsUsable,
   findCampaign,
 } from '../campaign/resolve.js';
 import { isOwner } from '../campaign/permissions.js';
@@ -35,8 +32,8 @@ import { setCharacter } from '../pipeline/job-actions.js';
 import { handleCampaignRestore } from './archive.js';
 import { handleRestoreModal } from './restore-request.js';
 import { notifyRestoreRequested } from '../delivery/restore-notify.js';
-import { resolveSessionRef, sessionRef, refSlug } from '../campaign/session-ref.js';
-import { moveCampaignFolder } from '../campaign/vault-migrate.js';
+import { resolveSessionRef, sessionRef } from '../campaign/session-ref.js';
+import { renameCampaign } from '../campaign/rename.js';
 import {
   CONSENT_PREFIX,
   parseConsentButton,
@@ -818,62 +815,9 @@ function placesLeft(db, cfg, userId) {
 }
 
 async function handleCampaignRename(interaction, db, cfg, target) {
-  const trimmed = interaction.options.getString('name').trim();
-  if (!trimmed) {
-    return interaction.reply({ content: '⚠️ Give the campaign a name.', flags: MessageFlags.Ephemeral });
-  }
-
-  if (!nameIsUsable(trimmed)) {
-    return interaction.reply({
-      content:
-        `⚠️ I can't file anything under \`${trimmed}\`. A campaign's name becomes the folder its notes live in ` +
-        'and the start of every session reference (`Cipher_02`), and that one leaves nothing behind once emoji ' +
-        'and path characters are stripped. Give it at least one letter or number.',
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  const clash = campaignNameClash(db, trimmed, target.id);
-  if (clash) {
-    return interaction.reply({
-      content: `⚠️ **${campaignLabel(clash)}** already files its notes there. Pick a different name.`,
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  const current = target.name;
-  const previousFolder = campaignFolderFor(target);
-  const folder = campaignFolderFor({ ...target, name: trimmed });
-  db.setCampaignName(target.id, trimmed);
-
-  // Take the existing notes with us. Leaving them behind doesn't just look
-  // untidy — the ledger is what tells the next session which NPCs the
-  // campaign already knows, so an orphaned folder means every NPC met so far
-  // gets re-introduced in the next recap as though they were new.
-  let carried = '';
-  if (previousFolder !== folder) {
-    try {
-      const result = await moveCampaignFolder({ cfg, from: previousFolder, to: folder });
-      if (result.moved) {
-        carried = `\n\n_Moved the existing \`${previousFolder}/\` folder across, notes and ledger included._`;
-      }
-      if (result.skipped?.length) {
-        carried += `\n⚠️ Left behind in \`${previousFolder}/\` (something with the same name was already in \`${folder}/\`): ${result.skipped.join(', ')}`;
-      }
-    } catch (err) {
-      console.error('[campaign] folder move failed:', err);
-      carried = `\n\n⚠️ Couldn't move \`${previousFolder}/\` — the old notes are still there, new ones will go to \`${folder}/\`.`;
-    }
-  }
-
-  return interaction.reply({
-    content:
-      `📖 Campaign renamed to **${trimmed}**.\n` +
-      `Session notes are filed in \`${folder}/\`, and sessions now read \`${refSlug(trimmed)}_01\`.` +
-      (current && current !== trimmed ? `\n\n_Previously **${current}**._` : '') +
-      carried,
-    flags: MessageFlags.Ephemeral,
-  });
+  // The same rename the dashboard's pencil does. See campaign/rename.js.
+  const result = await renameCampaign({ db, cfg, campaignId: target.id, name: interaction.options.getString('name') });
+  return interaction.reply({ content: result.message, flags: MessageFlags.Ephemeral });
 }
 
 async function handleCampaignOutput(interaction, db, target) {

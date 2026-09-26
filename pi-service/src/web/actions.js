@@ -33,6 +33,7 @@ import { handOverCampaign } from '../campaign/handover.js';
 import { requestRestore, decideRestoreRequest } from '../campaign/restore-request.js';
 import { applyCorrections } from '../campaign/corrections.js';
 import { THREAD_STATUSES } from '../campaign/threads.js';
+import { renameCampaign, mayRename } from '../campaign/rename.js';
 import { ROLES } from '../pipeline/model-choice.js';
 // Whose name an act happens under. Asked rather than re-derived: four actions
 // here used to each decide for themselves what the operator's console is.
@@ -991,6 +992,27 @@ export const ACTIONS = {
       status: 200,
       payload: { ok: true, campaignId: id, threadId: thread.id, message: `Kept open: “${thread.text}”.` },
     };
+  },
+
+  // Renaming a campaign from the dashboard. The DM's (and the bot owner's):
+  // `manage` in ACTION_NEEDS lets a server owner through the gate, and this
+  // turns them away, the same two-step campaign/delete uses.
+  'campaign/rename': async (db, cfg, body, ctx) => {
+    const id = campaignId(body);
+    if (!id) return badRequest('A numeric campaignId is required.');
+    const campaign = db.getCampaign(id);
+    if (!campaign) return badRequest('No such campaign.');
+
+    const who = actingUserId(ctx?.viewer, cfg);
+    if (!mayRename({ campaign, userId: who, cfg, db })) {
+      return {
+        status: 403,
+        payload: { ok: false, message: `Only whoever runs ${campaign.name ?? 'this campaign'} can rename it.` },
+      };
+    }
+
+    const renamed = await renameCampaign({ db, cfg, campaignId: id, name: body?.name });
+    return { status: 200, payload: renamed };
   },
 
   // --- corrections the table makes to a write-up ---------------------------

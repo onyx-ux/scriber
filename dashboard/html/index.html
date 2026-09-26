@@ -505,6 +505,10 @@
   .sess .facets { display: flex; gap: 14px; margin-top: 9px; flex-wrap: wrap;
                   font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
 
+  .rename-pen { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+                margin-left: -6px; border: 1px solid transparent; border-radius: 6px; background: transparent;
+                color: var(--dim); cursor: pointer; }
+  .rename-pen:hover, .rename-pen:focus-visible { color: var(--text); border-color: var(--edge); }
   .pill { margin-left: auto; font-family: var(--mono); font-size: 10.5px;
           padding: 2px 8px; border-radius: 999px; border: 1px solid var(--edge);
           color: var(--dim); white-space: nowrap; }
@@ -2662,6 +2666,7 @@ const closeDialogs = () => {
   view.importing = false;
   view.creating = false;
   view.deleting = false;
+  view.renaming = false;
   view.picking = null;
   // A sheet is a dialog too as far as "only one thing is open" goes: the
   // campaigns sheet opens the new-campaign form, and leaving the sheet up
@@ -3387,6 +3392,10 @@ const can = () => status?.actionsEnabled !== false && cap('approvals');
 // campaign's own creator may edit its roster without being able to pause a
 // queue that belongs to somebody else's hardware.
 const canManage = () => status?.actionsEnabled !== false && (detail?.viewerCan?.manage ?? cap('manage'));
+// Renaming is narrower than managing: the campaign's DM and the bot owner.
+// Answered by the bot on /campaign (viewerCan.rename), so the pencil is drawn
+// for exactly the people campaign/rename would accept.
+const canRename = () => status?.actionsEnabled !== false && Boolean(detail?.viewerCan?.rename);
 
 // Handing a campaign to somebody else. Narrower than managing it: who runs a
 // campaign is a question about who somebody IS on this bot, and assigning that
@@ -3956,6 +3965,7 @@ function accountSheet() {
 // Line-drawn at the quill's weight, so the end of the top bar is the same hand
 // as the mark at its start.
 const glyph = {
+  pen: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m13.5 6.5 4 4" stroke="currentColor" stroke-width="1.7"/></svg>`,
   servers: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
     <rect x="3.5" y="4.5" width="17" height="6" rx="1.6" stroke="currentColor" stroke-width="1.3"/>
     <rect x="3.5" y="13.5" width="17" height="6" rx="1.6" stroke="currentColor" stroke-width="1.3"/>
@@ -4069,6 +4079,8 @@ function renderTop() {
     ${home ? '' : `<button type="button" class="crumb crumb-back" data-screen="desk">Desk</button>
                         <span class="crumb-sep">/</span>`}
     <h2>${esc(title)}</h2>
+    ${view.screen === 'campaign' && canRename() ? `<button type="button" class="rename-pen" data-rename
+       aria-label="Rename ${esc(title)}" title="Rename this campaign">${glyph.pen}</button>` : ''}
     <div class="health">${health}</div>
     <div class="right">${buttons}${themeSwitch()}${navMarks()}</div>`);
 }
@@ -7403,6 +7415,11 @@ function settingsTab() {
       <div style="flex:1;min-width:0;max-width:820px">
         <h1 class="display sm">How this campaign runs</h1>
 
+        <div class="cap" style="margin:28px 0 6px">What it is called</div>
+        ${row('Name', 'Also the folder its notes are filed in, and the start of every session reference',
+          `<span class="val">${esc(detail.name || detail.label || '')}</span>${canRename()
+            ? ' <button type="button" class="btn sm" data-rename>Rename</button>' : ''}`)}
+
         <div class="cap" style="margin:28px 0 6px">Which rules you play</div>
         ${row('Rulebook', 'Only decides where a spell named in a write-up links to',
           `<div class="seg" data-seg="edition">
@@ -7520,9 +7537,8 @@ function settingsTab() {
 
         <div class="quiet" style="margin-top:20px;max-width:70ch">
           The window, the timezone and the approval switch are set once in <code>pi-service/.env</code> on the
-          Pi, because they describe the machine rather than this campaign. Renaming a campaign and inviting a
-          player still happen in Discord, where the people they concern are —
-          <code>/campaign rename</code> and <code>/campaign invite</code>.
+          Pi, because they describe the machine rather than this campaign. Inviting a player still happens in
+          Discord, where the people it concerns are: <code>/campaign invite</code>.
         </div>
       </div>
 
@@ -8032,6 +8048,35 @@ function createDialog() {
     </div>`;
 }
 
+// Renaming a campaign. The DM's and the bot owner's, from the pencil beside
+// the name or the Name row in Settings. The bot checks the name leaves a
+// usable folder and does not clash, and moves the notes folder with it.
+function renameDialog() {
+  const name = detail?.name || detail?.label || '';
+  return `
+    <div class="backdrop" data-backdrop>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Rename campaign">
+        <div class="kicker">${esc(name)}</div>
+        <h1>Rename this campaign</h1>
+        <div class="say-2" style="font-size:14.5px;margin-top:12px">
+          The new name is also the folder its notes are filed in and the start of every session
+          reference. The notes folder moves with it, and nothing already written changes.
+        </div>
+        <form data-act="campaign/rename" data-campaign="${detail?.id ?? ''}">
+          <div class="field">
+            <label for="rename-name">New name</label>
+            <input class="in" id="rename-name" name="name" required maxlength="100" autocomplete="off"
+                   value="${esc(name)}">
+          </div>
+          <div class="foot">
+            <button class="btn go big" type="submit">Rename</button>
+            <button class="btn big" type="button" data-close-modal>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+}
+
 // Deleting a campaign.
 //
 // The name has to be typed. Not a yes/no box — the whole purpose is to make the
@@ -8130,6 +8175,7 @@ let modalShowing = null;
 function renderModal() {
   const wanted = view.deleting
     ? 'delete'
+    : view.renaming && detail ? `rename:${detail.id}`
     : view.creating ? 'create'
     : view.importing && detail ? `import:${detail.id}`
     : view.picking ? `voice:${view.picking}`
@@ -8142,6 +8188,13 @@ function renderModal() {
   if (view.deleting) {
     morph($('modal'), deleteDialog());
     $('del-name')?.focus();
+    return;
+  }
+
+  if (view.renaming) {
+    morph($('modal'), renameDialog());
+    $('rename-name')?.focus();
+    $('rename-name')?.select?.();
     return;
   }
 
@@ -8722,6 +8775,7 @@ document.addEventListener('click', async (event) => {
   if (t.closest('[data-new-campaign]')) { closeDialogs(); view.creating = true; return paint(); }
   if (t.closest('[data-import]')) { closeDialogs(); view.importing = true; return paint(); }
   if (t.closest('[data-delete-campaign]')) { closeDialogs(); view.deleting = true; return paint(); }
+  if (t.closest('[data-rename]')) { closeDialogs(); view.renaming = true; return paint(); }
 
   if (t.closest('[data-signin-cancel]')) { view.signingIn = false; return paint(); }
   if (t.closest('[data-ask-invite]')) return askForInvite();
@@ -9133,6 +9187,8 @@ document.addEventListener('submit', async (event) => {
   const payload = await send(form.dataset.act, body);
   if (submit) submit.disabled = false;
 
+  if (form.dataset.act === 'campaign/rename' && payload?.ok) { view.renaming = false; paint(); }
+
   // The delete dialog stays open when the typed name did not match, because
   // closing it would throw the attempt away and say nothing about why.
   if (form.dataset.act === 'campaign/delete' && payload?.ok) {
@@ -9185,7 +9241,7 @@ document.addEventListener('keydown', (event) => {
   // and a correction lost to a keystroke is the thing this must never do.
   if (view.markAt) { markClose(); return paint(); }
   if (view.marking) { view.marking = false; return paint(); }
-  if (view.importing || view.creating || view.deleting || view.picking) {
+  if (view.importing || view.creating || view.deleting || view.renaming || view.picking) {
     closeDialogs(); return paint();
   }
   if (view.sheet) { view.sheet = null; return paint(); }

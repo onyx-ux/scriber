@@ -27,6 +27,7 @@ import { sweepExpired, authSecret } from './auth.js';
 import { oauthReady, redirectUri as discordRedirectUri } from './discord-oauth.js';
 import { guildsCreatableBy } from '../campaign/create.js';
 import { mayDelete, daysLeftToRestore } from '../campaign/archive.js';
+import { mayRename } from '../campaign/rename.js';
 import { pendingRestoreRequests } from '../campaign/restore-request.js';
 import { notifyRestoreRequested, notifyRestoreDecided } from '../delivery/restore-notify.js';
 import { runAction } from './actions.js';
@@ -414,6 +415,13 @@ export function startStatusServer({
       scoped.viewerCan = {
         ...(scoped.viewerCan ?? {}),
         delete: mayDelete({
+          campaign: db.getCampaign(id),
+          userId: actingUserId(viewer, cfg),
+          cfg,
+          db,
+        }),
+        // The same two people, for the same reason: the DM and the bot owner.
+        rename: mayRename({
           campaign: db.getCampaign(id),
           userId: actingUserId(viewer, cfg),
           cfg,

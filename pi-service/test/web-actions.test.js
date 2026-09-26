@@ -88,6 +88,7 @@ test('the action list is closed — no path reaches an arbitrary db method', () 
       'campaign/edition',
       'campaign/manager',
       'campaign/output',
+      'campaign/rename',
       'campaign/restore',
       'campaign/restore-review',
       'corrections/add',

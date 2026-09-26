@@ -334,6 +334,11 @@ export const ACTION_NEEDS = {
   // page drew the buttons enabled for anyone who may manage the campaign, and
   // the answer that came back was about somebody else's GPU.
   'campaign/edition': 'manage',
+  // Renaming. Gated at `manage` here and narrowed inside the action to the
+  // campaign's DM and the bot owner, the same two-step as campaign/delete:
+  // a server owner may manage a roster without deciding what the game is
+  // called. See campaign/rename.js.
+  'campaign/rename': 'manage',
   // Closing, dropping or reopening one of the campaign's open threads, and
   // turning down the summariser's suggestion that a session settled one. The
   // manager's: a thread the DM is saving is not one a player should close.
