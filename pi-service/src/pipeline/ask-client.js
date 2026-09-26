@@ -1,6 +1,8 @@
 import { DND_ASK_PROMPT, buildAskUserMessage } from '../prompts/ask-prompt.js';
 import { callModel as defaultCallModel, contextTokens } from './model-client.js';
 import { allowanceFor } from '../access/tiers.js';
+import { correctedWriteUp } from '../web/notes-view.js';
+import { expandTerms } from '../campaign/lookup.js';
 
 const CHARS_PER_TOKEN = 3.5;
 const RESERVE_OUTPUT_TOKENS = 800;
@@ -38,45 +40,76 @@ function estTokens(s) {
   return Math.ceil(String(s).length / CHARS_PER_TOKEN);
 }
 
-// Gathers the campaign context for a question: every session recap (cheap and
-// gives the model the through-line) plus transcript lines matching the
-// question's distinctive words. Trimmed to fit the context window, dropping
-// excerpts first since the recaps are the higher-value signal per token.
-export function gatherContext(db, campaignId, question, cfg) {
+// Never more than this much context per question, whatever the model allows.
+// A question is asked in passing and paid for out of the owner's budget; at
+// Flash-Lite prices 60k tokens is well under a cent, and it holds dozens of
+// whole write-ups.
+const ASK_MAX_CONTEXT_TOKENS = 60_000;
+
+const clock = (ms) => {
+  const s = Math.max(0, Math.floor((ms ?? 0) / 1000));
+  return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
+
+// Gathers the campaign context for a question.
+//
+//   * Every completed session's whole write-up, as the table has corrected
+//     it: the recap, the scenes, the decisions and what was left open. It
+//     used to be the one-line recap alone, which dropped most of what a
+//     question is about.
+//   * Transcript lines found through the ranked index, searching for the
+//     question's distinctive words AND every spelling of any name it mentions
+//     (names come from the vault's entity notes; see campaign/lookup.js).
+//   * Those names, so the model knows "Use Drail" and "Yusdrayl" are one
+//     person.
+//
+// Everything is labelled with the session number the table uses. It used to
+// be the meeting id, which made the model cite "session #32" for a table's
+// fifth night.
+//
+// Trimmed to fit, least valuable first: excerpts beyond the best, then the
+// scene detail of the oldest sessions, then the oldest sessions altogether.
+export function gatherContext(db, campaignId, question, cfg, { names = [] } = {}) {
   const summaries = db.listCompletedMeetings(campaignId).map((m) => {
-    let tldr = '';
-    try {
-      tldr = JSON.parse(m.summary_json || '{}').tldr || '';
-    } catch {
-      tldr = '';
-    }
-    return { id: m.id, channel: m.channel_name, date: (m.started_at || '').slice(0, 10), tldr };
+    const notes = correctedWriteUp(db, m.id) ?? {};
+    return {
+      session: m.session_number ?? m.id,
+      date: (m.started_at || '').slice(0, 10),
+      tldr: notes.tldr || '',
+      scenes: (notes.scenes ?? []).map((s) => ({ title: s.title, points: s.points ?? [] })),
+      decisions: notes.partyDecisions ?? [],
+      threads: notes.unresolvedThreads ?? [],
+    };
   });
 
   const keywords = extractKeywords(question);
-  const byKey = new Map();
-  for (const word of keywords) {
-    for (const row of db.searchUtterances(campaignId, word, 12)) {
-      const key = `${row.meeting_id}:${row.start_ms}:${row.text}`;
-      if (byKey.has(key)) continue;
-      const totalSec = Math.floor(row.start_ms / 1000);
-      byKey.set(key, {
-        meetingId: row.meeting_id,
-        time: `${String(Math.floor(totalSec / 60)).padStart(2, '0')}:${String(totalSec % 60).padStart(2, '0')}`,
-        speaker: row.display_name,
-        text: row.text,
-      });
-    }
-  }
-  let excerpts = [...byKey.values()].sort((a, b) => a.meetingId - b.meetingId || a.time.localeCompare(b.time));
+  const { terms, matched } = expandTerms(question, names);
+  const rows = db.searchUtterancesRanked(campaignId, [...terms, ...keywords], 60);
+  let excerpts = rows.map((row) => ({
+    session: row.session_number ?? row.meeting_id,
+    ms: row.start_ms,
+    time: clock(row.start_ms),
+    speaker: row.display_name,
+    text: row.text,
+  }));
+  const inOrder = (list) => [...list].sort((a, b) => a.session - b.session || a.ms - b.ms);
 
-  // Trim to fit: drop excerpts (lowest value per token) until it fits.
-  const budgetTokens = contextTokens(cfg) - estTokens(DND_ASK_PROMPT) - RESERVE_OUTPUT_TOKENS - SAFETY_TOKENS;
-  while (excerpts.length > 0 && estTokens(buildAskUserMessage(question, summaries, excerpts)) > budgetTokens) {
-    excerpts = excerpts.slice(0, Math.floor(excerpts.length * 0.8));
-  }
+  const budget =
+    Math.min(contextTokens(cfg ?? {}), ASK_MAX_CONTEXT_TOKENS) - estTokens(DND_ASK_PROMPT) - RESERVE_OUTPUT_TOKENS - SAFETY_TOKENS;
+  const size = () => estTokens(buildAskUserMessage(question, summaries, inOrder(excerpts), matched));
 
-  return { summaries, excerpts, keywords };
+  // The ranked order is best first, so trimming keeps the best matches.
+  while (excerpts.length > 10 && size() > budget) excerpts = excerpts.slice(0, Math.floor(excerpts.length * 0.8));
+  for (const s of summaries) {
+    if (size() <= budget) break;
+    s.scenes = [];
+    s.decisions = [];
+    s.threads = [];
+  }
+  while (summaries.length > 1 && size() > budget) summaries.shift();
+  while (excerpts.length > 0 && size() > budget) excerpts = excerpts.slice(0, Math.floor(excerpts.length * 0.8));
+
+  return { summaries, excerpts: inOrder(excerpts), keywords, names: matched };
 }
 
 // callModel is injectable so the grounding/context-trimming logic can be
@@ -88,6 +121,7 @@ export async function askCampaign({
   question,
   summaries,
   excerpts,
+  names = [],
   cfg,
   db = null,
   timeoutMs = 5 * 60 * 1000,
@@ -95,7 +129,7 @@ export async function askCampaign({
 }) {
   const answer = await callModel(
     DND_ASK_PROMPT,
-    buildAskUserMessage(question, summaries, excerpts),
+    buildAskUserMessage(question, summaries, excerpts, names),
     cfg,
     timeoutMs,
     { role: 'ask', db }

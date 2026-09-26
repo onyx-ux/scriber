@@ -9,6 +9,7 @@ import { recapForTable, worthRecapping } from '../pipeline/recap-client.js';
 import { buildTranscriptText } from '../pipeline/transcribe.js';
 import { isSummariserReachable, summariserLabel } from '../pipeline/model-client.js';
 import { askCampaign, askAllowance, gatherContext } from '../pipeline/ask-client.js';
+import { loadCampaignNames, expandTerms, closeSpellings } from '../campaign/lookup.js';
 import { isWhisperServerReachable } from '../stt/whisper.js';
 import { campaignFolderFor } from '../export/naming.js';
 import { TRANSCRIBE_PREFIX } from '../pipeline/transcribe-schedule.js';
@@ -643,7 +644,7 @@ const CAMPAIGN_ROUTES = {
 
   recap: (i, db, cfg) => handleRecap(i, db, cfg),
   funny: (i, db) => handleFunny(i, db),
-  search: (i, db) => handleSearch(i, db),
+  search: (i, db, cfg) => handleSearch(i, db, cfg),
   ask: (i, db, cfg) => handleAsk(i, db, cfg),
   export: (i, db, cfg) => handleExport(i, db, cfg),
   archive: (i, db, cfg) => handleArchive(i, db, cfg),
@@ -1636,7 +1637,8 @@ async function handleAsk(interaction, db, cfg) {
   // Answering means a full model round-trip; Discord needs the ack inside 3s.
   await interaction.deferReply();
 
-  const { summaries, excerpts } = gatherContext(db, campaignId(interaction), question, cfg);
+  const known = await loadCampaignNames(cfg, campaign(interaction));
+  const { summaries, excerpts, names } = gatherContext(db, campaignId(interaction), question, cfg, { names: known });
   if (summaries.length === 0 && excerpts.length === 0) {
     return interaction.editReply(
       "📭 There's nothing in the campaign records yet — I need at least one completed session to answer questions."
@@ -1647,7 +1649,7 @@ async function handleAsk(interaction, db, cfg) {
   // slot, or a failing model is an unlimited one.
   db.countAsk(interaction.user.id);
 
-  const answer = await askCampaign({ question, summaries, excerpts, cfg, db });
+  const answer = await askCampaign({ question, summaries, excerpts, names, cfg, db });
   const body = `🔮 **${question}**\n\n${answer}`;
   await interaction.editReply(body.length > 1990 ? `${body.slice(0, 1980)}…` : body);
 }
@@ -1806,19 +1808,37 @@ function timestamp(ms) {
   return `${mm}:${ss}`;
 }
 
-async function handleSearch(interaction, db) {
+async function handleSearch(interaction, db, cfg) {
   const query = interaction.options.getString('query').trim();
   if (!query) {
     return interaction.reply({ content: pick(SEARCH_NONE, { query }), flags: MessageFlags.Ephemeral });
   }
 
-  const rows = db.searchUtterances(campaignId(interaction), query, 25);
+  // Every spelling of any name in the query, from the vault's entity notes,
+  // searched together and ranked. See campaign/lookup.js.
+  const id = campaignId(interaction);
+  const names = await loadCampaignNames(cfg, campaign(interaction));
+  const { terms, matched } = expandTerms(query, names);
+  let rows = db.searchUtterancesRanked(id, [query, ...terms], 25);
+  const others = terms.filter((t) => t.toLowerCase() !== query.toLowerCase());
+  let note = matched.length && others.length ? `_Also searched: ${others.map((t) => `“${t}”`).join(', ')}._\n\n` : '';
+
+  // Nothing exact: the likeliest reason is that the transcriber spelled it
+  // another way, so offer the lines with the closest spellings.
+  if (rows.length === 0) {
+    const close = closeSpellings(db, id, query);
+    if (close.rows.length) {
+      rows = close.rows;
+      note = `_Nothing spelled exactly “${query}”. Closest: ${close.words.map((w) => `**${w}**`).join(', ')}._\n\n`;
+    }
+  }
   if (rows.length === 0) {
     return interaction.reply({ content: pick(SEARCH_NONE, { query }), flags: MessageFlags.Ephemeral });
   }
 
   // Group hits under the session they came from, so the answer reads like
-  // "this happened in session #3" rather than a flat wall of quotes.
+  // "this happened in session #3" rather than a flat wall of quotes. Sessions
+  // appear in the order of their best match.
   const byMeeting = new Map();
   for (const row of rows) {
     if (!byMeeting.has(row.meeting_id)) byMeeting.set(row.meeting_id, []);
@@ -1841,7 +1861,7 @@ async function handleSearch(interaction, db) {
     blocks.push(`**${ref ?? `#${meetingId}`} — ${hits[0].channel_name} (${date})**\n${lines.join('\n')}`);
   }
 
-  let content = `${pick(SEARCH_HEADER, { query, count: rows.length })}\n\n${blocks.join('\n\n')}`;
+  let content = `${pick(SEARCH_HEADER, { query, count: rows.length })}\n\n${note}${blocks.join('\n\n')}`;
   if (content.length > 1900) {
     // Cut back to a line boundary so we never truncate mid-markdown.
     const trimmed = content.slice(0, 1900);

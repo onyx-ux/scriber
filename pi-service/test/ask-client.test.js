@@ -5,8 +5,8 @@ import { askCampaign, extractKeywords } from '../src/pipeline/ask-client.js';
 import { DND_ASK_PROMPT, buildAskUserMessage } from '../src/prompts/ask-prompt.js';
 
 const cfg = { summaryProvider: 'gemini', geminiApiKey: 'k', geminiModel: 'gemini-3.1-flash-lite' };
-const summaries = [{ id: 3, channel: 'Cipher', date: '2026-07-31', tldr: 'The party entered the crypt.' }];
-const excerpts = [{ meetingId: 3, time: '00:12', speaker: 'Koru', text: 'I open the lantern' }];
+const summaries = [{ session: 3, date: '2026-07-31', tldr: 'The party entered the crypt.', scenes: [] }];
+const excerpts = [{ session: 3, time: '0:00:12', speaker: 'Koru', text: 'I open the lantern' }];
 
 test('extractKeywords keeps distinctive words and drops filler', () => {
   const kw = extractKeywords('Who was the smuggler we met at the docks in Marrowgate?');
@@ -39,7 +39,7 @@ test('askCampaign sends a well-formed grounded request', async () => {
 
   assert.equal(captured.system, DND_ASK_PROMPT, 'the grounding prompt must be the system message');
   assert.match(captured.user, /What happened in the crypt\?/);
-  assert.match(captured.user, /Session #3/, 'recaps are included as context');
+  assert.match(captured.user, /Session 3/, 'recaps are included as context');
   assert.match(captured.user, /I open the lantern/, 'transcript excerpts are included');
   assert.equal(answer, 'An answer (session #3).', 'the answer is trimmed');
 });

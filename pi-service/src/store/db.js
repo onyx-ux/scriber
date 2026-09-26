@@ -370,6 +370,43 @@ function migrate(db) {
     console.log('[db] migrated: added utterances.raw_text');
   }
 
+  // A full-text index over what was said, for /campaign search and /ask.
+  //
+  // Trigram rather than word tokens, because the thing people search for is
+  // a name the transcriber spells differently every session. Trigrams match
+  // any substring of three characters or more, case-insensitively, and give
+  // BM25 something to rank on, so a line containing two spellings of the name
+  // outranks a line containing one. campaign/lookup.js also uses them to find
+  // close spellings when nothing matches exactly.
+  //
+  // External content: the index holds no copy of the text, and the three
+  // triggers keep it in step with every insert, correction and delete. A
+  // database from before this is indexed once, the first time it is opened.
+  const hasFts = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'utterances_fts'`)
+    .get();
+  if (!hasFts) {
+    db.exec(`
+      CREATE VIRTUAL TABLE utterances_fts USING fts5(
+        text, content='utterances', content_rowid='id', tokenize='trigram'
+      );
+      INSERT INTO utterances_fts(utterances_fts) VALUES ('rebuild');
+    `);
+    console.log('[db] migrated: built the utterances_fts search index');
+  }
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS utterances_fts_ai AFTER INSERT ON utterances BEGIN
+      INSERT INTO utterances_fts(rowid, text) VALUES (new.id, new.text);
+    END;
+    CREATE TRIGGER IF NOT EXISTS utterances_fts_ad AFTER DELETE ON utterances BEGIN
+      INSERT INTO utterances_fts(utterances_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    END;
+    CREATE TRIGGER IF NOT EXISTS utterances_fts_au AFTER UPDATE OF text ON utterances BEGIN
+      INSERT INTO utterances_fts(utterances_fts, rowid, text) VALUES ('delete', old.id, old.text);
+      INSERT INTO utterances_fts(rowid, text) VALUES (new.id, new.text);
+    END;
+  `);
+
   if (!meetingColumns.includes('transcribed_by')) {
     db.exec(`ALTER TABLE meetings ADD COLUMN transcribed_by TEXT`);
     db.exec(`ALTER TABLE meetings ADD COLUMN line_breaks TEXT`);
@@ -2730,6 +2767,59 @@ function wrap(db) {
             LIMIT ?`
         )
         .all(campaignId, `%${escaped}%`, limit);
+    },
+
+    // Lines matching ANY of several terms, best match first. The terms are the
+    // spellings of one thing (a name and its aliases) or the distinctive words
+    // of a question. Ranked by BM25 over the trigram index, so a line with two
+    // of the spellings outranks a line with one, and newer sessions win ties.
+    //
+    // Trigrams need three characters, so a shorter term goes through LIKE
+    // instead and ranks behind everything the index found.
+    searchUtterancesRanked(campaignId, terms, limit = 25) {
+      const clean = [...new Set((terms ?? []).map((t) => String(t ?? '').trim()).filter(Boolean))];
+      const long = clean.filter((t) => [...t].length >= 3);
+      const short = clean.filter((t) => [...t].length < 3);
+      const found = new Map();
+
+      if (long.length) {
+        const match = long.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ');
+        const rows = db
+          .prepare(
+            `SELECT u.id, u.text, u.display_name, u.start_ms,
+                    m.id AS meeting_id, m.session_number, m.channel_name, m.started_at,
+                    bm25(utterances_fts) AS rank
+               FROM utterances_fts
+               JOIN utterances u ON u.id = utterances_fts.rowid
+               JOIN meetings m ON m.id = u.meeting_id
+              WHERE utterances_fts MATCH ? AND m.campaign_id = ?
+              ORDER BY rank, m.started_at DESC, u.start_ms ASC
+              LIMIT ?`
+          )
+          .all(match, campaignId, limit);
+        for (const r of rows) found.set(r.id, r);
+      }
+
+      for (const term of short) {
+        const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
+        const rows = db
+          .prepare(
+            `SELECT u.id, u.text, u.display_name, u.start_ms,
+                    m.id AS meeting_id, m.session_number, m.channel_name, m.started_at,
+                    0 AS rank
+               FROM utterances u
+               JOIN meetings m ON m.id = u.meeting_id
+              WHERE m.campaign_id = ? AND u.text LIKE ? ESCAPE '\\'
+              ORDER BY m.started_at DESC, u.start_ms ASC
+              LIMIT ?`
+          )
+          .all(campaignId, `%${escaped}%`, limit);
+        for (const r of rows) if (!found.has(r.id)) found.set(r.id, r);
+      }
+
+      return [...found.values()]
+        .sort((a, b) => a.rank - b.rank || String(b.started_at ?? '').localeCompare(String(a.started_at ?? '')))
+        .slice(0, limit);
     },
 
     // --- every completed meeting with a summary, for /funny to pull from ---
