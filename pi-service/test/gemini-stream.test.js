@@ -48,18 +48,37 @@ const clip = (wavPath, { userId = 'u1', displayName = 'Player', startMs = 0, dur
 // A socket that answers when it has been given `afterMs` of audio, so a test
 // can say "reply during clip 3" and have the mapping proved rather than
 // assumed.
+//
+// A script entry is either an array of those replies, or an object:
+//   { refuse: true }        the server closes the socket before setup. The
+//                           real SDK's connect() then NEVER settles — it
+//                           awaits an open and a setupComplete that nothing
+//                           rejects — so this one never settles either.
+//   { closeAfterMs, replies } the server drops the socket once it has been
+//                           sent that much audio, and anything sent after
+//                           is lost, as the real one is.
 function fakeTransport(script = []) {
   const sockets = [];
   const queue = [...script];
+  let refused = 0;
 
   const connect = async (params) => {
+    const entry = queue.shift() ?? [];
+    const { onmessage, onclose } = params.callbacks;
+
+    if (entry.refuse) {
+      refused += 1;
+      onclose?.({ code: 1011, reason: 'refused in a test' });
+      return new Promise(() => {});
+    }
+
+    const pending = Array.isArray(entry) ? entry : entry.replies ?? [];
     const rec = { config: params.config, model: params.model, audioMs: 0, closed: false };
-    const { onmessage } = params.callbacks;
-    const pending = queue.shift() ?? [];
 
     const socket = {
       sendRealtimeInput(message) {
         if (!message.audio?.data) return;
+        if (rec.closed) return; // a closed socket drops audio without a word
         rec.audioMs += Buffer.from(message.audio.data, 'base64').length / 32;
         for (const item of pending) {
           if (!item.sent && rec.audioMs >= item.afterMs) {
@@ -68,17 +87,32 @@ function fakeTransport(script = []) {
             if (item.text != null) onmessage({ serverContent: { inputTranscription: { text: item.text } } });
           }
         }
+        if (entry.closeAfterMs != null && rec.audioMs >= entry.closeAfterMs && !rec.closed) {
+          rec.closed = true;
+          onclose?.({ code: 1011, reason: 'dropped in a test' });
+        }
       },
       close() {
+        if (rec.closed) return;
         rec.closed = true;
+        onclose?.({ code: 1000, reason: '' });
       },
     };
     sockets.push(rec);
     return socket;
   };
 
-  return { connect, sockets };
+  return { connect, sockets, refusals: () => refused };
 }
+
+// Timings shrunk so a refused socket costs milliseconds rather than the
+// thirty seconds and the backoff it costs against the real API.
+const fast = {
+  ...cfg,
+  geminiTranscribeConnectTimeoutMs: 50,
+  geminiTranscribeRetryDelaysMs: [5, 5],
+  geminiTranscribeCloseWaitMs: 20,
+};
 
 // --- the pure parts -------------------------------------------------------
 
@@ -241,6 +275,77 @@ test('a goAway rolls onto a fresh socket without losing the stream', async (t) =
   assert.equal(transport.sockets.length, 2, 'the warning has to be acted on, or the server cuts it mid-clip');
   assert.ok(transport.sockets[0].closed, 'the old socket is a leak if it is not closed');
   assert.deepEqual(results.map((r) => r.text), ['before the roll', 'after the roll']);
+});
+
+// Meeting 32, 26 Sep 2026: the first four-hour session on this path. Every
+// speaker reached the nine-minute roll, asked for a fresh socket, and the
+// server closed it before setup. The SDK's connect() never settles when that
+// happens, so all six streams waited on it forever — no socket open, no error
+// logged, the job still `running` an hour later.
+test('a reconnect refused before setup is retried rather than waited on forever', { timeout: 5000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const clips = [
+    clip(await wav(dir, '0.wav', 1000), { startMs: 0 }),
+    clip(await wav(dir, '1.wav', 1000), { startMs: 2000 }),
+  ];
+  const transport = fakeTransport([
+    [{ afterMs: 900, text: 'before the roll', goAway: true }],
+    { refuse: true },
+    [{ afterMs: 900, text: 'after the roll' }],
+  ]);
+
+  const { results, failures } = await transcribeSpeakerStreams(clips, fast, { connect: transport.connect });
+
+  assert.equal(transport.refusals(), 1);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(results.map((r) => r.text), ['before the roll', 'after the roll']);
+});
+
+// When the server will not take a socket back at all, the run has to END —
+// and end as a failure. A transcript committed without that speaker would
+// read as complete, and committing is what lets the archive step clear away
+// the clips needed to try again.
+test('a speaker who can never reconnect fails the run instead of hanging it', { timeout: 5000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const clips = [
+    clip(await wav(dir, 'a0.wav', 1000), { userId: 'u1', startMs: 0 }),
+    clip(await wav(dir, 'a1.wav', 1000), { userId: 'u1', startMs: 2000 }),
+  ];
+  const transport = fakeTransport([
+    [{ afterMs: 500, goAway: true }],
+    { refuse: true },
+    { refuse: true },
+    { refuse: true },
+  ]);
+
+  await assert.rejects(
+    transcribeSpeakerStreams(clips, fast, { connect: transport.connect }),
+    /could not reopen.*1011.*refused in a test/s
+  );
+  assert.equal(transport.refusals(), 3, 'one try plus the two retries the timings allow');
+});
+
+// A socket the server drops mid-clip does not throw on send — the real
+// transport drops the audio silently. Waiting for the next clip boundary to
+// notice would lose the rest of the clip, so the stream has to look before
+// every frame.
+test('audio is never fed into a socket the server has already closed', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const clips = [clip(await wav(dir, 'long.wav', 5000), { startMs: 0 })];
+  const transport = fakeTransport([{ closeAfterMs: 2000 }, []]);
+
+  const { failures } = await transcribeSpeakerStreams(clips, fast, { connect: transport.connect });
+
+  assert.deepEqual(failures, []);
+  assert.equal(transport.sockets.length, 2);
+  const sent = transport.sockets.reduce((n, s) => n + s.audioMs, 0);
+  assert.ok(sent >= 5000, `every second of the clip has to reach a live socket (got ${sent}ms)`);
 });
 
 test('the campaign vocabulary and a pinned language reach every socket', async (t) => {

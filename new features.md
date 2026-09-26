@@ -1035,6 +1035,30 @@ they were cleared to make room for. That section is empty again.
       a real `.env` and quietly pins a new install to whatever was current a
       year ago.
 
+## Implemented (2026-09-27)
+
+- [x] **A cloud transcription that stalls now fails instead** — the first real
+      four-hour session sent to Gemini (meeting 32, 26 Sep) stopped at 65% and
+      sat `running` indefinitely: no socket open, nothing in the log. Every
+      speaker reached the nine-minute socket roll, the server closed each
+      reconnect before setup, and the SDK's `live.connect()` never settles when
+      that happens, because it awaits an open and a `setupComplete` that
+      nothing rejects.
+
+      `stt/gemini-stream.js` now races every open against the socket closing
+      and a 30s clock, retries a refused one four times with backoff (2s, 5s,
+      15s, 30s), waits for the old socket to close before opening its
+      replacement, and logs the server's close code and reason, which were
+      being thrown away. Audio is also no longer fed into a socket the server
+      has already closed. That fails silently rather than throwing, so the
+      stream checks before every frame instead of at the next clip.
+
+      When the retries run out, the whole run fails rather than returning the
+      other speakers. A transcript missing a player reads as complete, and
+      committing it lets the archive step clear the clips a retry would need.
+      Failing leaves every clip on disk and reschedules the job with the reason
+      attached. Three tests in `test/gemini-stream.test.js` reproduce the hang.
+
 ## Work in progress
 
 

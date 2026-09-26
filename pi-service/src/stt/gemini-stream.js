@@ -56,6 +56,38 @@ const MIN_CLIP_MS = 200;
 // limits are honoured: this one for the clock, the audio budget for the feed.
 const WALL_CLOCK_LIMIT_MS = 9 * 60_000;
 
+// Opening a socket has to be able to FAIL. The SDK's live.connect() awaits the
+// socket opening and then the server's setupComplete, and neither wait is ever
+// rejected: a server that closes the socket before setup leaves connect()
+// pending for good. That is what froze meeting 32 on 26 Sep 2026 — all six
+// speakers reached the nine-minute roll, all six reconnects were refused, and
+// the job sat `running` with no socket open and nothing in the log.
+//
+// So every open is raced against the socket closing and against a clock, and a
+// refused one is retried after a pause. When the retries run out the speaker's
+// stream throws, which fails the whole run: see transcribeSpeakerStreams.
+const CONNECT_TIMEOUT_MS = 30_000;
+const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
+
+// How long a roll waits for the old socket to finish closing before opening
+// its replacement. Six speakers rolling together would otherwise briefly hold
+// twelve sessions open on one key, and a server counting concurrent sessions
+// is the likeliest reason those six reconnects were refused.
+const CLOSE_WAIT_MS = 3_000;
+
+function timingsFrom(cfg) {
+  return {
+    connectTimeoutMs: cfg.geminiTranscribeConnectTimeoutMs ?? CONNECT_TIMEOUT_MS,
+    retryDelaysMs: cfg.geminiTranscribeRetryDelaysMs ?? RETRY_DELAYS_MS,
+    closeWaitMs: cfg.geminiTranscribeCloseWaitMs ?? CLOSE_WAIT_MS,
+  };
+}
+
+// The close code and reason are the only account the server gives of why it
+// refused or dropped a socket. They were being thrown away.
+const describeClose = (state) =>
+  state.closeCode != null ? `closed ${state.closeCode}${state.closeReason ? ` "${state.closeReason}"` : ''}` : 'no close code';
+
 let client = null;
 const getClient = (cfg) => (client ??= new GoogleGenAI({ apiKey: cfg.geminiApiKey }));
 
@@ -121,10 +153,28 @@ const defaultConnect = (params, cfg) => getClient(cfg).live.connect(params);
 
 // One socket, and everything that can go wrong with it. Rolled by the caller
 // rather than here, so the audio cursor survives a roll.
-async function openSocket(cfg, vocabulary, connect) {
-  const state = { fragments: [], goingAway: false, closed: false, fatal: null, openedAt: Date.now() };
+async function openSocket(cfg, vocabulary, connect, { label, connectTimeoutMs }) {
+  const state = {
+    fragments: [],
+    goingAway: false,
+    closed: false,
+    fatal: null,
+    closeCode: null,
+    closeReason: '',
+    openedAt: Date.now(),
+  };
 
-  const session = await connect(
+  // Settles the moment the server closes the socket — including before setup,
+  // which is the case connect() itself never reports.
+  let closedEarly;
+  const refused = new Promise((_, reject) => {
+    closedEarly = () => reject(new Error(`live socket refused before setup (${describeClose(state)})`));
+  });
+  // Handled here so a close AFTER setup — every socket's ordinary end — is not
+  // an unhandled rejection. The race below still sees it before setup.
+  refused.catch(() => {});
+
+  const pending = connect(
     {
       model: cfg.geminiTranscribeModel,
       config: {
@@ -151,26 +201,95 @@ async function openSocket(cfg, vocabulary, connect) {
         onerror: (e) => {
           state.fatal = new Error(`live socket error: ${e?.message ?? 'unknown'}`);
           state.closed = true;
+          console.warn(`[gemini-stt] ${label}: socket error: ${e?.message ?? 'unknown'}`);
+          closedEarly();
         },
-        onclose: () => {
+        onclose: (e) => {
           state.closed = true;
+          state.closeCode = e?.code ?? null;
+          state.closeReason = e?.reason ? String(e.reason) : '';
+          // 1000 is our own close at a roll or at the end; anything else is the
+          // server's decision and worth reading afterwards.
+          if (state.closeCode !== 1000) console.warn(`[gemini-stt] ${label}: socket ${describeClose(state)}`);
+          closedEarly();
         },
       },
     },
     cfg
   );
 
+  let timer;
+  const clock = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`live socket did not open within ${Math.round(connectTimeoutMs / 1000)}s`)),
+      connectTimeoutMs
+    );
+  });
+
+  let session;
+  try {
+    session = await Promise.race([pending, refused, clock]);
+  } catch (err) {
+    // A connect() that does settle later would leave a live session nobody is
+    // feeding, holding one of the key's concurrent slots.
+    Promise.resolve(pending).then(
+      (late) => {
+        try {
+          late?.close();
+        } catch {
+          /* already gone */
+        }
+      },
+      () => {}
+    );
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
   return { session, state };
+}
+
+// Opening with retries. Throws once they are spent, naming the last reason, so
+// the run fails with something an operator can act on.
+async function openWithRetry(cfg, vocabulary, connect, { label, run, timings }) {
+  const attempts = timings.retryDelaysMs.length + 1;
+  let last = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt > 1) {
+      const wait = timings.retryDelaysMs[attempt - 2];
+      console.warn(`[gemini-stt] ${label}: retrying in ${Math.round(wait / 1000)}s (attempt ${attempt}/${attempts})`);
+      await sleep(wait);
+    }
+    // Another speaker has already failed the run; opening more sockets for a
+    // transcript that will be thrown away only spends the key.
+    if (run.error) throw run.error;
+    try {
+      return await openSocket(cfg, vocabulary, connect, { label, connectTimeoutMs: timings.connectTimeoutMs });
+    } catch (err) {
+      last = err;
+      console.warn(`[gemini-stt] ${label}: could not open a live socket: ${err.message}`);
+    }
+  }
+  throw new Error(`${label}: could not reopen the live socket after ${attempts} attempts — ${last?.message ?? 'unknown'}`);
+}
+
+// Waits, briefly, for a socket we have asked to close to actually be gone.
+async function waitForClose(socket, ms) {
+  const until = Date.now() + ms;
+  while (!socket.state.closed && Date.now() < until) await sleep(50);
 }
 
 // Streams one speaker's whole track, rolling sockets as the wall clock or the
 // server require, and returns every fragment tagged with the audio cursor at
 // the moment it arrived.
-async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, connect, onAudioMs) {
+async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, connect, onAudioMs, { label, run }) {
   const pace = cfg.geminiTranscribeMaxRealtime > 0 ? cfg.geminiTranscribeMaxRealtime : 1;
+  const timings = timingsFrom(cfg);
+  const open = () => openWithRetry(cfg, vocabulary, connect, { label, run, timings });
   const collected = [];
 
-  let socket = await openSocket(cfg, vocabulary, connect);
+  let socket = await open();
   let socketStartedAt = Date.now();
   let cursorMs = 0;
   const startedAt = Date.now();
@@ -188,11 +307,15 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
     } catch {
       /* already gone */
     }
-    socket = await openSocket(cfg, vocabulary, connect);
+    await waitForClose(socket, timings.closeWaitMs);
+    // What the old socket said after the drain above, before it went.
+    drain();
+    socket = await open();
     socketStartedAt = Date.now();
   };
 
   for (const range of ranges) {
+    if (run.error) throw run.error;
     const pcm = await readAudio(range.clip);
     if (!pcm) continue;
 
@@ -204,12 +327,17 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
 
     for (let at = 0; at < pcm.length; at += BYTES_PER_MS * FRAME_MS) {
       const frame = pcm.subarray(at, Math.min(at + BYTES_PER_MS * FRAME_MS, pcm.length));
+      // Checked before every frame, not just at clip boundaries: sending into a
+      // socket the server has closed does not throw, it drops the audio in
+      // silence, so a dead socket noticed at the next clip has already eaten
+      // the rest of this one.
+      if (socket.state.closed) await roll();
       try {
         socket.session.sendRealtimeInput({ audio: { data: frame.toString('base64'), mimeType: MIME_TYPE } });
       } catch (err) {
-        // A dead socket mid-clip costs this clip's tail; the roll picks the
-        // stream back up rather than abandoning the speaker.
+        // Resend this frame on a fresh socket rather than losing it.
         await roll();
+        socket.session.sendRealtimeInput({ audio: { data: frame.toString('base64'), mimeType: MIME_TYPE } });
       }
       cursorMs += frame.length / BYTES_PER_MS;
       drain();
@@ -317,11 +445,21 @@ export async function transcribeSpeakerStreams(
       `${vocabulary.length ? `, ${vocabulary.length} campaign terms` : ''}`
   );
 
+  // One speaker's stream failing fails the RUN. Returning the rest would commit
+  // a transcript that reads as complete with a player missing from it, and
+  // committing is what lets the archive step clear away the clips a retry
+  // would need. Throwing instead leaves every clip on disk and puts the job
+  // back in the queue with the reason on it. The shared flag stops the other
+  // speakers early rather than letting them stream an hour of audio into a
+  // result that is going to be discarded.
+  const run = { error: null };
+
   // Concurrently — measured working on six sockets at once, and the wall clock
   // is then the LONGEST speaker rather than the sum of all of them.
   const perSpeaker = await Promise.all(
     plans.map(async (plan) => {
       if (!plan.ranges.length) return [];
+      const label = plan.ranges[0].clip.displayName || plan.userId;
       try {
         const fragments = await streamOneSpeaker(
           plan.ranges,
@@ -333,16 +471,19 @@ export async function transcribeSpeakerStreams(
           (doneMs) => {
             doneBySpeaker.set(plan.userId, doneMs);
             report();
-          }
+          },
+          { label, run }
         );
         return { plan, fragments };
       } catch (err) {
-        for (const r of plan.ranges) failures.push({ wavPath: r.clip.wavPath, error: err.message });
-        console.error(`[gemini-stt] speaker stream failed: ${err.message}`);
+        if (err !== run.error) console.error(`[gemini-stt] speaker stream failed: ${err.message}`);
+        run.error ??= err;
         return null;
       }
     })
   );
+
+  if (run.error) throw new Error(`Gemini transcription stopped: ${run.error.message}`);
 
   // Fragments back onto clips, by where the cursor was when each arrived.
   const byClip = new Map();
