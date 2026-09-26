@@ -31,24 +31,17 @@ No Tailscale/VPN needed — this design assumes Pi and PC are on the same LAN.
 If that ever changes, Tailscale would be the right add-on; you'd point
 `WHISPER_SERVER_URL` at a Tailscale IP instead of a LAN IP.
 
-## Status of this scaffold
+## Where this stands
 
-This is a **working starting skeleton**, not a finished, battle-tested bot.
-The pieces that are fully written and should work as-is:
-- Job queue + retry logic (pure logic, unit-testable, no external deps to fail)
-- Markdown/Obsidian export formatting
-- D&D-themed summary prompt
-- SQLite schema
+Running in production on a Raspberry Pi since July 2026, recording a weekly
+table: voice capture, transcription on the PC's GPU (with the Pi and Gemini as
+fallbacks), summaries, the Obsidian vault, Drive sync and the dashboard. The
+image is built for `linux/amd64` and `linux/arm64` by GitHub Actions on every
+push to `main`, on Node 22 LTS, after the test suite passes.
 
-The pieces that **will need iteration on real hardware** (I can't run a live
-Discord voice connection or compile ARM binaries from here):
-- Discord voice capture (`src/voice/capture.js`) — logic is modeled directly
-  on the same `@discordjs/voice` receiver pattern Parley uses, but needs
-  testing against a real voice channel
-- whisper.cpp build step in the Pi Dockerfile — cross-compiling for
-  `arm64` inside Docker buildx sometimes needs machine-specific flags
-- End-to-end command wiring (`src/commands/`) — the four core commands are
-  stubbed with real logic but not exhaustively tested against Discord's API
+What changed and when is in [CHANGELOG.md](CHANGELOG.md). What is planned and
+what is half-built is in [ROADMAP.md](ROADMAP.md). Decisions that should not be
+re-argued are in [docs/adr/](docs/adr/).
 
 ## Network setup (do this first)
 
@@ -79,7 +72,7 @@ pi-service/          # everything that runs on the Raspberry Pi
     export/markdown.js      # Obsidian-formatted .md export
     delivery/discord-post.js  # posts to channel (no thread) + attaches files
     prompts/dnd-summary-prompt.js
-    commands/                 # every /campaign subcommand
+    commands/                 # every subcommand of `/campaign`
   Dockerfile
   docker-compose.yml
   .env.example
@@ -323,7 +316,7 @@ server.
 
 Each campaign keeps its own session numbering, roster, character names,
 transcript corrections, vault folder, ledger, archive page and notes
-destination. A a correction for one table's NPC does not rewrite the other's
+destination. A correction for one table's NPC does not rewrite the other's
 transcripts, and one person can play different characters in both.
 
 Where a command needs to know which table you mean it asks, and never guesses:
@@ -412,7 +405,7 @@ what the vault calls the file.
 
 It used to be the meeting's row id, a single integer counting every session on
 every server the bot serves. That read as nonsense (a table's second night was
-"#16") and, because it named no campaign, `/export 16` from any server returned
+"#16") and, because it named no campaign, exporting session 16 from any server returned
 another table's full transcript: there was nothing in the identifier to check
 against. A reference that carries its own campaign is refused when it isn't
 one you're part of.
@@ -433,8 +426,8 @@ Three tiers, and none of them is a Discord permission.
 | Tier | Commands | Who |
 |---|---|---|
 | **The table** | `/campaign` `join` `leave` `create` `setchar` `whoami` `consent` `restore` + the read subcommands | anyone in the server |
-| **Campaign manager** | `/campaign` `rename` `invite` `remove` `output` | whoever created the campaign |
-| **Bot owner** | the pipeline — approvals, pause/resume, re-summarise, import, transcripts, corrections, deletion | the dashboard |
+| **Campaign manager** | `/campaign` `rename` `invite` `remove` `output`, plus corrections, threads, renaming and deleting on the dashboard | whoever created the campaign |
+| **Bot owner** | the pipeline — approvals, pause/resume, re-summarise, import, transcripts — and the gatehouse (access, the archive, usage) | the dashboard |
 
 The tiers are per **subcommand** now. There is no owner tier left in Discord at
 all: those commands spend the owner's GPU, API budget and disk, so nobody else
@@ -529,10 +522,9 @@ use.
 - **`create name:`** — start a campaign here and become its DM. The name
   becomes the Obsidian folder its notes are filed in and the prefix of every
   session reference (`Cipher_01`), so it has to be unique across the bot.
-- **`list`** — the campaigns here, who runs each, how many sessions, which
-  folder, and where its notes go.
 - **`rename name:`** — rename one you run; the vault folder moves with it,
-  ledger included.
+  ledger included. The campaign's DM can also rename it from the dashboard,
+  with the pencil beside its name.
 - **`invite player: [name:]`** — ask someone to join. They get a DM explaining
   what is recorded and choose for themselves; declining means their audio is
   never captured. This is the only route onto a roster.
@@ -559,16 +551,15 @@ use.
 - **`funny`** — a random funny or memorable moment from any completed session
   (the summariser flags these as part of the normal per-session summary).
 - **`search query:`** — search every transcript in the campaign for a word or
-  phrase and get the matching lines with session number, timestamp and speaker.
-  Answers "when did we first meet that guy?" without re-reading old notes.
-- **`ask question:`** — a question answered only from past recaps and
-  transcripts, with session numbers cited. Needs the summariser reachable.
-- **`history [count:]`** — recent sessions, by the reference the vault uses.
+  phrase and get the matching lines with session number, timestamp and speaker,
+  best match first. A name brings every spelling the vault's notes know for it
+  ("Yusdrayl" also finds "Use Drail"), and a single word with no exact match
+  offers the closest spellings. See [Search and questions](#search-and-questions).
+- **`ask question:`** — a question answered only from the campaign's write-ups
+  and transcripts, citing the session (and the time, for a transcript line).
+  Needs the summariser reachable.
 - **`export session:`** — a session's transcript as a `.txt`.
 - **`whoami`** — what name you currently appear as.
-- **`stats`** — sessions, hours recorded, lines transcribed, who talks most.
-- **`npcs`** / **`locations`** — everyone met and everywhere visited, straight
-  from the campaign ledger, without opening Obsidian.
 - **`archive`** — the browsable campaign archive (the same self-contained HTML
   page that syncs to Drive after every session) as a one-off attachment.
 
@@ -583,9 +574,14 @@ The operator's half, which used to be another dozen slash commands:
   or a recap came out badly
 - **roster** — who is at the table, what they play, whether they agreed to be
   recorded, and setting or clearing a character name
-- **corrections** — fix a name whisper keeps mishearing. Rewrites every past
-  transcript in the campaign and is saved, so future sessions are corrected
-  automatically. Removing one stops it applying; lines already rewritten stay
+- **corrections** — fix a name whisper keeps mishearing. Every transcript and
+  write-up in the campaign reads it the right way, past sessions included, and
+  future sessions are corrected as they are transcribed. What was heard is kept
+  underneath, so removing a correction puts every line back. See
+  [Name corrections](#name-corrections).
+- **threads** — the questions write-ups have left open, and which a later
+  session may have settled. See [Threads](#threads).
+- **rename** — the campaign's DM renames it from the pencil beside its name
 - **notes** — read any session's recap back
 - **transcript** — download the raw text
 - **import** — a recording made outside Discord (an in-person game, a phone
@@ -593,6 +589,85 @@ The operator's half, which used to be another dozen slash commands:
   line is attributed to one label** (default "Table") — a single microphone has
   no per-speaker channels, so voices cannot be told apart the way they can in a
   voice call
+
+### The gatehouse
+
+`/gatehouse/` is the operator's page, in three tabs:
+
+- **People** — who may sign in, their level and their tier.
+- **Archive** — deleted campaigns, with days left to restore each, and requests
+  from players to bring one back. A deleted campaign leaves every list and
+  nothing is erased; it can be restored for 30 days. Players ask with
+  `/campaign restore` in Discord, and the request appears here.
+- **Usage** — what the models have cost today and over the fortnight, which
+  model does which job, and whether the newest database backup opens.
+
+The dashboard itself has a **Your usage** screen for everybody. It is a
+**preview**: per-account limits are planned (see ROADMAP.md) and not built, so it
+shows example figures and says so.
+
+## When a recording ends by itself
+
+Two things can end a session without anybody typing `/campaign leave`:
+
+- **Everybody leaves.** When the voice channel has had nobody in it for
+  `VOICE_EMPTY_CLOSE_MINUTES` (default 10), the session ends exactly as
+  `/campaign leave` would, and Quill says so in the channel `/campaign join`
+  was run in. Somebody coming back inside the ten minutes resets the clock.
+- **The bot drops out of voice.** A dropped connection is rejoined up to three
+  times. If Discord removed the bot from the channel (kicked, or the channel
+  deleted), it does not rejoin. If it cannot get back, the session ends, what was
+  captured is queued, and the channel is told.
+
+And one thing is only reported: people who agreed to be recorded are in the
+channel but no audio has arrived for `VOICE_SILENCE_ALERT_MINUTES` (default 15).
+That is what a bot silently dropped from voice looks like, so the owner gets a
+DM and the dashboard's recording pane shows a warning. Either setting at 0 turns
+it off.
+
+## Name corrections
+
+A correction says "the transcriber writes *Kaylen*; the table means *Kaelen*".
+It applies to every transcript in the campaign, past and future, and to every
+write-up as it is read (the dashboard, `/campaign recap`, `/campaign funny` and
+the archive page). Write-ups are never rewritten for it, so a correction
+reaches a write-up summarised before it existed without paying to re-summarise.
+
+Each transcript line keeps what was heard (`utterances.raw_text`), and its text
+is the saved corrections applied to that. Removing a correction puts back every
+line it changed. Lines corrected before 27 September 2026 were rewritten in
+place, before the original was kept, and keep their fix.
+
+A correction that is very short, or would change a large share of the campaign,
+is refused until confirmed, because until it is taken back every transcript
+reads that way.
+
+## Search and questions
+
+Transcripts are indexed with SQLite's FTS5 trigram tokenizer, so search matches
+any part of a word, ignores case, and ranks results: a line with two spellings
+of a name outranks a line with one.
+
+Names are the hard part, because the transcriber spells them differently every
+session. The vault's entity notes (`NPCs/`, `Locations/`, `Characters/`) carry
+every spelling seen as aliases, so a name in a search or a question brings its
+aliases with it. A single word with no exact match offers the closest spellings
+instead.
+
+`/campaign ask` is given every session's whole write-up as the table has
+corrected it (recap, scenes, decisions, open threads), the best-matching
+transcript lines with their times, and the list of names with their spellings.
+It is capped at 60,000 tokens of context and trimmed least-useful first.
+
+## Threads
+
+Every write-up lists the questions a session left open. Those are now
+**threads** with a status: open, resolved or dropped. The summariser is shown
+the campaign's open threads and may say a session settled one, with a sentence
+of evidence. That is only a suggestion. It appears at the top of the campaign's
+**Threads** shelf, and the campaign's DM marks it resolved or keeps it open.
+Threads can be closed, dropped or reopened by hand too. Threads already in
+old write-ups were opened when this was installed.
 
 ## Campaign vocabulary (whisper prompting)
 
@@ -858,7 +933,7 @@ the dashboard shows everything waiting and the dashboard releases it if you'd ra
 not use the button.
 
 Pause goes further — it stops the queue entirely, so you can hold work back
-outright. Queued sessions stay exactly where they are and resume on `/resume`.
+outright. Queued sessions stay exactly where they are and carry on when you press Resume on the dashboard.
 
 ## Browsable archive
 
@@ -878,11 +953,10 @@ overwrote the other's archive with its own sessions.
 
 `SUMMARY_PROVIDER` decides which model writes the recap:
 
-- `gemini` (default) — cheapest cloud option, with a free tier.
 - `anthropic` — sends the finished **transcript text** to Claude for a
   noticeably better recap. Set `ANTHROPIC_API_KEY`; `ANTHROPIC_MODEL` defaults
   to `claude-opus-5`. Anthropic's API is paid-tier only (no free tier).
-- `gemini` — sends the finished **transcript text** to Gemini. Set
+- `gemini` (the default) — sends the finished **transcript text** to Gemini. Set
   `GEMINI_API_KEY` (free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey));
   `GEMINI_MODEL` defaults to `gemini-3.7-flash` — pick this provider if the
   goal is a cloud recap at low cost rather than Claude's higher quality. If
@@ -920,7 +994,7 @@ the config:
   at the moment of approval rather than being fixed by `SUMMARY_PROVIDER` when
   the session ended.
 - **Re-summarise**, on any session with a transcript, writes the notes again —
-  for a recap produced before a a correction landed, or one that simply came out
+  for a recap produced before a correction landed, or one that simply came out
   badly.
 
 These used to be buttons in a Discord DM. They moved so that nothing in the
@@ -996,24 +1070,10 @@ which is exactly what [the schedule](#scheduling-transcription) exists to
 prevent. The audio is already safe on disk; it transcribes when it's allowed
 to, and you're DM'd about it as normal.
 
-## Ideas not built yet (worth considering later)
+## What is planned
 
-- **Auto-join/leave on voice activity** — start recording automatically when
-  players join the voice channel, stop when it empties. Skipped for now
-  since it risks recording casual chatter that wasn't meant to be a
-  session; manual `/campaign join`/`leave` keeps that intentional.
-- **Manual transcript correction** — a a correction command to fix a
-  whisper.cpp misheard fantasy name after the fact, since STT reliably
-  mangles invented words.
-- **Session digest/reminder** — a scheduled message a day before your usual
-  game night, auto-posting `/campaign recap` so everyone's refreshed without needing
-  to run the command manually.
-- **XP/loot ledger with running totals** — beyond just listing loot per
-  session, tally running totals per character over the campaign.
-- **Summariser fallback** — if the primary provider errors, fall back
-  to a smaller one automatically rather than failing the job outright.
-- **Audio clip attachments** — clip and attach the actual audio for a
-  specific dramatic moment, rather than only text.
+[ROADMAP.md](ROADMAP.md) has what is half-built and what is planned, with the
+reasoning for each.
 
 ## The dashboard
 
@@ -1027,16 +1087,16 @@ corrections, and pull a transcript.
 **The desk.** Signing in used to land on the ledger of campaigns, which answers
 "which table" and nothing else — the wrong first question for whoever runs the
 bot, since on a given evening what they came for is as likely to be the night
-waiting to be released, or the bill, or a name at the gate. The desk is every
+waiting to be released, or a name at the gate. The desk is every
 place there is to go, one square each: whatever is recording, whatever is
-waiting on you, the table you last played, the whole ledger, the servers, the
-bill, the gatehouse. A square is only drawn when it is both true and yours —
+waiting on you, the table you last played, the whole ledger, the servers, your
+usage, the gatehouse. A square is only drawn when it is both true and yours —
 nothing says "not recording", and a player's desk has their own table on it and
 nothing else.
 
 ### Inside a campaign
 
-A column of four things — **Sessions, NPCs, Places, Items** — and a pane that
+A column of five things — **Sessions, NPCs, Places, Items, Threads** — and a pane that
 reads whichever you picked. The pane's tabs go **Notes, Corrections, The
 table**, in that order, because reading is what it is for; **Settings** sits
 apart at the end and only for whoever manages that campaign.
@@ -1069,7 +1129,8 @@ Two pieces, deliberately:
   port it opens — everything else it does is outbound-only. The status payload
   is operational data with no tokens, keys or user ids in it, and a test
   asserts that.
-- **nginx** serves one static HTML file and proxies `/api` to the bot, adding
+- **nginx** serves the static page (`dashboard/html/index.html`, with its
+  stylesheet, scripts and self-hosted fonts under `dash/`) and proxies `/api` to the bot, adding
   the token server-side. It runs **on the Pi**, as a second service in
   `pi-service/docker-compose.yml`.
 
@@ -1213,7 +1274,7 @@ node scripts/build-location-notes.mjs <guildId> --write
 # The party. The roster has to be given: the transcript is labelled with the
 # DISCORD SPEAKER, so "Brett" is a person and "BenTen" is who they play, and
 # nothing in the transcript reliably says which speaker is the DM.
-# The roster comes from /dm character (see below) unless you override it:
+# The roster comes from the dashboard's roster and /campaign setchar unless you override it:
 node scripts/build-character-notes.mjs <guildId> --dm "Old Dad" --write
 
 # "Speaker=Character" pins the character's name. A bare "--pc Speaker" leaves

@@ -74,17 +74,22 @@ Self-hosted Discord bot ("Scriber") that records a D&D group's voice
 session, transcribes it locally, and produces AI-generated session notes.
 Split across two home-LAN machines:
 
-- **Raspberry Pi** (always-on): Discord bot, voice capture, whisper.cpp
-  transcription, SQLite, job queue, Obsidian markdown export, campaign
-  ledger, optional Google Drive sync via rclone.
-- **PC** (sometimes on): runs Ollama with a larger model for the actual
-  AI summary step. Pi calls it over the LAN and queues/retries if the PC
-  is off.
+- **Raspberry Pi** (always-on): Discord bot, voice capture, SQLite, job
+  queue, the dashboard (nginx), Obsidian markdown export, campaign ledger,
+  optional Google Drive sync via rclone. Can transcribe on its own CPU as a
+  slow fallback.
+- **PC** (sometimes on): runs the whisper.cpp GPU server (`pc-whisper/`),
+  which does the transcription when it is reachable. It does **not** run the
+  summariser: Ollama was removed on purpose in `d7a4486`, and summaries are
+  written by Gemini (or Claude) from the transcript text.
 
-Full architecture, design decisions, and rationale are in `README.md` in
-this same folder — that doc is thorough and was written before this
-session started. Don't duplicate it here; read it for the "why" behind
-the design.
+The docs, and what each is for:
+
+- `README.md`: how it works, how to set it up, what every setting does.
+- `CHANGELOG.md`: what shipped and when, with the reasoning at the time.
+- `ROADMAP.md`: work in progress, known faults, and planned ideas.
+- `docs/adr/`: decisions that should not be re-argued.
+- `docs/history/`: old session write-ups, kept for reference only.
 
 ## Repo structure note
 
@@ -170,7 +175,9 @@ ggml fix.
 ## Networking — confirmed working
 
 Separately from the Docker build, Matthew set up LAN connectivity
-between the Pi and PC for Ollama:
+between the Pi and PC for Ollama. (Historical: Ollama has since been removed.
+The PC now serves whisper on port 8089, and the firewall lessons below apply
+to that port the same way.)
 
 - PC's current LAN IP observed during this session: `192.168.0.153`
   (note: the README/`.env.example` use `192.168.1.50` as a placeholder —
@@ -226,14 +233,15 @@ One item is left open rather than ticked, because it was not re-checked:
       → summarize → Discord post → ledger update → Drive sync) was not
       queried end to end on 2026-08-28. It is near-certainly long since
       done — the bot has been up continuously and the campaign, consent,
-      correction and compendium features listed in `new features.md`
+      correction and compendium features listed in `CHANGELOG.md`
       were built against real recorded games — but nobody read the
       `meetings` and `summaries` tables to say so out loud. Read them if
       it matters.
 
-Open work is no longer tracked in this file. It lives in
-`new features.md`, under "Known faults, not fixed yet" and "Ideas not
-built yet".
+Open work is no longer tracked in this file. It lives in `ROADMAP.md`,
+under "Known faults, not fixed yet" and "Ideas not built yet". (Until
+2026-09-27 that was the bottom half of `new features.md`, which is now
+`CHANGELOG.md`.)
 
 ## Why this session used Cowork instead of Claude Code
 

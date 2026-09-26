@@ -9,7 +9,7 @@
 // ==========================================================================
 //
 // WORK IN PROGRESS. What is here is the whole shape and the whole animation;
-// what is not is listed in "new features.md" under "Work in progress", and the
+// what is not is listed in ROADMAP.md under "Work in progress", and the
 // sheet says so on screen rather than pretending otherwise.
 //
 // TODO: finish the threshold — the endings need their copy settled with a real
