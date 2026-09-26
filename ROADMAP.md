@@ -116,6 +116,14 @@ against it.
   the privacy terms change. See `campaign/consent.js` and the Audio card in
   `dashboard/html/dash/app/07-tabs.js`.
 
+- **A short transcript can still delete its own clips.** After any transcript
+  commits, the archive step replaces the per-speaker clips with one mixed MP3.
+  If a transcript is incomplete for a reason nothing detects, a retry then has
+  no per-speaker audio to work from. That is how session 32 lost speaker
+  attribution on 26 Sep 2026 (the quota case itself is now caught). Keeping the
+  clips until the retention window, or until the session has been read and
+  approved, would close it.
+
 (The section was empty from 2026-09-06 until the entry above.)
 
 Three of them had been sitting here long enough to be worth a note about the

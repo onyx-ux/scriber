@@ -1066,6 +1066,17 @@ they were cleared to make room for. That section is empty again.
       Failing leaves every clip on disk and reschedules the job with the reason
       attached. Three tests in `test/gemini-stream.test.js` reproduce the hang.
 
+- [x] **Running out of Gemini quota fails the run instead of losing it** —
+      session 32's second attempt (26 Sep) hit the key's quota 30 seconds in.
+      Every reconnect succeeded and was closed at once with 1011 "You exceeded
+      your current quota", 910 times; rolling onto a fresh socket each time kept
+      the run alive, and it "finished" with 852 lines of a four-hour session.
+      The first fix above only covered reconnects that fail outright. A close
+      that names quota now fails the run at once, and so do four sockets in a row
+      closed within 15 seconds of opening, for any reason. Failing keeps the
+      clips on disk for a retry; committing a short transcript let the archive
+      step delete them.
+
 - [x] **The landing page stops promising what does not exist** — "react with
       📌 to keep a line" (nothing listens for reactions), "lands when the last
       person leaves" and "before the dice are back in the bag" (the default flow

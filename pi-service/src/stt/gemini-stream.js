@@ -75,12 +75,40 @@ const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
 // is the likeliest reason those six reconnects were refused.
 const CLOSE_WAIT_MS = 3_000;
 
+// A socket the server closes this soon after it opened did not carry a
+// stream, and this many of those in a row for one speaker ends the run.
+//
+// Session 32's second attempt (26 Sep 2026) is why: the key ran out of quota
+// 30 seconds in, and every reconnect SUCCEEDED and was then closed at once,
+// 910 times. Rolling kept the run alive, audio went into sockets that dropped
+// it, and the run "finished" with 852 lines of a four-hour session. A
+// transcript that short commits as though it were whole, and committing is what
+// lets the archive step delete the clips a retry would need.
+const RAPID_DEATH_MS = 15_000;
+const MAX_RAPID_DEATHS = 4;
+
+// A close that says the key is out of quota is final. A fresh socket will be
+// refused the same way, so the run fails at once rather than retrying.
+const OUT_OF_QUOTA = /quota|RESOURCE_EXHAUSTED|billing/i;
+
 function timingsFrom(cfg) {
   return {
     connectTimeoutMs: cfg.geminiTranscribeConnectTimeoutMs ?? CONNECT_TIMEOUT_MS,
     retryDelaysMs: cfg.geminiTranscribeRetryDelaysMs ?? RETRY_DELAYS_MS,
     closeWaitMs: cfg.geminiTranscribeCloseWaitMs ?? CLOSE_WAIT_MS,
+    rapidDeathMs: cfg.geminiTranscribeRapidDeathMs ?? RAPID_DEATH_MS,
+    maxRapidDeaths: cfg.geminiTranscribeMaxRapidDeaths ?? MAX_RAPID_DEATHS,
   };
+}
+
+// Why a socket the server closed means the run cannot go on, or null when a
+// fresh socket is worth trying.
+function terminalClose(state) {
+  if (state.closedByUs || !state.closed) return null;
+  if (OUT_OF_QUOTA.test(state.closeReason ?? '')) {
+    return new Error(`Gemini is out of quota (${describeClose(state)})`);
+  }
+  return null;
 }
 
 // The close code and reason are the only account the server gives of why it
@@ -269,6 +297,8 @@ async function openWithRetry(cfg, vocabulary, connect, { label, run, timings }) 
     } catch (err) {
       last = err;
       console.warn(`[gemini-stt] ${label}: could not open a live socket: ${err.message}`);
+      // Out of quota: a retry will be refused the same way.
+      if (OUT_OF_QUOTA.test(err.message)) throw new Error(`${label}: Gemini is out of quota (${err.message})`);
     }
   }
   throw new Error(`${label}: could not reopen the live socket after ${attempts} attempts — ${last?.message ?? 'unknown'}`);
@@ -300,8 +330,27 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
     for (const f of socket.state.fragments.splice(0)) collected.push({ text: f.text, cursorMs });
   };
 
+  // Sockets in a row the server closed moments after they opened.
+  let rapidDeaths = 0;
+
   const roll = async () => {
     drain();
+    const serverClosed = socket.state.closed && !socket.state.closedByUs;
+    // A close that means no fresh socket will do better ends the run here.
+    const fatal = terminalClose(socket.state);
+    if (fatal) throw new Error(`${label}: ${fatal.message}`);
+    if (serverClosed && Date.now() - socket.state.openedAt < timings.rapidDeathMs) {
+      rapidDeaths += 1;
+      if (rapidDeaths >= timings.maxRapidDeaths) {
+        throw new Error(
+          `${label}: live sockets keep closing as soon as they open (${rapidDeaths} in a row, last ${describeClose(socket.state)})`
+        );
+      }
+    } else {
+      rapidDeaths = 0;
+    }
+
+    socket.state.closedByUs = true;
     try {
       socket.session.close();
     } catch {
@@ -379,6 +428,7 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
   }
   drain();
 
+  socket.state.closedByUs = true;
   try {
     socket.session.close();
   } catch {

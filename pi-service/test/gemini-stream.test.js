@@ -89,7 +89,7 @@ function fakeTransport(script = []) {
         }
         if (entry.closeAfterMs != null && rec.audioMs >= entry.closeAfterMs && !rec.closed) {
           rec.closed = true;
-          onclose?.({ code: 1011, reason: 'dropped in a test' });
+          onclose?.({ code: 1011, reason: entry.closeReason ?? 'dropped in a test' });
         }
       },
       close() {
@@ -417,4 +417,43 @@ test('progress is reported against the audio, not the clip count', async (t) => 
   assert.ok(seen.length >= 2, 'a bar that only moves at the end is not a bar');
   const [done, total] = seen[seen.length - 1];
   assert.equal(done, total, 'it has to reach the end, or the bar stalls at 90% forever');
+});
+
+// Session 32, the second night (26 Sep 2026): the key ran out of quota 30
+// seconds in. Every reconnect SUCCEEDED and was then closed at once with 1011
+// "You exceeded your current quota", 910 times. Rolling onto a fresh socket
+// each time kept the run going, feeding audio into sockets that dropped it, and
+// it "finished" with 852 lines of a four-hour session. Committing that let the
+// archive step delete the clips a retry needed.
+test('running out of quota fails the run rather than rolling forever', { timeout: 5000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const clips = [clip(await wav(dir, 'long.wav', 5000), { startMs: 0 })];
+  const quota = { closeAfterMs: 1000, closeReason: 'You exceeded your current quota, please check your plan and billing details.' };
+  const transport = fakeTransport([quota, quota, quota, quota, quota, quota]);
+
+  await assert.rejects(
+    transcribeSpeakerStreams(clips, fast, { connect: transport.connect }),
+    /quota/
+  );
+  assert.equal(transport.sockets.length, 1, 'quota is not something a fresh socket fixes');
+});
+
+// The general form of the same failure: whatever the reason, sockets that die
+// moments after opening are not a stream. A few of those in a row is a run
+// that is losing audio, and it has to stop.
+test('sockets that keep dying as soon as they open fail the run', { timeout: 5000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const clips = [clip(await wav(dir, 'long.wav', 9000), { startMs: 0 })];
+  const dying = { closeAfterMs: 1000, closeReason: 'Internal error' };
+  const transport = fakeTransport(Array.from({ length: 10 }, () => dying));
+
+  await assert.rejects(
+    transcribeSpeakerStreams(clips, fast, { connect: transport.connect }),
+    /keep closing/
+  );
+  assert.ok(transport.sockets.length <= 5, `gave up after ${transport.sockets.length} sockets`);
 });
