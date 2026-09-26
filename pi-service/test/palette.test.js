@@ -1,3 +1,4 @@
+import { dashboardSource } from './lib/dashboard-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -18,7 +19,7 @@ import { VOICES, VOICE_SLUGS, isVoiceColour, voiceColour } from '../src/web/pale
 // fail on the number rather than on somebody's eye a month later.
 
 const HTML = fileURLToPath(new URL('../../dashboard/html/index.html', import.meta.url));
-const page = await readFile(HTML, 'utf8');
+const page = await dashboardSource();
 
 // --- contrast, the same way a browser computes it ---
 

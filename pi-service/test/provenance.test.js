@@ -1,3 +1,4 @@
+import { dashboardSource } from './lib/dashboard-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
@@ -181,7 +182,7 @@ test('an imported transcript does not claim this bot made it', async (t) => {
 // --- and that the page actually draws it ---------------------------------
 
 test('the transcript page draws the provenance, and the brass is on the grade', async () => {
-  const page = await readFile(fileURLToPath(new URL('../../dashboard/html/index.html', import.meta.url)), 'utf8');
+  const page = await dashboardSource();
 
   // Called from the facts rail, under the other facts about this session.
   assert.match(page, /\$\{howItWasMade\(\)\}/, 'the rail stopped drawing it');

@@ -1,0 +1,2532 @@
+/* The dashboard's stylesheet, moved out of index.html on 2026-09-27
+   without changing a rule. See ADR-0002. */
+
+  /* -- The palette ------------------------------------------------------
+     One system, two grounds. The landing page and the tool used to be two
+     products wearing different clothes - pale grey-green stock and correction
+     ink out front, brass on near-black once you were through the door. The
+     ink is the brand, so the ink is what carries over: ultramarine for
+     anything you can act on, and the highlighter for anything Quill kept.
+
+     Both themes define the same names, so every rule further down this file
+     is written once and gets light and dark for free. The names describe the
+     job, not the colour - "--ink" is the page, whichever way round the page
+     happens to be.
+
+     Dark is the default because this is a tool you open at the table with the
+     lights down. Light is the landing page's own stock, for reading a recap in
+     daylight. "auto" follows the machine.  */
+
+  :root, :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --ink:      #12151B;  /* the page */
+    --panel:    #171B22;  /* rail and top bar */
+    --column:   #151920;  /* the session column and the facts rail */
+    --card:     #191E26;  /* cards on the page */
+    --raise:    #232935;  /* selected rows, secondary buttons */
+    --sunk:     #0F1218;  /* inputs and read-only values */
+
+    --line:     #262C38;  /* the structural borders */
+    --line-2:   #2A3140;  /* input borders, outer frame */
+    --rule:     #212734;  /* row rules inside a table */
+    --edge:     #3A4356;  /* button borders */
+    --dash:     #303848;  /* dashed placeholder outlines */
+
+    --text:     #E8E6DF;
+    --text-2:   #C2C0B8;
+    /* The quiet layer — dates, counts, facets, every mono caption. It has to
+       clear 4.5:1 against the LIGHTEST ground it ever sits on, not the page:
+       a selected session row is --raise, and at #8A8B86 that pairing measured
+       4.25:1, which is the whole second line of every row you scan. */
+    --dim:      #989992;
+
+    /* The one accent: the pen. Ultramarine is unreadable on a dark ground, so
+       dark gets the same hue lifted to a legible tint rather than a different
+       colour. */
+    --pen:      #8497F2;
+    --pen-lit:  #B3BEFA;
+    --pen-br:   #3B4680;
+    --pen-bg:   #191D33;
+    --on-pen:   #10131C;  /* text on a filled pen button */
+
+    /* The highlighter, the same in both themes - it is the one thing on the
+       page that is meant to look like it was added by hand. */
+    --mark:     #E1EC97;
+    --mark-ink: #2A2E14;
+    --mark-cap: #E1EC97;
+
+    --sage:     #7FA765;
+    --sage-lit: #A9C692;
+    --sage-br:  #3E4E35;
+    --red:      #D0453C;
+    --red-lit:  #E4A9A4;
+    --red-br:   #6B322D;
+    --red-bg:   #2A1817;
+    --amber:    #D99A2B;
+
+    --shadow:   #0006;
+    --shadow-hard: #000A;
+    --scrim:    #08090CCC;
+    --hover:    #1C222C;  /* the wash under a hovered row */
+
+    /* These three exist in the light set too, and for a long time ONLY there.
+       A custom property with no value does not fall back to the browser's
+       default — the declaration using it is invalid at computed-value time and
+       the property resets to `initial`. So on the dark theme, which is the one
+       most people get, `::selection` took `background: transparent` and the
+       highlight painted nothing: text was selecting and copying perfectly and
+       showing no sign of it, which reads exactly like text that cannot be
+       selected at all. The banner lost its ground and its rule the same way.
+       Same family as their light counterparts — the alarm is the red pair, the
+       selection is the pen — pitched for a dark ground. */
+    --alarm-bg: #2B1918;
+    --alarm-br: #6B322D;
+    --select:   #343E72;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --ink:      #E6E8E3;
+    --panel:    #DEE2DA;
+    --column:   #E1E4DE;
+    --card:     #EFF1EC;
+    --raise:    #D2D8CC;
+    --sunk:     #DBDFD6;
+
+    --line:     #C9CFC3;
+    --line-2:   #BCC3B5;
+    --rule:     #D2D7CB;
+    --edge:     #AEB6A6;
+    --dash:     #B8BFB0;
+
+    --text:     #171C22;
+    --text-2:   #39434A;
+    --dim:      #525C4F;
+
+    --pen:      #2434A8;
+    --pen-lit:  #1B2A92;
+    --pen-br:   #A3ABDC;
+    --pen-bg:   #DFE3F4;
+    --on-pen:   #F2F3EF;
+
+    --mark:     #E1EC97;
+    --mark-ink: #3A4014;
+    --mark-cap: #5A6320;
+
+    --sage:     #4C6B37;
+    --sage-lit: #3B5729;
+    --sage-br:  #A9BE99;
+    --red:      #A8352D;
+    --red-lit:  #8E2B24;
+    --red-br:   #D8ADA9;
+    --red-bg:   #F4E2E0;
+    --amber:    #8A5E12;
+
+    --shadow:   #17221C1A;
+    --shadow-hard: #17221C2E;
+    --scrim:    #4A5148CC;
+    --hover:    #DCE0D6;
+    --alarm-bg: #F6E4E1;
+    --alarm-br: #D8ADA9;
+    --select:   #C9D0EE;
+  }
+
+  /* No stored choice: follow the machine. Only the light half is written here
+     - bare :root above is already the dark set - so a light-preferring machine
+     is the one that gets overridden. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+
+      --ink:      #E6E8E3;
+      --panel:    #DEE2DA;
+      --column:   #E1E4DE;
+      --card:     #EFF1EC;
+      --raise:    #D2D8CC;
+      --sunk:     #DBDFD6;
+
+      --line:     #C9CFC3;
+      --line-2:   #BCC3B5;
+      --rule:     #D2D7CB;
+      --edge:     #AEB6A6;
+      --dash:     #B8BFB0;
+
+      --text:     #171C22;
+      --text-2:   #39434A;
+      --dim:      #525C4F;
+
+      --pen:      #2434A8;
+      --pen-lit:  #1B2A92;
+      --pen-br:   #A3ABDC;
+      --pen-bg:   #DFE3F4;
+      --on-pen:   #F2F3EF;
+
+      --mark:     #E1EC97;
+      --mark-ink: #3A4014;
+      --mark-cap: #5A6320;
+
+      --sage:     #4C6B37;
+      --sage-lit: #3B5729;
+      --sage-br:  #A9BE99;
+      --red:      #A8352D;
+      --red-lit:  #8E2B24;
+      --red-br:   #D8ADA9;
+      --red-bg:   #F4E2E0;
+      --amber:    #8A5E12;
+
+      --shadow:   #17221C1A;
+      --shadow-hard: #17221C2E;
+      --scrim:    #4A5148CC;
+      --hover:    #DCE0D6;
+      --alarm-bg: #F6E4E1;
+      --alarm-br: #D8ADA9;
+      --select:   #C9D0EE;
+    }
+  }
+
+  /* The old names, kept pointing at the new ones. Brass was the accent for the
+     whole of this file's first life and it is spelled two hundred times below;
+     aliasing costs nothing and means the rename is not a rewrite. New rules
+     should say --pen. */
+  :root {
+    --brass:     var(--pen);
+    --brass-lit: var(--pen-lit);
+    --brass-br:  var(--pen-br);
+    --brass-bg:  var(--pen-bg);
+
+    --display: 'Fraunces', 'Hoefler Text', Georgia, serif;
+    --sans:  'Newsreader', Georgia, 'Times New Roman', serif;
+    --mono:  'Spline Sans Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    --serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* Scrollbars, in the page's own colours. Four columns can be scrolling at
+     once here — the campaign rail, the picker column, the recap and the facts
+     rail — and the platform default drew four grey trenches through a design
+     that has no other grey in it. Thin, round, and only as dark as a hairline
+     until the pointer is on them. The track stays transparent so a column that
+     can scroll does not announce it while sitting still. */
+  * { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line-2);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--edge); background-clip: content-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--ink); color: var(--text);
+    font: 400 15px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4 { margin: 0; font-weight: 500; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus { outline: none; }
+  :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; border-radius: 5px; }
+  ::selection { background: var(--select); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+
+  /* Shared idioms, named for what they are rather than how they look. */
+  .mono   { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .prose  { font-family: var(--serif); }
+  .cap    { font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+            color: var(--dim); font-weight: 600; }
+  /* Which session, what is in it, and what can be done to it — one line above
+     the headline, so nothing stands between the headline and the first
+     sentence of the recap. */
+  .session-line { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .session-line .doings { margin-left: auto; }
+  @media (max-width: 720px) {
+    /* No far end to push to on a phone: the buttons take their own line under
+       the metadata rather than squeezing it. */
+    .session-line .doings { margin-left: 0; flex-basis: 100%; margin-top: 10px; }
+  }
+
+  .kicker { font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+            text-transform: uppercase; color: var(--brass); }
+  .kicker.done   { color: var(--sage-lit); }
+  .kicker.wait   { color: var(--brass-lit); }
+  .kicker.broken { color: var(--red-lit); }
+  .muted  { color: var(--dim); }
+  .quiet  { font-size: 13.5px; color: var(--dim); line-height: 1.6; }
+
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px;
+         display: inline-block; background: var(--edge); vertical-align: middle; }
+  .dot.ok    { background: var(--sage); }
+  .dot.bad   { background: var(--red); }
+  .dot.warn  { background: var(--amber); }
+  .dot.brass { background: var(--brass); }
+  .dot.live  { background: var(--red); animation: pulse 1.8s ease-in-out infinite; }
+
+  /* --- buttons ------------------------------------------------------- */
+
+  .btn { font-size: 13px; padding: 7px 14px; border-radius: 7px;
+         border: 1px solid var(--edge); background: var(--raise); color: var(--text);
+         cursor: pointer; white-space: nowrap;
+         transition: background .13s, border-color .13s, color .13s; }
+  .btn:hover:not(:disabled) { border-color: var(--dim); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.go { border-color: var(--pen); background: var(--pen); color: var(--on-pen); font-weight: 600; }
+  .btn.go:hover:not(:disabled) { background: var(--brass-lit); border-color: var(--brass-lit); }
+  .btn.ghost { background: transparent; color: var(--dim); }
+  .btn.ghost:hover:not(:disabled) { color: var(--text-2); }
+  .btn.warn { border-color: var(--brass-br); background: var(--brass-bg); color: var(--brass-lit); }
+  .btn.danger { border-color: var(--red-br); background: var(--red-bg); color: var(--red-lit); }
+  .btn.sm { font-size: 12px; padding: 5px 12px; border-radius: 6px; }
+  .btn.wide { width: 100%; padding: 8px 16px; }
+  .btn.big { font-size: 14px; padding: 10px 20px; border-radius: 8px; }
+  .row-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  /* A settings row's right-hand cell is narrow, so a picker and the button that
+     acts on it wrap onto two lines. Ending them both at the same right edge
+     keeps the column reading as a column rather than as two stray controls. */
+  .set-row .row-btns { justify-content: flex-end; }
+
+  .in { padding: 9px 12px; border-radius: 7px; border: 1px solid var(--line-2);
+        background: var(--sunk); color: var(--text); font-size: 14px; width: 100%; }
+  .in:focus-visible { border-color: var(--brass); outline: none; }
+  .in::placeholder { color: var(--dim); }
+  .val { font-family: var(--mono); font-size: 13.5px; padding: 8px 14px; border-radius: 7px;
+         border: 1px solid var(--line-2); background: var(--sunk); color: var(--text);
+         white-space: nowrap; }
+
+  /* The segmented control: two or three exclusive choices, no dropdown. */
+  .seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--sunk);
+         border: 1px solid var(--line-2); border-radius: 8px; }
+  .seg button { font-size: 12.5px; padding: 6px 14px; border-radius: 5px; border: 0;
+                background: transparent; color: var(--dim); cursor: pointer;
+                /* A segment is a row of alternatives read side by side. Let one
+                   wrap and it stops being one choice among three and starts
+                   looking like two lines of something else. */
+                white-space: nowrap; }
+  .seg button:hover:not(.on):not(:disabled) { color: var(--text-2); }
+  /* Selected, not primary.
+
+     A solid pen fill is the page's way of saying "this is the one action to
+     take here" — it is what the Add button and the Search button wear. The
+     chosen segment was wearing it too, so a settings screen read as nine
+     primary buttons, and "Gemini" — which is a statement of what is already
+     true — looked exactly like something you were being asked to press.
+     Tinted ground, pen ring, pen text: unmistakably chosen, unmistakably not
+     an instruction.
+
+     The ring is the pen itself rather than --pen-br, because the tint alone is
+     barely a shade off the track it sits in (1.1:1) — on its own it would
+     leave "which one is chosen" resting entirely on the colour of the text. */
+  .seg button.on {
+    background: var(--pen-bg); color: var(--pen); font-weight: 600;
+    box-shadow: inset 0 0 0 1px var(--pen);
+  }
+  .seg button:disabled { cursor: default; }
+
+  /* --- shell --------------------------------------------------------- */
+
+  /* No side rail. The campaigns are a page of their own now, so the only
+     permanent chrome is the top bar — which means the recap gets the whole
+     width of the window rather than whatever three picking columns left it. */
+  .app { display: flex; min-height: 100vh; }
+
+  .camp.newcamp { border-style: dashed; opacity: .78; }
+  .camp.newcamp:hover { opacity: 1; }
+  .camp.newcamp .nm { color: var(--brass); }
+  .camp.gone { border-style: dashed; cursor: default; }
+  .camp.asked { border-color: var(--brass); cursor: default; }
+  .camp.asked .nm { color: var(--brass-lit); }
+  .camp.gone .nm { color: var(--dim); text-decoration: line-through; }
+  .card.danger { border-color: var(--red); }
+  .btn.danger { border-color: var(--red); color: var(--red-lit); }
+  .btn.danger:hover { background: var(--red); color: var(--ink); }
+
+  .camp { display: block; width: 100%; text-align: left; padding: 14px; border: 0;
+          border-left: 2px solid transparent; border-radius: 8px; background: transparent;
+          cursor: pointer; transition: background .13s; }
+  .camp:hover { background: var(--hover); }
+  .camp.on { background: var(--raise); border-left-color: var(--brass); }
+  .camp .l1 { display: flex; align-items: center; gap: 10px; }
+  .camp .nm { font-size: 15px; color: var(--text-2); }
+  .camp.on .nm { color: var(--text); font-weight: 500; }
+  .camp .meta { font-family: var(--mono); font-size: 11px; color: var(--dim);
+                margin-top: 7px; line-height: 1.6; }
+  .badge { margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+           background: var(--pen); color: var(--on-pen); padding: 1px 6px; border-radius: 999px; }
+
+  /* The screens that are not a campaign, and who you are. Marks rather than
+     words because they live in the top bar next to the theme switch, and five
+     more words there would crowd out the health line. */
+  .navmark { position: relative; width: 36px; height: 31px; flex: 0 0 auto;
+             display: flex; align-items: center; justify-content: center;
+             border: 0; border-radius: 9px; background: transparent;
+             color: var(--dim); cursor: pointer;
+             transition: color .13s, background .13s; }
+  .navmark:hover { color: var(--text); background: var(--hover); }
+  .navmark.on { color: var(--pen); background: var(--raise); }
+  .navmark .n {
+    position: absolute; top: 0; right: 1px;
+    font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+  }
+  .navmark.on .n { color: var(--pen); }
+  .navmark .who {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 1px solid var(--edge); display: flex; align-items: center;
+    justify-content: center; font-family: var(--mono); font-size: 11px;
+    font-weight: 600; text-transform: uppercase; color: var(--text-2);
+  }
+  .navmark:hover .who, .navmark.on .who { border-color: var(--pen); color: var(--pen); }
+
+  .placeholder { border: 1px dashed var(--dash); border-radius: 8px;
+                 padding: 20px 16px; text-align: center; margin: 0 12px; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  .top { height: 76px; flex: 0 0 76px; border-bottom: 1px solid var(--line);
+         display: flex; align-items: center; gap: 14px; padding: 0 22px 0 26px;
+         background: var(--panel); position: sticky; top: 0; z-index: 5; }
+  .top h2 { font-family: var(--serif); font-size: 22px; font-weight: 400; }
+  .top .health { display: flex; gap: 20px; align-items: center; margin-left: 14px;
+                 font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .top .health .dot { margin-right: 7px; }
+  .top .health .down { color: var(--red-lit); }
+  .top .health .held { color: var(--brass-lit); }
+  .top .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .crumb { font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
+  .crumb-sep { color: var(--edge); }
+  /* The crumb that goes somewhere. A button rather than a span, because it is
+     the way back out of a campaign and the only one on the page. */
+  .crumb-back { border: 0; background: transparent; cursor: pointer;
+                padding: 5px 9px; margin: 0 -9px 0 -2px; border-radius: 7px;
+                transition: color .13s, background .13s; }
+  .crumb-back:hover { color: var(--text); background: var(--hover); }
+  /* The quill, always first, always home. */
+  .top .mark { flex: 0 0 auto; display: flex; align-items: center;
+               padding: 5px; margin-left: -5px; border: 0; border-radius: 8px;
+               background: transparent; cursor: pointer; transition: background .13s; }
+  .top .mark:hover { background: var(--hover); }
+
+  /* --- the degraded banner ------------------------------------------- */
+
+  /* A strip, not a screen.
+     The transcriber being unreachable is worth saying and is not worth 103px
+     of every window for as long as it lasts — its own second line is "nothing
+     is lost". Set at 21px it was also a larger heading than the campaign name
+     above it, which put the loudest type on the page on the least important
+     thing on it. On a window wide enough, the sentence and its reason sit on
+     one line and the whole bar is under 60px; narrower, the reason drops
+     underneath. */
+  .banner { background: var(--alarm-bg); border-bottom: 1px solid var(--alarm-br);
+            padding: 14px 40px; display: flex; align-items: center; gap: 22px; }
+  .banner .say { font-family: var(--display); font-size: 17.5px; color: var(--text); }
+  .banner .why { font-size: 13.5px; color: var(--text-2); margin-top: 5px; line-height: 1.55; }
+  @media (min-width: 1180px) {
+    .banner .text { display: flex; align-items: baseline; gap: 16px; }
+    .banner .why { margin-top: 0; flex: 1; }
+  }
+  .banner-more { padding: 26px 40px; border-bottom: 1px solid var(--line);
+                 display: flex; gap: 34px; align-items: flex-start; flex-wrap: wrap; }
+
+  /* --- the split ----------------------------------------------------- */
+
+  /* The mockups are fixed 1920×1080 canvases, so they clip. A real session
+     list is forty sessions and a real recap is two screens of prose, so the
+     two columns that must not move — the session list and the facts rail —
+     stick under the top bar and scroll inside themselves, and the document
+     scrolls the reading column.
+
+     --above is how much sits between the top of the window and the top of the
+     split: the top bar always, plus the degraded banner whenever it is up. It
+     has to be measured rather than assumed, because the banner is two lines on
+     a laptop and six on a phone. Getting it wrong does not look wrong — the
+     columns simply run past the bottom of the window and the page gains that
+     much scroll with nothing in it. Set by measureChrome() after every paint;
+     the fallback is the bare top bar, which is the common case. */
+  .split { flex: 1; display: flex; align-items: flex-start; }
+
+  .sessions { flex: 0 0 430px; border-right: 1px solid var(--line); background: var(--column);
+              display: flex; flex-direction: column;
+              position: sticky; top: 76px; height: calc(100vh - var(--above, 76px)); }
+  .sessions .head { padding: 20px 24px 12px; display: flex; align-items: baseline; gap: 12px; }
+  .sessions .head .hint { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .sess-list { flex: 1; overflow-y: auto; padding: 0 12px 12px;
+               display: flex; flex-direction: column; gap: 4px; }
+  .sessions .foot { padding: 16px 24px; border-top: 1px solid var(--line); }
+
+  .sess { padding: 16px 16px 15px; border-radius: 8px; background: transparent; border: 0;
+          width: 100%; text-align: left; cursor: pointer; display: block;
+          transition: background .13s; }
+  .sess:hover { background: #171B21; }
+  .sess.on { background: var(--raise); box-shadow: inset 2px 0 0 var(--brass); }
+  .sess.on.failed { box-shadow: inset 2px 0 0 var(--red); }
+  .sess .l1 { display: flex; align-items: baseline; gap: 12px; }
+  /* The session's own name, given the room to be read as one. It used to
+     share a line with the date and the state pill and came third in the
+     fight for it, which on a narrow column left "Session 12" wrapping under
+     a word of its own date. */
+  .sess .ref { font-size: 16px; letter-spacing: -.01em; color: var(--text); }
+  .sess.on .ref, .sess.needs .ref { font-weight: 500; }
+  .sess.dead .ref { color: var(--dim); }
+  .sess .when { display: block; margin-top: 7px;
+                font-family: var(--mono); font-size: 11px; letter-spacing: .03em;
+                color: var(--dim); }
+  .sess .say { font-family: var(--serif); font-size: 13.5px; color: var(--text-2);
+               margin-top: 8px; line-height: 1.6; }
+  .sess .plain { font-size: 13px; color: var(--dim); margin-top: 7px; line-height: 1.5; }
+  .sess .facets { display: flex; gap: 14px; margin-top: 9px; flex-wrap: wrap;
+                  font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+
+  .rename-pen { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+                margin-left: -6px; border: 1px solid transparent; border-radius: 6px; background: transparent;
+                color: var(--dim); cursor: pointer; }
+  .rename-pen:hover, .rename-pen:focus-visible { color: var(--text); border-color: var(--edge); }
+  .pill { margin-left: auto; font-family: var(--mono); font-size: 10.5px;
+          padding: 2px 8px; border-radius: 999px; border: 1px solid var(--edge);
+          color: var(--dim); white-space: nowrap; }
+  .pill.posted    { border-color: var(--sage-br); color: var(--sage-lit); }
+  .pill.approval  { border-color: var(--brass-br); color: var(--brass-lit); }
+  .pill.failed    { border-color: var(--red-br); color: var(--red-lit); }
+  .pill.recording { border-color: var(--red-br); color: var(--red-lit); }
+
+  /* --- the pane ------------------------------------------------------ */
+
+  .pane { flex: 1; min-width: 0; display: flex; align-items: flex-start; }
+  .pane-main { flex: 1; min-width: 0; padding: 30px clamp(22px, 3.2vw, 56px) 44px; }
+  .pane-wide { max-width: 980px; }
+
+  /* How wide a read runs.
+
+     The recap's prose was pinned at 70ch, which is the right measure on a
+     laptop and is two thirds of the screen wasted on a monitor — the pane it
+     sits in is already as wide as the window minus a column and a rail, and
+     it was refusing to use it. This grows with the window and stops at a
+     line that can still be tracked back to its own left edge. The 100% is
+     what keeps it honest on the narrow end, where the pane is smaller than
+     the floor. */
+  .measure { max-width: min(100%, clamp(58ch, 72vw, 112ch)); }
+
+  .tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--line); }
+  .tab { font-size: 14.5px; padding: 0 0 13px; background: transparent; border: 0;
+         border-bottom: 2px solid transparent; color: var(--dim); cursor: pointer; }
+  .tab:hover { color: var(--text-2); }
+  .tab.on { color: var(--text); border-bottom-color: var(--brass); font-weight: 500; }
+  /* Settings is not a fourth thing to read, so it does not stand in the row
+     of things that are. It is pushed to the far end and set in the utility
+     face, which is what everything on this page that is a control rather
+     than a reading uses. */
+  .tab.apart { margin-left: auto; font-family: var(--mono); font-size: 12.5px;
+               letter-spacing: .04em; display: inline-flex; align-items: center; gap: 8px; }
+  .tab .n { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-left: 5px; }
+
+  .display { font-family: var(--serif); font-size: 38px; font-weight: 500;
+             letter-spacing: -.4px; line-height: 1.1; }
+  .display.sm { font-size: 30px; letter-spacing: -.3px; }
+  .lede { font-family: var(--serif); font-size: 19px; line-height: 1.65;
+          margin-top: 20px; max-width: 66ch; text-wrap: pretty; }
+  .say-2 { font-size: 15.5px; color: var(--text-2); margin-top: 16px;
+           line-height: 1.65; max-width: 70ch; }
+
+  .scene { border-left: 2px solid var(--line); padding-left: 18px; margin-top: 18px; }
+  .scene h4 { font-family: var(--serif); font-size: 17px; margin-bottom: 7px; }
+  .scene p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--text-2); }
+  .numbered { max-width: 70ch; display: flex; flex-direction: column; gap: 8px; }
+  .numbered div { display: flex; gap: 12px; font-size: 14.5px; line-height: 1.6; color: var(--text-2); }
+  .numbered span.i { color: var(--brass); font-family: var(--mono); font-size: 12px; padding-top: 3px; }
+
+  /* height, not max-height. The rail carries a tinted ground, and under
+     `align-items: flex-start` a max-height alone let it shrink to its content
+     and stop in mid-air — a hard grey edge two thirds down the window, which
+     reads as a rendering fault rather than as a column. */
+  .facts { flex: 0 0 340px; border-left: 1px solid var(--line); background: var(--column);
+           padding: 34px 30px 44px; display: flex; flex-direction: column; gap: 24px;
+           position: sticky; top: 76px; height: calc(100vh - var(--above, 76px)); overflow-y: auto; }
+  /* The recap's list sections, wherever they are drawn. Both selectors, because
+     these live in the rail on a wide window and under the prose on a narrow
+     one — see recapSections(). Sized for the rail here; .recap-extras sets the
+     reading sizes over the top. */
+  .facts .who, .recap-extras .who { font-size: 14px; font-weight: 500; }
+  .facts .what, .recap-extras .what { font-size: 13px; color: var(--dim); margin-top: 2px; line-height: 1.5; }
+  .facts .plainlist, .recap-extras .plainlist { font-size: 14px; line-height: 1.7; color: var(--text-2); }
+  .facts .stack, .recap-extras .stack { display: flex; flex-direction: column; gap: 11px; }
+  .facts .stack .big, .recap-extras .stack .big { font-size: 14px; line-height: 1.55; color: var(--text); }
+  .keep { border-left: 2px solid var(--brass); padding-left: 16px; }
+  .keep .cap { color: var(--brass); }
+  .keep p { font-family: var(--serif); font-size: 14.5px; line-height: 1.6;
+            color: var(--brass-lit); margin: 10px 0 0; }
+
+  /* --- cards and step lists ------------------------------------------ */
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 20px 22px; }
+  .card.good { border-color: var(--sage-br); }
+  .card h4 { font-family: var(--serif); font-size: 19px; margin-top: 10px; font-weight: 400; }
+  .aside { flex: 0 0 330px; display: flex; flex-direction: column; gap: 18px; }
+
+  .steps { display: flex; flex-direction: column; gap: 2px; }
+  .steps > div { display: flex; align-items: center; gap: 16px; padding: 18px 20px;
+                 background: var(--card); border: 1px solid var(--line); }
+  .steps > div:first-child { border-radius: 10px 10px 0 0; }
+  .steps > div:last-child { border-radius: 0 0 10px 10px; }
+  .steps > div.now { background: #181B21; border-color: var(--edge); }
+  .steps .mark { width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%;
+                 border: 1px solid var(--edge); color: var(--dim);
+                 display: flex; align-items: center; justify-content: center;
+                 font-family: var(--mono); font-size: 12px; }
+  .steps .mark.done { background: var(--sage-br); border-color: var(--sage-br); color: var(--sage-lit); }
+  .steps .mark.live { background: var(--brass); border-color: var(--brass);
+                      animation: pulse 1.6s ease-in-out infinite; }
+  .steps .what { font-size: 15px; }
+  .steps .sub { font-family: var(--mono); font-size: 11.5px; color: var(--dim); margin-top: 3px; }
+  .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 10px; }
+  .bar > i { display: block; height: 100%; background: var(--brass); }
+
+  /* --- the roster and correction grids -------------------------------- */
+
+  .grid { width: 100%; }
+  .grid .hd, .grid .tr { display: grid; gap: 14px; align-items: center; }
+  .grid .hd { padding-bottom: 12px; border-bottom: 1px solid var(--line);
+              font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
+              text-transform: uppercase; color: var(--dim); }
+  .grid .tr { padding: 15px 0; border-bottom: 1px solid var(--rule); }
+  .grid .tr:last-child { border-bottom: 0; }
+  .grid .r { text-align: right; }
+  .roster .hd, .roster .tr { grid-template-columns: 1.4fr 1.4fr 90px 150px 190px; }
+  /* Nobody left to hear from: the consent column has nothing to say that the
+     heading has not, so the table closes up around it. */
+  .roster.settled .hd, .roster.settled .tr { grid-template-columns: 1.4fr 1.4fr 90px 150px; }
+
+  /* Two boxes and the arrow between them: the shape of the thing being
+     written, which is a substitution. Used where the grid would otherwise be
+     drawing headings over an empty table. */
+  /* The roster and the correction ledger are real tables: five columns with
+     two of them a fixed width. On a phone they cannot fit and must not widen
+     the page, so each scrolls inside itself. Nothing else on the page moves
+     sideways. */
+  @media (max-width: 820px) {
+    .grid { overflow-x: auto; }
+    .grid .hd, .grid .tr { min-width: 500px; }
+  }
+
+  .pair { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+  .pair label {
+    display: flex; flex-direction: column; gap: 7px;
+    flex: 1 1 200px; min-width: 0;
+    font-size: 12.5px; color: var(--dim);
+  }
+  .pair .in { font-size: 15px; }
+  .pair-arrow { color: var(--pen); font-size: 17px; padding-bottom: 11px; }
+  .pair .btn { flex: 0 0 auto; }
+  @media (max-width: 720px) {
+    .pair-arrow { display: none; }
+  }
+  .corr .hd, .corr .tr { grid-template-columns: 1fr 1fr 130px 100px; }
+  .sheet-link { display: flex; align-items: baseline; gap: 10px; margin: 14px 14px 0;
+                padding: 10px 12px; border-radius: 7px; border: 1px solid var(--line-2);
+                color: var(--text); text-decoration: none; font-size: 14px; }
+  .sheet-link:hover { background: var(--raise); }
+  .sheet-link .quiet { margin-left: auto; font-size: 12px; }
+  .set-row { display: flex; justify-content: space-between; align-items: center; gap: 20px;
+             padding: 16px 0; border-bottom: 1px solid var(--rule); }
+  .set-row .what { font-size: 15px; }
+  .set-row .sub { font-size: 13px; color: var(--dim); margin-top: 3px; }
+  /* .in is full-width for the forms it was written for; in a settings row the
+     right-hand cell shrinks to its content, so the width has to be stated. */
+  .set-row select.chan { width: auto; min-width: 230px; max-width: 320px; }
+  .set-row select.heir { width: auto; min-width: 210px; max-width: 300px; }
+
+  .share { display: inline-flex; align-items: center; gap: 10px; justify-content: flex-end; }
+  .share i { width: 62px; height: 5px; border-radius: 3px; background: var(--line);
+             display: block; overflow: hidden; }
+  .share i b { display: block; height: 100%; background: var(--brass); }
+  .share i.quiet b { background: var(--edge); }
+  .unset { color: var(--dim); font-style: italic; }
+  .agreed { color: var(--sage-lit); } .waiting { color: var(--amber); }
+  .never { color: var(--amber); } .declined { color: var(--red-lit); }
+  .as-val { font-family: var(--mono); font-size: 11.5px; }
+  /* The state on its line, the caveat under it. Right-aligned with the rest of
+     the column, and the state never wraps — it is one word. */
+  .as-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .as-stack .as-val { white-space: nowrap; }
+  .as-note { font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+             line-height: 1.4; text-align: right; }
+
+  .charbtn { background: transparent; border: 0; border-bottom: 1px dotted transparent;
+             padding: 0; text-align: left; cursor: pointer; font-size: 14.5px; }
+  .charbtn:hover { border-bottom-color: var(--edge); }
+
+  /* --- the transcript reader ------------------------------------------ */
+
+  /* How the transcript was made, under the facts about the session it is a
+     fact about. Quiet by default; `rough` is the state that has something to
+     warn about, and it borrows the brass the page already uses for "held" and
+     "paused" rather than the red it uses for "broken" — approximate line
+     breaks are a property of a working transcript, not a failure of one. */
+  .made { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule);
+          font-size: 12px; color: var(--dim); }
+  .made .mono { font-family: var(--mono); font-size: 11.5px; letter-spacing: .02em; }
+  .made.rough .mono { color: var(--brass-lit); }
+  .made .why { margin-top: 7px; font-family: var(--sans); font-size: 12.5px;
+               line-height: 1.55; color: var(--text-2); }
+
+  .tr-bar { padding: 20px 36px; border-bottom: 1px solid var(--rule);
+            display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+            position: sticky; top: 76px; z-index: 3; background: var(--ink); }
+  .chip { font-family: var(--mono); font-size: 11.5px; padding: 5px 11px; border-radius: 999px;
+          border: 1px solid var(--line-2); background: transparent; color: var(--dim); cursor: pointer; }
+  .chip.on { background: var(--raise); border-color: var(--edge); color: var(--text); }
+  .lines { flex: 1; padding: 8px 36px 40px; }
+  .line { display: grid; grid-template-columns: 82px 148px 1fr; gap: 20px;
+          padding: 11px 0; align-items: baseline; }
+  .line:nth-child(even) { background: var(--column); }
+  .line .t { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .line .who { font-size: 14px; color: var(--text-2); }
+  /* Whose account owns the campaign — a fact, not a claim about who is DMing. */
+  .line .who.owner { color: var(--brass); }
+  /* --- the twenty-four voices -------------------------------------------
+
+     A speaker picks a colour and their name is written in it, here and only
+     here: the transcript is the one screen where knowing who is talking at a
+     glance is the whole job.
+
+     Every colour is two values. The same name has to read on the dark table
+     and on paper, and a colour tuned for one ground is illegible on the
+     other. light-dark() chooses between them from the `color-scheme` that
+     each theme block above already declares — which is why this is 24 rules
+     instead of 72, one set for the dark default, one for [data-theme=light],
+     one for the media query. The plain value in front of each is the
+     fallback for a browser without light-dark(), and it is the DARK one,
+     because dark is this page’s default theme.
+
+     The forty-eight values were measured rather than picked: each clears
+     4.5:1 as text on the lightest surface its own theme ever puts text on.
+     They are generated from pi-service/src/web/palette.js, and
+     test/palette.test.js reads both files and fails if they drift. */
+  .v-red-deep         { --voice: #F55B57; --voice: light-dark(#940014, #F55B57); }
+  .v-red-bright       { --voice: #FF8A82; --voice: light-dark(#C92F33, #FF8A82); }
+  .v-copper-deep      { --voice: #DA7431; --voice: light-dark(#7B3600, #DA7431); }
+  .v-copper-bright    { --voice: #FC9252; --voice: light-dark(#B25200, #FC9252); }
+  .v-bronze-deep      { --voice: #A28C75; --voice: light-dark(#5D4934, #A28C75); }
+  .v-bronze-bright    { --voice: #C3AD95; --voice: light-dark(#7F6A55, #C3AD95); }
+  .v-brass-deep       { --voice: #AD8B2F; --voice: light-dark(#614A00, #AD8B2F); }
+  .v-brass-bright     { --voice: #D0AD54; --voice: light-dark(#896900, #D0AD54); }
+  .v-gold-deep        { --voice: #979300; --voice: light-dark(#525000, #979300); }
+  .v-gold-bright      { --voice: #BCB800; --voice: light-dark(#737000, #BCB800); }
+  .v-green-deep       { --voice: #34A357; --voice: light-dark(#005E28, #34A357); }
+  .v-green-bright     { --voice: #61CB7C; --voice: light-dark(#007F38, #61CB7C); }
+  .v-ocean-deep       { --voice: #00A09D; --voice: light-dark(#005957, #00A09D); }
+  .v-ocean-bright     { --voice: #48C7C3; --voice: light-dark(#007A77, #48C7C3); }
+  .v-blue-deep        { --voice: #4F8EF7; --voice: light-dark(#0145A7, #4F8EF7); }
+  .v-blue-bright      { --voice: #82B2FF; --voice: light-dark(#2D6AD0, #82B2FF); }
+  .v-eldritch-deep    { --voice: #BD72D4; --voice: light-dark(#6F2584, #BD72D4); }
+  .v-eldritch-bright  { --voice: #DB8EF2; --voice: light-dark(#974DAD, #DB8EF2); }
+  .v-black-deep       { --voice: #7D9675; --voice: light-dark(#3E5437, #7D9675); }
+  .v-black-bright     { --voice: #A0BA98; --voice: light-dark(#5D7455, #A0BA98); }
+  .v-silver-deep      { --voice: #8D8F95; --voice: light-dark(#4B4D53, #8D8F95); }
+  .v-silver-bright    { --voice: #AEB1B8; --voice: light-dark(#6B6D74, #AEB1B8); }
+  .v-white-deep       { --voice: #4F98BB; --voice: light-dark(#005474, #4F98BB); }
+  .v-white-bright     { --voice: #73BBE1; --voice: light-dark(#2A7597, #73BBE1); }
+
+  /* A voice is carried as a custom property and spent here, rather than each
+     .v-* rule setting `color` itself. Two reasons: the owner marker above is
+     more specific than a bare class and would win over somebody’s own
+     choice, and a swatch wants the same colour as a BACKGROUND. One property,
+     three uses, and the cascade stays legible. */
+  .line .who.voiced { color: var(--voice, var(--text-2)); }
+  .facts .voiced { color: var(--voice, var(--text-2)); }
+  .chip.voiced.on { color: var(--voice, var(--text)); }
+  .chip.voiced { border-color: var(--voice, var(--line-2)); }
+
+  /* The swatch: the colour as a thing rather than as writing. A dashed ring
+     where nobody has chosen, so an unset voice looks unset instead of grey.
+
+     NOT `.dot` — that is the 7px status light above, used in the top bar, the
+     banner and every health row. A second rule of the same name further down
+     this sheet wins on source order and silently blows all of them up.
+
+     flex: 0 0 auto because these sit in flex rows and a swatch is a circle or
+     it is nothing — without it the row squeezes each one into a bar. */
+  .voice-dot { width: 22px; height: 22px; flex: 0 0 auto; border-radius: 999px;
+               padding: 0; overflow: hidden; border: 1px solid var(--line-2);
+               background: transparent; display: inline-block; }
+  .voice-dot.unset { border-style: dashed; border-color: var(--dash); }
+  .voice-dot.pick { cursor: pointer; }
+  .voice-dot.pick:hover { border-color: var(--edge); }
+  .voice-dot.on { box-shadow: 0 0 0 2px var(--card), 0 0 0 3px var(--voice, var(--edge)); }
+  .voice-dot.big { width: 30px; height: 30px; }
+  /* Beside your own name in the transcript legend, which is the one place a
+     colour can be chosen. Small enough to sit in a line of 13.5px type. */
+  .voice-dot.tiny { width: 12px; height: 12px; }
+  /* The same choice on the account panel, which is the one place every signed-in
+     person can reach — see myInkRow(). */
+  .sheet-ink { display: flex; align-items: center; gap: 9px; width: 100%;
+               font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+               background: transparent; border: 1px solid var(--line); border-radius: 7px;
+               padding: 8px 10px; margin-bottom: 10px; color: var(--text-2);
+               transition: border-color .13s, color .13s; }
+  .sheet-ink:hover { border-color: var(--edge); color: var(--text); }
+  .sheet-ink .what { color: var(--voice, var(--text-2)); }
+  .sheet-ink .quiet { margin-left: auto; font-size: 11px; }
+  /* Already somebody else’s at this table. Dimmed, not disabled: two people
+     CAN share brass if they want to, but nobody should arrive there by
+     accident. */
+  .voice-dot.taken .swatch { opacity: .4; }
+  .swatch { display: block; width: 100%; height: 100%; border-radius: inherit;
+            background: var(--voice, transparent); }
+
+  /* Twelve families down, two shades across — a grid rather than a list,
+     because 24 swatches in a row is a thing to scroll and 12 named rows is
+     a thing to read. */
+  /* Down the first column and then the second, rather than across: the twelve
+     families are in hue order, and reading them left-to-right would shuffle a
+     colour wheel into pairs. */
+  .voices { display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-flow: column;
+            grid-template-rows: repeat(6, auto); gap: 8px 26px; margin-top: 20px; }
+  .voice-row { display: flex; align-items: center; gap: 12px; padding: 5px 0; }
+  .voice-row .fam { font-size: 13.5px; color: var(--text-2); flex: 1; }
+  .voice-row .taken { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+  @media (max-width: 620px) { .voices { grid-template-columns: 1fr; grid-auto-flow: row;
+                                       grid-template-rows: none; } }
+
+  /* Your own name in the transcript legend, which is also the way in to the
+     picker from the screen the colours are actually for. Dashed underline
+     rather than a button, because it is a name first. */
+  .voice-pick { font: inherit; font-size: 13.5px; width: 104px; text-align: left;
+                display: flex; align-items: center; gap: 7px;
+                padding: 0 0 1px; background: none; border: 0; cursor: pointer;
+                border-bottom: 1px dashed var(--dash); color: var(--text-2); }
+  .voice-pick:hover { border-bottom-color: var(--edge); }
+  .line .said { font-size: 15px; line-height: 1.6; color: var(--text); }
+  .line mark { background: transparent; color: var(--brass-lit); border-bottom: 1px dotted var(--brass); }
+
+  /* --- the import dialog ---------------------------------------------- */
+
+  .backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 20;
+              display: grid; place-items: center; padding: 24px; }
+  .dialog { width: min(720px, 100%); max-height: 90vh; overflow-y: auto;
+            background: var(--card); border: 1px solid var(--edge); border-radius: 14px;
+            box-shadow: 0 40px 90px var(--shadow-hard); padding: 34px 38px; }
+  .dialog h1 { font-family: var(--serif); font-size: 31px; font-weight: 500;
+               margin: 12px 0 0; letter-spacing: -.3px; }
+  .dialog .foot { display: flex; align-items: center; gap: 10px; margin-top: 28px;
+                  padding-top: 22px; border-top: 1px solid var(--line); }
+  .field { margin-top: 18px; }
+  .field > label { display: block; font-size: 12.5px; color: var(--dim); margin-bottom: 7px; }
+  .warnbox { border-left: 2px solid var(--amber); padding: 2px 0 2px 16px; margin-top: 18px;
+             font-size: 13.5px; color: var(--brass-lit); line-height: 1.6; }
+
+  /* --- odds and ends --------------------------------------------------- */
+
+  .empty { display: flex; flex-direction: column; justify-content: center;
+           align-items: flex-start; gap: 14px; padding: 0 24px; flex: 1; }
+  .empty .say { font-family: var(--serif); font-size: 20px; color: var(--text-2); line-height: 1.35; }
+  .center { padding: 72px 60px; max-width: 820px; }
+  .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+           max-width: 680px; padding: 12px 18px; border-radius: 9px;
+           background: var(--card); border: 1px solid var(--edge);
+           box-shadow: 0 10px 34px var(--shadow-hard); font-size: 13.5px; z-index: 40;
+           opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .toast.good { border-color: var(--sage-br); }
+  .toast.bad { border-color: var(--red-br); color: var(--red-lit); }
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--raise);
+         border-radius: 4px; padding: 1px 6px; }
+  body.stale .main { opacity: .55; transition: opacity .3s; }
+
+  /* Narrow screens: the columns stack rather than shrink to unreadable.
+     A phone is a real way this gets opened — to approve a summary from the
+     sofa — and the session list is the part that matters there. */
+  /* Superseded below — the width this rail needs depends on whether the
+     campaign leaf is turned away. Left here so the rule it replaces is
+     obvious to anyone reading top to bottom. */
+  @media (max-width: 1180px) {
+    .facts { display: none; }
+    .split { flex-direction: column; }
+    .sessions { flex: none; width: 100%; border-right: 0;
+                border-bottom: 1px solid var(--line);
+                position: static; height: auto; }
+    .sess-list { max-height: 42vh; }
+    .pane { width: 100%; }
+    .pane-main { padding: 26px 24px 40px; }
+    .tr-bar { position: static; }
+  }
+  /* The band between a phone and a laptop — a window docked to half a
+     screen, which is where a DM reads a write-up beside Discord, so it is not
+     a rare width. The bar needs 1018px at its narrowest: the campaign name,
+     two health readings, two pause buttons, the theme switch and the account
+     marks. Below 820 it wrapped and was fine; above 1024 it fits; in between
+     it pushed the whole page sideways.
+
+     The bar takes a second row here, and nothing gives way. That is the
+     decision, and it was between three things: hide the health readings,
+     shorten the pause buttons, or wrap. Wrapping is the only one of those
+     that costs no information — and it is not a new behaviour to reason
+     about, it is the behaviour the same bar already has on a phone, started
+     200px earlier.
+
+     Both halves matter and the first attempt at this shipped only one. A
+     wrap rule on its own puts a second row inside a bar still pinned to
+     `flex: 0 0 76px`, and the pause buttons come out sliced along the top.
+     The height has to be released in the same breath. */
+  @media (max-width: 1023px) {
+    .top { height: auto; flex: none; flex-wrap: wrap; padding: 13px 22px 13px 26px; }
+    /* Off the right-hand edge and onto the left one. `margin-left: auto` is
+       what pins the controls to the far end of a single row; left where it
+       is, the second row would hang off the right of the page with the
+       quill above nothing. */
+    .top .right { margin-left: 0; flex-wrap: wrap; }
+    .theme { margin-left: 0; }
+  }
+  @media (max-width: 820px) {
+    .app { flex-direction: column; }
+    .top { padding: 14px 18px; gap: 14px; }
+    .banner, .banner-more { padding: 18px 20px; }
+    /* The banner is a row of dot, sentence and buttons, and on a phone the
+       buttons were keeping their full width and squeezing the sentence into a
+       six-line column one word wide. Wrapped, the sentence takes the width and
+       the buttons drop under it; the dot goes to the top of the text rather
+       than floating in the middle of a stack it is no longer beside. */
+    .banner { flex-wrap: wrap; align-items: flex-start; gap: 14px; }
+    .banner .text { flex-basis: 100%; }
+    .banner .dot { margin-top: 7px; }
+    .banner .say { font-size: 18px; }
+    .lines, .tr-bar { padding-inline: 18px; }
+    .line { grid-template-columns: 64px 1fr; }
+    .line .said { grid-column: 1 / -1; }
+  }
+
+  /* ======================================================================
+     The campaigns page
+     ======================================================================
+     The front door. Every campaign this viewer sits at, on a page of its own,
+     and picking one carries you into it.
+
+     What this replaces: a 268px rail of campaign rows that slid off to the
+     left the moment you picked one. It went away on its own — the picker
+     disappeared at the exact moment you had proved you were using it — and
+     because the page auto-opened a campaign at boot, most visits never saw
+     the list at all. Squeezing the list into a narrow column was the wrong
+     answer twice over: a list you consult between games does not want to live
+     beside the recap you read during them. So it moved out and got a page.
+
+     Each campaign is an entry in a ledger rather than a card in a grid. The
+     tally at the head of an entry is the one real invention here: one stroke
+     per session, so a campaign's weight is legible before you have read a
+     word of it — twenty-two strokes is a chronicle, one stroke is a one-shot.
+     Solid strokes are nights already written up, pen-coloured strokes are the
+     ones waiting on you, hollow ones are still with the transcriber. It is
+     the count, the progress bar and the to-do list in the same mark, and it
+     is what a scribe keeping a ledger would actually draw.  */
+
+  .index { max-width: 1080px; margin: 0 auto; padding: 54px 40px 80px; }
+
+  .index-head { margin-bottom: 12px; }
+  .index-head h1 {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 38px; font-weight: 400; line-height: 1.14; letter-spacing: -.015em;
+    margin-top: 15px; max-width: 30ch;
+  }
+  /* The remark is an aside, so it is said in the quieter colour and on its own
+     line. The count is the fact; the rest is the page muttering. Breaking it
+     deliberately rather than letting the measure decide means the fact is
+     always the first thing read, whatever length of remark follows it. */
+  .index-head h1 .aside { display: block; color: var(--dim); }
+  .index-now {
+    margin-top: 16px; display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: .03em;
+    color: var(--text-2);
+  }
+
+  .chrons { margin-top: 30px; border-top: 1px solid var(--rule); }
+
+  /* One entry. A button rather than a link because there is no URL behind it;
+     the whole band is the target, so there is no small thing to hit. */
+  .chron {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: transparent; border: 0; border-bottom: 1px solid var(--rule);
+    padding: 26px 20px 28px; margin: 0;
+    transition: background .15s;
+  }
+  .chron:hover { background: var(--hover); }
+  .chron-top {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 9px 18px;
+    min-height: 15px;
+  }
+  .chron-name {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 30px; font-weight: 400; line-height: 1.15; letter-spacing: -.012em;
+    color: var(--text); margin-top: 13px;
+    transition: transform .18s cubic-bezier(.22,.72,.2,1);
+  }
+  /* The entry leans toward the door it opens. Cheaper than an arrow, and it
+     does not need a legend. */
+  .chron:hover .chron-name { transform: translateX(7px); }
+
+  .chron-lines {
+    display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 11px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em;
+    color: var(--dim);
+  }
+  .chron-lines b { font-weight: 500; color: var(--text-2); }
+  .chron-where { color: var(--dim); }
+
+  /* The tally. Strokes are drawn as flex children rather than a repeating
+     background so each one can carry its own state. */
+  .tally { display: flex; align-items: center; gap: 9px; height: 13px; }
+  /* Grouped in fives, as a tally is. Ungrouped, twenty-two strokes is a
+     barcode — a texture rather than a number. Grouped, it can be counted at a
+     glance and it looks like something somebody kept by hand. */
+  .tally .grp { display: flex; align-items: stretch; gap: 3px; height: 100%; }
+  .tally i {
+    display: block; width: 2px; border-radius: 1px;
+    background: var(--line-2);
+  }
+  /* The bulk of a tally is nights already written up, so they are the calm
+     part; two strokes of pen have to win against twenty of them, and at 2px
+     colour alone does not do it. The waiting strokes are wider as well. */
+  .tally i.done { background: var(--dim); }
+  .tally i.wait { width: 3px; background: var(--pen); }
+  .tally .rest {
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+    margin-left: 5px; align-self: center;
+  }
+
+  /* What is true about this table right now, said once, at the top of the
+     entry. Only ever one of them: a campaign being recorded is not also
+     waiting on you, and neither is worth saying twice. */
+  .chron-state {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: .13em; text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .chron-state.live { color: var(--red-lit); }
+  .chron-state.wait { color: var(--pen); }
+  .chron-when { margin-left: auto; font-family: var(--mono); font-size: 11px;
+                color: var(--dim); letter-spacing: .03em; }
+
+  /* The doors that are only there sometimes: starting one, and the ones you
+     deleted or asked to have back. Under the ledger, not in it. */
+  .index-more { margin-top: 40px; display: grid; gap: 14px;
+                grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); }
+  .index-more .camp { border: 1px solid var(--line); }
+
+  /* Every change of screen: the page comes up from under rather than cutting
+     in. One quiet move, the same in both directions — an earlier draft flew
+     the campaign's name from the ledger entry up into the header, which was a
+     great deal of choreography to spend on a click somebody makes forty times
+     a week. */
+  @keyframes arrive { from { opacity: 0; transform: translateY(10px); } }
+  .arriving { animation: arrive .34s cubic-bezier(.22,.72,.2,1); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chron-name { transition: none; }
+    .arriving { animation-duration: .01ms; }
+  }
+
+  @media (max-width: 820px) {
+    .index { padding: 30px 20px 60px; }
+    .index-head h1 { font-size: 28px; }
+    .chron { padding: 20px 4px 22px; }
+    .chron-name { font-size: 24px; }
+    /* Three things do not fit across a phone. The date drops to its own line
+       so the tally and the state can keep theirs. */
+    .chron-when { margin-left: 0; width: 100%; }
+    .chron-state { white-space: nowrap; }
+  }
+
+  /* ----------------------------------------------------------------------
+     The desk — the front door, and the answer before the question.
+
+     What was here was a grid of equal squares, each headed with a count:
+     "Three servers", "Four tables". Two faults, which were the same fault
+     twice. The NUMBER took the display face and the PLACE went unnamed, so
+     the page could not be scanned — you read six squares to learn what four
+     of them were. And equal squares claim every door matters equally, which
+     on this product is never true: on any given evening one thing is urgent
+     and the rest is furniture.
+
+     So the page is a day book's opening instead. Its date, what Quill has to
+     report, the running total the book has reached — and then the book's own
+     index.
+
+     Tonight gets full-width bands, and only when there is a tonight: a live
+     recording, or nights recorded and not yet written up. Everything else is
+     the index below: the name in the display face at the left margin, a
+     leader ruled across to a figure column at the right, the way a contents
+     page carries the eye to a page number. The figure is where a number
+     belongs. The name is where the name belongs.  */
+
+  .desk { max-width: 1080px; margin: 0 auto; padding: 54px 40px 96px; }
+
+  /* The head of the page: the date, the report, the running total. */
+  .desk-day {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  /* Quill, speaking. The one line on this screen that is a voice rather than
+     a label, and it is set apart from the labels by weight and width rather
+     than by another typeface. Set exactly as .gate h1 is — same clamp, same
+     weight, same tracking — because the landing page's hero and this one are
+     the same object seen from either side of the door.
+
+     It is NOT weight 300, and it carries no 'opsz' of its own. Both were
+     tried, and both made Fraunces render as a lighter, higher-contrast cut
+     sitting directly above four headings in the ordinary one; at this size
+     that reads as a second typeface rather than as emphasis. Everything in
+     this product that is set in the display face is 400 with 'SOFT' 0 and
+     'WONK' 1 and nothing else. */
+  .desk-say {
+    font-family: var(--display);
+    font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: clamp(30px, 5vw, 42px); font-weight: 400;
+    line-height: 1.06; letter-spacing: -.022em;
+    margin-top: 15px; max-width: 19ch; color: var(--text);
+    /* The verdict is two sentences as often as it is one, and left to itself
+       the second line came out a stub — "Nothing to listen to. Go on," then
+       "then." on a line of its own, 76px under 415. Balancing evens the two
+       without touching the ragged right. Ignored by browsers that do not have
+       it, which get the ordinary greedy break back. */
+    text-wrap: balance;
+  }
+  .desk-sum {
+    margin-top: 17px; font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: .05em; color: var(--dim);
+  }
+
+  /* ---- Tonight ----------------------------------------------------------
+     Full width, because there is at most one of each and they are the only
+     things on this page that will not still be true tomorrow. The coloured
+     edge is the whole of their decoration: red is live, the highlighter is
+     something Quill kept that needs a hand, and those two meanings are the
+     only ones either colour carries anywhere in this product. */
+  .band {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end; gap: 16px 30px;
+    width: 100%; text-align: left; color: inherit; text-decoration: none;
+    margin-top: 18px; padding: 19px 22px 20px;
+    background: var(--card);
+    border: 1px solid var(--line); border-left: 3px solid var(--edge);
+    cursor: pointer; transition: background .16s, border-color .16s;
+  }
+  .band:hover { background: var(--hover); }
+  .band:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; }
+  .band.live { border-left-color: var(--red); }
+  /* The highlighter, in the version of itself that survives a pale ground:
+     #E1EC97 on light stock is a wash rather than a mark. The edge, the label
+     and the figure are then all one colour, which is the point of it. */
+  .band.wait { border-left-color: var(--mark-cap); }
+  .band-main, .band-end { display: block; min-width: 0; }
+  .band-end { text-align: right; }
+
+  .band-mark {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+  }
+  .band.live .band-mark { color: var(--red-lit); }
+  .band.wait .band-mark { color: var(--mark-cap); }
+
+  .band-name {
+    display: block; margin-top: 9px;
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 30px; font-weight: 400; line-height: 1.1; letter-spacing: -.016em;
+    color: var(--text); overflow-wrap: anywhere;
+  }
+  .band-say {
+    display: block; margin-top: 9px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em;
+    line-height: 1.5; color: var(--dim);
+  }
+
+  /* The figure, and what the band does. On the live band the figure is a
+     clock that is actually running: the one thing on this screen that moves,
+     and the only one with a reason to. */
+  .band-fig {
+    display: block; font-family: var(--mono);
+    font-size: 27px; font-weight: 500; line-height: 1; letter-spacing: -.01em;
+    font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap;
+  }
+  .band.live .band-fig { color: var(--red-lit); }
+  .band.wait .band-fig { color: var(--mark-cap); }
+  .band-go {
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    margin-top: 10px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+    color: var(--pen); white-space: nowrap;
+  }
+  .band-go svg { transition: transform .2s cubic-bezier(.22,.72,.2,1); }
+  .band:hover .band-go svg { transform: translateX(4px); }
+
+  /* ---- The index --------------------------------------------------------
+     A contents page, not a table. No rules between the rows: the leader does
+     that job, and two lines doing one job is one line too many. One hairline
+     above and below to bracket the block as a single thing. */
+  .index-rank {
+    margin-top: 44px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .door {
+    display: grid;
+    grid-template-columns: auto minmax(20px, 1fr) 12ch 22px;
+    grid-template-rows: auto auto;
+    align-items: baseline; gap: 0 14px;
+    width: 100%; padding: 19px 12px 20px; margin: 0;
+    text-align: left; color: inherit; text-decoration: none;
+    background: transparent; border: 0;
+    cursor: pointer; transition: background .16s;
+  }
+  .door:hover { background: var(--hover); }
+  .door:focus-visible { outline: 2px solid var(--pen); outline-offset: -2px; }
+
+  .door-name {
+    grid-column: 1; grid-row: 1;
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 26px; font-weight: 400; line-height: 1.1; letter-spacing: -.014em;
+    color: var(--text);
+  }
+  /* The leader. Ruled from the name across to its figure. Under the cursor it
+     is drawn in the pen, which is the page saying which line you are on
+     without moving anything. */
+  .door-lead {
+    grid-column: 2; grid-row: 1; align-self: end;
+    height: 0; margin-bottom: 7px;
+    border-bottom: 1px dotted var(--edge);
+    transition: border-color .18s;
+  }
+  .door:hover .door-lead, .door:focus-visible .door-lead { border-bottom-color: var(--pen); }
+  .door-fig {
+    grid-column: 3; grid-row: 1; text-align: right;
+    font-family: var(--mono); font-size: 13px; font-weight: 500;
+    letter-spacing: .03em; font-variant-numeric: tabular-nums;
+    color: var(--text-2); white-space: nowrap;
+  }
+  .door-arw {
+    grid-column: 4; grid-row: 1; justify-self: end; color: var(--dim);
+    transition: transform .2s cubic-bezier(.22,.72,.2,1), color .18s;
+  }
+  .door:hover .door-arw, .door:focus-visible .door-arw { color: var(--pen); transform: translateX(4px); }
+  .door-say {
+    grid-column: 1 / -1; grid-row: 2; margin-top: 6px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em;
+    line-height: 1.5; color: var(--dim);
+  }
+
+  /* ---- Where you were ---------------------------------------------------
+     The old sheet spent a whole square on this, the same size as the servers
+     page. It is worth a line: the ledger it links into is one row above it,
+     and this is only the shortcut. */
+  .desk-back {
+    margin-top: 30px; padding: 0 12px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 11px 20px;
+  }
+  .desk-back-cap {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+  }
+  .backlink {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 17px; font-weight: 400; line-height: 1.3; color: var(--text-2);
+    letter-spacing: -.005em;
+    background: transparent; border: 0; padding: 0; cursor: pointer;
+    display: inline-flex; align-items: baseline; gap: 8px;
+    transition: color .16s;
+  }
+  .backlink .nm {
+    border-bottom: 1px solid var(--line-2);
+    padding-bottom: 2px; transition: border-color .16s;
+  }
+  .backlink .when {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; color: var(--dim);
+  }
+  .backlink:hover { color: var(--text); }
+  .backlink:hover .nm { border-bottom-color: var(--pen); }
+  .backlink:focus-visible { outline: 2px solid var(--pen); outline-offset: 3px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .door-arw, .door-lead, .band-go svg { transition: none; }
+    .door:hover .door-arw, .door:focus-visible .door-arw,
+    .band:hover .band-go svg { transform: none; }
+  }
+
+  @media (max-width: 900px) {
+    .desk { padding: 32px 20px 68px; }
+    .desk-say { max-width: 22ch; }
+    .band { grid-template-columns: minmax(0, 1fr); padding: 17px 17px 18px; }
+    .band-name { font-size: 24px; }
+    .band-end { text-align: left; }
+    .band-fig { font-size: 25px; }
+    .band-go { justify-content: flex-start; margin-top: 9px; }
+    .door { padding: 18px 8px 19px; }
+    .door-name { font-size: 22px; }
+    .door-lead { margin-bottom: 6px; }
+  }
+  @media (max-width: 560px) {
+    /* A leader needs a run to be a leader. Below this the figure drops under
+       the name and the row is two lines and an arrow. */
+    .door { grid-template-columns: minmax(0, 1fr) 22px; grid-template-rows: auto auto auto; }
+    .door-lead { display: none; }
+    .door-arw { grid-column: 2; grid-row: 1; }
+    .door-fig { grid-column: 1; grid-row: 2; text-align: left; margin-top: 8px; }
+    .door-say { grid-column: 1 / -1; grid-row: 3; }
+  }
+
+  /* ----------------------------------------------------------------------
+     A wikilink in the prose.
+
+     Every name a write-up has ever introduced is a place on this page, so a
+     recap that names one should be a way of getting there. The name keeps
+     the colour of the sentence it sits in and takes the pen underneath it,
+     dotted — the mark somebody reading with a pen in their hand makes
+     against a name they mean to look up. Under the cursor the highlighter
+     washes it, which is the one other colour this product owns and the one
+     it uses for anything Quill kept.
+
+     No brackets are printed. They are how the link is written, not how it is
+     read, and two of them either side of every proper noun would make the
+     recap harder to read than the thing it replaced.  */
+  .wiki {
+    font: inherit; color: inherit; background: transparent; padding: 0;
+    border: 0; border-bottom: 1px dotted var(--pen);
+    cursor: pointer; border-radius: 2px;
+    transition: background .12s, color .12s;
+  }
+  .wiki:hover, .wiki:focus-visible {
+    background: var(--mark); color: var(--mark-ink);
+    border-bottom-color: transparent; outline: none;
+  }
+  .wiki:focus-visible { box-shadow: 0 0 0 2px var(--pen); }
+
+  /* ----------------------------------------------------------------------
+     The item ledger — one list, every item the campaign has come away with.
+
+     An item is a line in a list, not a page. There is never more to say
+     about one than the sentence the summariser wrote when it was found, so a
+     page per item was a click that led to the same sentence in a larger
+     font.  */
+  .ledger { border-top: 1px solid var(--rule); margin-top: 26px; }
+  .ledger-night {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 22px 0 8px; border-bottom: 1px solid var(--rule);
+    scroll-margin-top: calc(var(--above, 76px) + 16px);
+  }
+  .ledger-night .n {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--text-2);
+  }
+  .ledger-night .d { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .ledger-night .btn { margin-left: auto; }
+  .ledger-row {
+    display: flex; align-items: baseline; gap: 16px;
+    padding: 13px 0 13px 2px; border-bottom: 1px solid var(--rule);
+  }
+  .ledger-row .thing {
+    font-family: var(--serif); font-size: 15.5px; line-height: 1.6; color: var(--text-2);
+  }
+  /* Jumped to from the column. The wash says which night you landed on and
+     then gets out of the way, because a permanent highlight would still be
+     there next time and would be answering a question nobody asked. */
+  .ledger-night.flash { animation: found 1.4s ease-out; }
+  @keyframes found {
+    from { background: var(--mark); color: var(--mark-ink); }
+    to   { background: transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) { .ledger-night.flash { animation: none; } }
+
+  /* ----------------------------------------------------------------------
+     The account panel, hung off the mark at the end of the top bar. The one
+     thing from the old rail's foot that is neither a screen nor a campaign,
+     so it is neither a page nor a row.  */
+  .sheet {
+    position: fixed; top: 68px; right: 16px; width: 280px;
+    background: var(--panel); border: 1px solid var(--line-2);
+    border-radius: 12px; box-shadow: 0 18px 48px var(--shadow-hard);
+    padding: 16px 12px 14px; z-index: 40;
+    max-height: calc(100vh - 84px); overflow-y: auto;
+    animation: sheet-in .16s cubic-bezier(.22,.72,.2,1);
+  }
+  @keyframes sheet-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .sheet > .cap { padding: 0 14px 10px; }
+  .sheet-foot {
+    margin-top: 12px; padding: 13px 14px 2px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; color: var(--dim); line-height: 1.7;
+  }
+  .sheet-scrim { position: fixed; inset: 0; z-index: 30; }
+  @media (prefers-reduced-motion: reduce) { .sheet { animation-duration: .01ms; } }
+  /* ======================================================================
+     Room to read
+     ======================================================================
+     Everything below is spacing. The panels were tuned against a fixed
+     1920x1080 mockup and had been squeezed ever since; these are the numbers
+     for a real window with no side rail taking a bite out of it.  */
+
+  body { font: 400 15.5px/1.55 var(--sans); }
+
+  /* Fraunces sets every heading. SOFT 0 / WONK 1 is the landing page's
+     setting — the wonky leg on the g and the flatter terminals are what make
+     it read as lettering rather than as a system serif. */
+  .display, .top h2, .card h4, .dialog h1,
+  .scene h4, .banner .say, .empty .say, .keep p {
+    font-family: var(--display);
+    font-variation-settings: 'SOFT' 0, 'WONK' 1;
+  }
+  .display { font-size: 40px; font-weight: 400; letter-spacing: -.015em; line-height: 1.06; }
+  .display.sm { font-size: 29px; }
+  .top h2 { font-size: 23px; }
+
+  /* Buttons and labels go to the mono, as they do on the landing page. It is
+     the face the whole product uses for anything mechanical. */
+  .btn, .seg button, .tab { font-family: var(--mono); }
+  .btn { font-size: 12.5px; letter-spacing: .01em; padding: 8px 15px; }
+  .btn.sm { font-size: 11.5px; padding: 6px 12px; }
+  .btn.big { font-size: 13px; padding: 11px 21px; }
+  .tab { font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase; padding-bottom: 14px; }
+  .tab .n { margin-left: 7px; }
+
+  /* The reading column. Wider gutters, and a measure that stops short of the
+     facts rail instead of running under it. */
+  .pane-main { padding: 42px 56px 76px; }
+  .pane-wide { max-width: 1020px; }
+  .lede { font-size: 20px; line-height: 1.62; margin-top: 22px; max-width: 62ch; }
+  .say-2 { font-size: 16px; line-height: 1.68; max-width: 66ch; }
+
+  /* Scenes were a stack of paragraphs 18px apart with a hairline down the
+     side, which is why the recap read as one block. They are beats of an
+     evening, so they get the space of beats. */
+  .scene { margin-top: 30px; padding-left: 22px; border-left-color: var(--line-2); }
+  .scene:first-child { margin-top: 14px; }
+  .scene h4 { font-size: 18px; font-weight: 500; margin-bottom: 10px; letter-spacing: -.005em; }
+  .scene p { font-size: 15.5px; line-height: 1.72; }
+  .numbered { gap: 13px; max-width: 66ch; }
+  .numbered div { font-size: 15.5px; line-height: 1.68; gap: 14px; }
+  .cap { letter-spacing: .16em; }
+
+  /* The session column: cards with air between them, and a heading that is
+     not jammed against the first one. */
+  /* flex-basis alone was not enough: a flex item will not go below its
+     min-content width, and four nowrap pills are wider than the column. The
+     column keeps its width and the picker fits inside it instead. */
+  /* 396px was a quarter of a laptop window given to a list whose widest line
+     is a session's one-sentence summary, and for half the time it is showing
+     four rows and nothing else. 326px still sets that summary on two lines
+     rather than three, and hands 70px back to the recap. */
+  .sessions { flex: 0 0 326px; min-width: 0; }
+  .sessions .head { padding: 24px 22px 14px; align-items: baseline; gap: 12px; }
+  .sess-list { padding: 0 14px 16px; gap: 7px; }
+  .sess { padding: 15px 15px 16px; border-radius: 10px; }
+  .sess:hover { background: var(--hover); }
+  .sess .say { margin-top: 9px; line-height: 1.62; }
+  .camp:hover { background: var(--hover); }
+  .steps > div.now { background: var(--raise); }
+  .line:nth-child(even) { background: var(--column); }
+
+  .facts { flex: 0 0 320px; padding: 42px 30px 56px; gap: 30px; }
+
+  /* The highlighter, spent where the landing page spends it: on the line
+     somebody will want to read out loud. */
+  .keep { border-left-color: var(--mark); }
+  .keep .cap { color: var(--mark-cap); }
+  .keep p { color: var(--text); font-size: 15px; line-height: 1.62; }
+  .line mark { color: var(--text); background: var(--mark); border-bottom: 0;
+               padding: 0 3px; border-radius: 2px; }
+  :root[data-theme="dark"] .line mark { color: var(--mark-ink); }
+
+  /* The facts rail costs 320px, and below 1300px the recap's own prose is the
+     thing worth keeping — everything in the rail is also in the notes body.
+     One threshold rather than the two this used to need: the second existed
+     because the campaign rail could be open and cost another 268px, and there
+     is no campaign rail any more. */
+  @media (max-width: 1300px) { .facts.optional { display: none; } }
+
+  /* The same five sections, under the prose instead of beside it, for every
+     window too narrow to carry the rail. Exactly one of the two is ever drawn:
+     display:none takes the other out of the accessibility tree as well, so a
+     screen reader hears each section once. */
+  .recap-extras { display: none; }
+  @media (max-width: 1300px) {
+    .recap-extras {
+      display: flex; flex-direction: column; gap: 28px;
+      margin-top: 40px; padding-top: 30px; border-top: 1px solid var(--line);
+    }
+    /* In the rail these sit on the column's tinted ground at rail size. Here
+       they are part of the reading, so they take the reading's measure. */
+    .recap-extras .plainlist { font-size: 15px; line-height: 1.75; }
+    .recap-extras .who { font-size: 15.5px; }
+    .recap-extras .what { font-size: 14px; }
+    .recap-extras .stack .big { font-size: 15.5px; line-height: 1.6; }
+  }
+
+  /* ----------------------------------------------------------------------
+     The margin.
+
+     A wide window used to spend everything past the reading measure on
+     nothing: the prose stopped at about 990px and the rest of the pane —
+     900px of it on a 2560 screen — was blank, with the NPCs and the places
+     listed in a rail on the far side of the hole.
+
+     Those are notes ABOUT the narrative, so they belong beside the part of it
+     they are about, and that is the shape the leftover space already had. So
+     past 1900px the prose narrows to a reading measure and what it gives up
+     becomes a margin with the names written in it, each one beside the scene
+     that introduces it.
+
+     Floated rather than positioned, and that is the whole trick: `clear:
+     right` makes the browser stack them so no two ever overlap, and a float
+     needs nothing recalculated when the five-second poll repaints the pane.
+     A JS-positioned margin would have to be measured again on every morph.
+
+     Three widths now, and exactly one of the three is drawn:
+       up to 1300   the five sections under the prose (.recap-extras)
+       1301–1899    the five sections in the rail (.facts.optional)
+       1900 and up  who and where in the margin; the rail keeps the rest
+
+     1900 is not a taste; it is the width the margin first fits in. The rail
+     stays on this screen, so the sum is 326 for the session list + 320 for
+     the rail + 112 of pane padding + 720 of measure + 58 of gutter + 340 of
+     note = 1876, and the first attempt at 1560 ran the notes 120px UNDER the
+     rail, where its background quietly ate them. Change any of those six
+     numbers and this one moves with them.  */
+
+  .sidenote { display: none; }
+
+  @media (min-width: 1900px) {
+    /* Capped and centred, so what is left over after the margin is a page
+       margin either side rather than a hole against the right rail. */
+    .pane-main { max-width: 1240px; margin: 0 auto; }
+    .pane-main .measure,
+    .pane-main > h1.display { max-width: 720px; }
+
+    .sidenote {
+      display: block;
+      float: right; clear: right;
+      width: 340px; margin-right: -398px; margin-bottom: 26px;
+      padding-left: 18px; border-left: 1px solid var(--line);
+    }
+    .sidenote-kind {
+      display: block; font-family: var(--mono); font-size: 10px; font-weight: 600;
+      letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+    }
+    .sidenote-name {
+      display: block; margin-top: 7px;
+      font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+      font-size: 17px; font-weight: 400; line-height: 1.25;
+      letter-spacing: -.005em; color: var(--text);
+    }
+    .sidenote-what {
+      display: block; margin-top: 5px;
+      font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--dim);
+    }
+
+    /* The rail keeps only what has nowhere in the text to be. A person and a
+       place are introduced by a sentence; a loose thread belongs to the whole
+       session, and so does the line worth reading out. */
+    .facts .rail-anchored { display: none; }
+  }
+
+
+  /* ----------------------------------------------------------------------
+     What is behind a name, before you go there.
+
+     A wikilink already leads somewhere; the cost of following one mid-
+     sentence is losing your place in the sentence. So the card answers the
+     small question — who is this again — and leaves the page where it is.
+
+     pointer-events: none, deliberately. It is a thing to read, not a thing
+     to visit: nothing in it is clickable, so it cannot be moved into, so
+     there is no state where the pointer is on the card and not on the name
+     and nothing has to be written to handle one. Following the link is what
+     the link is for.
+
+     Anchored with `position: fixed` against the viewport rather than the
+     page, so a scroll is a reason to close it rather than a thing to track.  */
+  /* --- correcting a write-up ---------------------------------------------
+
+     The switch is small. Being through it is not.
+
+     A mode you can be in without noticing is a mode you will type into by
+     accident, so this is not a flag on a toolbar: the whole column changes.
+     The paper goes a shade warmer, a ruled margin runs down the prose, every
+     line it will let you touch says so when the pointer is over it, and a
+     band that does not scroll away stands at the top saying what is going on
+     and how to stop. You should be able to tell from across the room.
+
+     The two colours are declared with light-dark() rather than twice in two
+     theme blocks — every theme here already sets color-scheme, which is what
+     makes that work. See the voice palette for the same trick.  */
+  .pane-main.marking {
+    --mark-paper: light-dark(#FCF7EC, #201C17);
+    --mark-edge:  light-dark(#C6A664, #6B5730);
+    --mark-ink:   light-dark(#6E5214, #E0C07A);
+    --mark-out:   light-dark(#9A8F7E, #7C7264);
+  }
+
+  /* The band. Sticky under the tab bar rather than at the top of the
+     viewport, because it belongs to this write-up and not to the window. */
+  .mark-band {
+    position: sticky; top: 0; z-index: 6;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin: 0 0 26px; padding: 13px 16px;
+    background: var(--mark-paper); border: 1px solid var(--mark-edge);
+    border-left-width: 3px; border-radius: 7px;
+    box-shadow: 0 6px 18px var(--shadow);
+  }
+  .mark-band .nib { flex: 0 0 auto; width: 15px; height: 15px; color: var(--mark-ink); }
+  .mark-band .what { flex: 1 1 260px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+  .mark-band .what b { color: var(--mark-ink); font-weight: 600; }
+  .mark-band .tally {
+    flex: 0 0 auto; font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
+    color: var(--mark-ink);
+  }
+
+  /* The paper. One sheet under the whole pane, not a tint per block: the
+     sections are different widths, and tinting each of them separately drew a
+     staircase of ragged rectangles down the page that looked like a rendering
+     fault rather than a mode. The rule down the left edge is the margin of a
+     proof, and it runs the length of the thing being proofed.
+
+     On .pane-main rather than on an inner wrapper bled out with negative
+     margins. The pane's own padding is 30/26/48 at one width, 42/56/76 at
+     another and 26/24/40 on a phone, so a wrapper reaching for its edges
+     would have to know all four and would be wrong at three of them. The
+     element that already knows how wide it is carries the paper. */
+  .pane-main.marking {
+    background: var(--mark-paper);
+    border-left: 2px solid var(--mark-edge);
+  }
+  /* The band sits on that sheet, so it needs a ground of its own to read as a
+     notice rather than as the first paragraph. */
+  .marking .mark-band { background: var(--card); }
+
+  /* A line you can change. The nib sits in the gutter rather than in the
+     text, so nothing reflows when it appears — a paragraph that shifts a
+     word as the pointer crosses it is unreadable. */
+  .mline {
+    position: relative; border-radius: 3px;
+    box-shadow: 0 0 0 3px transparent; transition: background .12s, box-shadow .12s;
+    cursor: text;
+  }
+  .mline:hover { background: color-mix(in oklab, var(--mark-edge) 17%, transparent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--mark-edge) 17%, transparent); }
+  .mline.open { background: color-mix(in oklab, var(--mark-edge) 22%, transparent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--mark-edge) 22%, transparent); }
+  .mline::before {
+    content: ""; position: absolute; left: -15px; top: .34em;
+    width: 5px; height: 5px; border-radius: 50%; background: var(--mark-edge);
+    opacity: 0; transition: opacity .12s;
+  }
+  .mline:hover::before, .mline.open::before, .mline.marked::before { opacity: 1; }
+  /* Except in a numbered list, where the gutter is already taken. The nib
+     landed a few pixels after the 01, and a decision read "01 ·" with two
+     markers arguing about which of them was the bullet. */
+  .numbered .mline::before { display: none; }
+
+  /* What the summariser wrote, kept and crossed out. Never removed from the
+     page in this mode: seeing what it used to say is the whole reason for
+     being in here. */
+  .mstruck { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--mark-out); }
+  /* And the correction, in whoever wrote it own colour — the same twenty-four
+     the transcript uses, so a redline is legible without a byline. Falls back
+     to the page own ink, which is what somebody who has not picked one gets:
+     the name is the identity, and one is not missing because the other is. */
+  .mnew { color: var(--voice, var(--mark-ink)); }
+  .mgone {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--mark-out); padding-left: 6px;
+  }
+  .mwho {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .05em;
+    color: var(--dim); padding-left: 7px; white-space: nowrap;
+  }
+
+  /* The box. A block inside a span on purpose: the lines it belongs to are
+     spans joined into one paragraph, and giving the editor its own row
+     without breaking that is what display:block on a span is for. */
+  .mark-edit {
+    display: block; margin: 10px 0 14px; padding: 12px 13px 11px;
+    background: var(--card); border: 1px solid var(--mark-edge); border-radius: 7px;
+    box-shadow: 0 10px 26px var(--shadow);
+  }
+  .mark-box {
+    display: block; width: 100%; box-sizing: border-box; resize: vertical;
+    font-family: var(--serif); font-size: 15px; line-height: 1.55; color: var(--text);
+    background: transparent; border: 0; outline: none; padding: 0;
+  }
+  .mark-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--rule);
+  }
+  /* Says whether what you typed is on disk yet, and it is the only thing on
+     this page that has to keep up with typing. Left of the buttons, so the
+     eye finds it without leaving the line being written. */
+  .mark-say {
+    flex: 1 1 auto; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: .05em; color: var(--dim);
+  }
+  .mark-say.saved { color: var(--mark-ink); }
+  .mark-say.failed { color: var(--red-lit); }
+  .btn.xs { padding: 4px 9px; font-size: 11px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mline, .mline::before { transition: none; }
+  }
+
+  .peek {
+    position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 24px);
+    pointer-events: none;
+    background: var(--card); border: 1px solid var(--line-2); border-radius: 8px;
+    padding: 14px 16px 15px; box-shadow: 0 14px 34px var(--shadow);
+    opacity: 0; transform: translateY(-3px); transition: opacity .13s, transform .13s;
+  }
+  .peek.up { opacity: 1; transform: none; }
+  .peek-kind {
+    display: block; font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
+  }
+  .peek-name {
+    display: block; margin-top: 6px;
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 19px; line-height: 1.2; letter-spacing: -.008em; color: var(--text);
+  }
+  .peek-what {
+    display: block; margin-top: 7px;
+    font-family: var(--serif); font-size: 13.5px; line-height: 1.55; color: var(--text-2);
+  }
+  .peek-foot {
+    display: block; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .peek { transition: none; }
+  }
+
+  /* ----------------------------------------------------------------------
+     Where you are in a write-up.
+
+     A recap of a four-hour night runs to six or seven scenes, and once the
+     prose is longer than the window the reader has no idea how much is left
+     or what is coming. This is the write-up read as its own shape: the
+     scenes in order, the one on screen marked, and a way back to any of them.
+
+     It lives at the top of the facts rail, which is the only gutter this
+     screen has that is not already spoken for — the margin past 1900px is
+     the sidenotes’, and below 1300px there is no rail at all. That last one
+     is the right answer rather than a gap: a window that narrow is a window
+     you scroll, and an index of a page you can see the end of is furniture. */
+  .parts { display: flex; flex-direction: column; gap: 1px; }
+  .parts-row {
+    display: flex; gap: 10px; align-items: baseline; text-align: left;
+    background: none; border: 0; padding: 5px 0 5px 12px; cursor: pointer;
+    border-left: 2px solid var(--rule); color: var(--dim);
+    font: inherit; font-size: 13px; line-height: 1.35;
+    transition: color .15s, border-color .15s;
+  }
+  .parts-row:hover { color: var(--text-2); border-left-color: var(--edge); }
+  .parts-row .n {
+    font-family: var(--mono); font-size: 10px; color: var(--dim);
+    font-variant-numeric: tabular-nums; flex: 0 0 auto;
+  }
+  .parts-row .t { flex: 1; min-width: 0; }
+  /* The one on screen. The pen rather than the highlighter: this is a place
+     in the document, not something Quill kept. */
+  .parts-row.here { color: var(--text); border-left-color: var(--pen); }
+  .parts-row.here .n { color: var(--pen); }
+  @media (prefers-reduced-motion: reduce) { .parts-row { transition: none; } }
+  /* ----------------------------------------------------------------------
+     A rule the write-up names, and where it is written down.
+
+     Quieter than a wikilink, and that is the whole design. A name in this
+     campaign is somewhere to go IN this campaign; a spell is a footnote — it
+     leaves the product entirely, and a reader who follows one has stopped
+     reading the recap. So it takes the dim rule rather than the pen, keeps
+     the colour of its sentence, and only firms up under the cursor.
+
+     An anchor rather than a button, because it is a real address: it opens
+     in a tab, it can be copied, and middle-click does what middle-click
+     does. rel="noopener noreferrer" because target="_blank" hands the new
+     page a handle on this one otherwise.  */
+  .rule {
+    color: inherit; text-decoration: none;
+    border-bottom: 1px dotted var(--dim);
+    transition: border-color .12s;
+  }
+  .rule:hover, .rule:focus-visible {
+    border-bottom-color: var(--text-2); border-bottom-style: solid;
+    outline: none;
+  }
+  .rule:focus-visible { border-radius: 2px; box-shadow: 0 0 0 2px var(--pen-br); }
+  @media (prefers-reduced-motion: reduce) { .rule { transition: none; } }
+
+  .theme { margin-left: 4px; }
+  .theme button { padding: 5px 10px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+
+  /* ======================================================================
+     Who and where
+     ======================================================================
+     The summariser already names every NPC and every place, once per session,
+     and then that naming is stranded in the session it came from. Read down
+     the campaign instead of across it and the same names line up into a cast
+     list: who they are, the night they walked on, and what has been said
+     about them since.
+
+     Read the way the items are read — one list, down the page, under the
+     night that put each name on it. A person used to be a page, and the page
+     held a name, a date and two sentences, so reading everyone the party met
+     meant opening forty of them.
+
+     The headings come from `first` rather than from every night a name is in.
+     An item's whole life is the night it was found; a person recurs, and the
+     one night that is uniquely theirs is the night they walked on.  */
+
+  .cast-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 22px; padding: 16px 0 17px 2px;
+    border-bottom: 1px solid var(--rule);
+    scroll-margin-top: calc(var(--above, 76px) + 16px);
+  }
+  .cast-row .nm {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: 17.5px; font-weight: 400; letter-spacing: -.005em;
+    line-height: 1.3; color: var(--text);
+  }
+
+  /* The nights a name came back in, on the line the name is on. An item has
+     one night and nothing to say about it; a person has a run of them, and
+     that run read down the right-hand edge is the campaign's recurring cast —
+     which is the one thing a shelf of separate pages could not show at all. */
+  .cast-row .again {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+    white-space: nowrap; padding-top: 6px;
+  }
+  .cast-row .again b { font-weight: 400; color: var(--text-2); }
+
+  .cast-said { grid-column: 1 / -1; margin-top: 6px; min-width: 0; }
+  .cast-said p {
+    margin: 0; font-family: var(--serif); font-size: 15px;
+    line-height: 1.62; color: var(--text-2);
+  }
+  .cast-said p + p { margin-top: 7px; }
+
+  /* The highlighter, spent here the way the rest of the page spends it: on
+     the line somebody will want to read out loud. */
+  .entry-aside {
+    margin-top: 11px; border-left: 2px solid var(--mark); padding: 2px 0 2px 15px;
+    font-size: 14.5px; line-height: 1.6; color: var(--text);
+  }
+  .entry-aside + .entry-aside { margin-top: 9px; }
+
+  /* Landed on, from the index or from a name in a write-up. A whole cast
+     entry washed yellow is a block of highlighter five lines deep, so the
+     mark goes down its edge instead: the same arrival the item ledger uses,
+     at the size this row actually is. */
+  .cast-row.flash { animation: landed 1.5s ease-out; }
+  @keyframes landed {
+    from { box-shadow: inset 3px 0 0 var(--mark); background: var(--hover); }
+    to   { box-shadow: inset 3px 0 0 transparent; background: transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) { .cast-row.flash { animation: none; } }
+
+  /* An index row. The column is the way into the list rather than a second
+     copy of it, so it carries the two things you scan a cast for — the name
+     and the night — and leaves the prose to the page. */
+  .sess-list.index { gap: 1px; }
+  .sess.thin { padding: 10px 14px 11px; display: flex; align-items: baseline; gap: 12px; }
+  .sess.thin .ref { font-size: 15px; min-width: 0; }
+  .sess.thin .when {
+    display: inline; margin-top: 0; margin-left: auto; white-space: nowrap;
+  }
+
+  @media (max-width: 700px) {
+    .cast-row { grid-template-columns: minmax(0, 1fr); }
+    .cast-row .again { padding-top: 0; }
+  }
+
+  /* The column holds two pages in a clipped frame and slides between them,
+     the same gesture the campaign rail uses one level out: choose, and what
+     you chose from leaves to the left while what you chose arrives behind it.
+     The header it leaves is the way back.
+
+     Both pages are absolutely positioned so the one on its way out does not
+     stretch the frame to the height of the one coming in. */
+  .sessions { display: flex; flex-direction: column; }
+
+  .shelf-slider { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  .shelf-page {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    background: var(--column);
+    transition: transform .42s cubic-bezier(.22,.72,.2,1);
+  }
+  .shelf-slider.picking .chooser { transform: translateX(0); }
+  .shelf-slider.picking .list    { transform: translateX(100%); }
+  .shelf-slider.picked  .chooser { transform: translateX(-100%); }
+  .shelf-slider.picked  .list    { transform: translateX(0); }
+  .shelf-slider.picking .list,
+  .shelf-slider.picked  .chooser { pointer-events: none; }
+
+  /* A row of the chooser: Sessions, NPCs, Places, Items. Built like a ledger
+     entry one level in, so picking what to read repeats the shape of picking
+     the campaign. */
+  .shelf-row {
+    display: block; width: 100%; text-align: left;
+    padding: 15px 15px 16px; border: 0; border-left: 2px solid transparent;
+    border-radius: 10px; background: transparent; cursor: pointer;
+    transition: background .13s;
+  }
+  .shelf-row:hover { background: var(--hover); }
+  .shelf-row.on { background: var(--raise); border-left-color: var(--pen); }
+  .shelf-row .l1 { display: flex; align-items: baseline; gap: 10px; }
+  .shelf-row .nm { font-size: 15.5px; color: var(--text); }
+  .shelf-row .n {
+    margin-left: auto; font-family: var(--mono); font-size: 11.5px;
+    color: var(--dim); font-variant-numeric: tabular-nums;
+  }
+  .shelf-row .meta {
+    font-family: var(--mono); font-size: 11px; color: var(--dim);
+    margin-top: 7px; letter-spacing: .03em;
+  }
+
+  /* The header of a chosen list, which is also the way out of it. */
+  .shelf-back {
+    display: inline-flex; align-items: baseline; gap: 9px;
+    font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: .14em; text-transform: uppercase;
+    padding: 4px 10px 4px 6px; margin-left: -6px; border-radius: 7px;
+    border: 0; background: transparent; color: var(--text);
+    cursor: pointer; transition: background .13s, color .13s;
+  }
+  .shelf-back:hover { background: var(--hover); }
+  .shelf-back .arw { color: var(--pen); font-size: 13px; letter-spacing: 0; }
+  .shelf-back .n { color: var(--dim); letter-spacing: .02em; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .shelf-page { transition-duration: .01ms; }
+  }
+
+  @media (max-width: 1180px) {
+    .pane-main { padding: 30px 26px 48px; }
+    .sessions { flex: none; }
+  }
+  @media (max-width: 820px) {
+    /* The top bar carries two pause buttons and the theme switch. At 430px
+       that is wider than the phone, and .right pinning itself to the end with
+       margin-left:auto meant it overflowed rather than wrapped. Both rules
+       that answer that live in the 1023px band now, which contains this one:
+       the same failure starts 200px above a phone. */
+
+    /* Five tabs do not fit a phone. The strip scrolls inside itself rather
+       than widening the page — nothing else on the page scrolls sideways. */
+    /* Wrapped, not scrolled. Four tabs are wider than a phone, and a strip
+       that scrolls with its scrollbar hidden shows the last one sliced
+       mid-word with nothing saying there is more of it — which reads as a
+       broken tab, not a hidden one. Two rows fit and are wholly visible, and
+       Settings gives up its right-hand berth because on two rows there is no
+       far end to be pushed to. */
+    .tabs { flex-wrap: wrap; gap: 18px; }
+    .tab { white-space: nowrap; flex: 0 0 auto; }
+    .tab.apart { margin-left: 0; }
+
+    .sheet { top: 60px; right: 12px; left: 12px; width: auto;
+             max-height: calc(100vh - 76px); }
+  }
+  /* ======================================================================
+     The gate — the sign-in screen, in the landing page's world.
+     ======================================================================
+     Somebody arriving from / clicked "Log in" on a page made of pale paper
+     and ultramarine, and used to land here in the dark. That cut said "you
+     have left the website" at the exact moment we were asking them to trust
+     us with their Discord account.
+     So the gate keeps the landing page's palette and typefaces, and the tool
+     goes dark once they are through it. The dashboard's own tokens are
+     untouched — everything below is scoped to body.gate-open or .gate, and
+     nothing here leaks into a signed-in page.
+
+     The typefaces come from /dash/fonts/fonts.css, which every page already
+     loads, so the gate costs nothing extra to draw.  */
+  body.gate-open { background: #E6E8E3; }
+  /* The palette is the light one here whatever the theme says, so the
+     selection has to be too. Left to the token, a dark-theme reader gets the
+     dark band under this screen's dark type and cannot read what they have
+     just selected. */
+  body.gate-open ::selection { background: #C9D0EE; }
+  body.gate-open .sheet,
+  body.gate-open .top,
+  body.gate-open #banner { display: none; }
+  body.gate-open .app { display: block; min-height: 100vh; }
+  body.gate-open .main { display: block; }
+
+  .gate {
+    --paper:   #E6E8E3;
+    --paper-2: #DEE2DA;
+    --paper-3: #D4D9CF;
+    --ink:     #171C22;
+    --ink-soft:#5C665E;
+    --edge:    #C4CABE;
+    --pen:     #2434A8;
+
+    --g-display: 'Fraunces', 'Hoefler Text', Georgia, serif;
+    --g-body:    'Newsreader', Georgia, 'Times New Roman', serif;
+    --g-mono:    'Spline Sans Mono', ui-monospace, Consolas, monospace;
+
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--g-body);
+    min-height: 100vh;
+    padding: 10vh 24px 60px;
+  }
+  .gate-inner { max-width: 470px; margin: 0 auto; }
+
+  .gate-eyebrow {
+    font-family: var(--g-mono);
+    font-size: 11.5px; letter-spacing: .19em; text-transform: uppercase;
+    color: var(--pen); margin: 20px 0 0;
+  }
+  .gate h1 {
+    font-family: var(--g-display);
+    font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-weight: 400;
+    font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.06; letter-spacing: -.022em;
+    margin: 14px 0 0; color: var(--ink); text-wrap: balance;
+  }
+  .gate-say {
+    font-size: 17px; line-height: 1.6; color: var(--ink-soft);
+    margin: 14px 0 0; max-width: 44ch;
+  }
+  .gate-say b { color: var(--ink); font-weight: 600; }
+  /* What the button will actually do, set below it rather than inside it. A
+     label labels; the explaining goes here. */
+  .gate-say.quiet-say { font-size: 14px; margin-top: 12px; opacity: .72; }
+
+  .gate-btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .gate-btn {
+    font-family: var(--g-mono);
+    font-size: 13px; letter-spacing: .02em;
+    padding: 12px 22px; border-radius: 5px;
+    border: 1px solid var(--pen); background: var(--pen); color: var(--paper);
+    cursor: pointer;
+    transition: background .16s ease, border-color .16s ease;
+  }
+  .gate-btn:hover:not(:disabled) { background: #1B2A92; border-color: #1B2A92; }
+  .gate-btn:disabled { opacity: .55; cursor: default; }
+  .gate-btn.quiet { background: transparent; color: var(--pen); border-color: var(--edge); }
+  .gate-btn.quiet:hover { background: transparent; border-color: var(--pen); }
+  .gate-btn.plain {
+    background: transparent; border-color: transparent; color: var(--ink-soft);
+    padding-inline: 0; text-decoration: underline; text-underline-offset: 3px;
+  }
+  .gate-btn.plain:hover { background: transparent; color: var(--pen); }
+
+  /* The one button on the page, and the whole of signing in.
+     Discord's own blurple rather than the ink this page uses everywhere else,
+     because it is the one control here that hands you to somebody else: the
+     colour is the promise about where the next screen comes from. */
+  .gate-btn.discord {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: #5865F2; border-color: #5865F2; color: #fff;
+    text-decoration: none; font-size: 13.5px; padding: 13px 24px;
+  }
+  .gate-btn.discord:hover { background: #4752C4; border-color: #4752C4; }
+  .gate-btn.discord svg { flex: none; }
+  .gate :focus-visible { outline: 2px solid var(--pen); outline-offset: 3px; border-radius: 3px; }
+
+  .gate-msg {
+    font-family: var(--g-mono); font-size: 12px; line-height: 1.6;
+    margin-top: 18px; padding-left: 14px;
+    border-left: 2px solid var(--pen); color: var(--ink-soft);
+  }
+  .gate-msg.bad { border-left-color: #A8322B; color: #8C2F29; }
+
+  .gate-foot {
+    margin-top: 38px; padding-top: 18px;
+    border-top: 1px solid var(--edge);
+    font-size: 14.5px; line-height: 1.62; color: var(--ink-soft);
+    max-width: 50ch;
+  }
+  .gate-back {
+    display: inline-block; margin-top: 22px;
+    font-family: var(--g-mono); font-size: 12px; letter-spacing: .04em;
+    color: var(--ink-soft); text-decoration: none;
+  }
+  .gate-back:hover { color: var(--pen); }
+
+  @media (max-width: 520px) {
+    .gate { padding-top: 6vh; }
+  }
+
+  /* ======================================================================
+     The threshold — the one screen somebody sees the first time they sign in
+     ======================================================================
+     WORK IN PROGRESS. See "new features.md" → Work in progress, and the
+     TODO beside welcomeScreen() at the foot of this file.
+
+     Everywhere else in this product the page is the tool: a desk, a ledger, a
+     gatehouse. This is the one screen that is the BOOK, and the only place the
+     book speaks. So it is neither the dashboard dressed differently nor the
+     landing page a second time — it is a lit sheet in a dark room that writes
+     while you watch, and hands you the one door you actually need.
+
+     Two rules keep it from being decoration:
+
+       It never asks a question it can already answer. What tables somebody can
+       see is in /status before this screen draws, so it is never asked about —
+       only the things the bot genuinely cannot know are.
+
+       The answer not taken is ruled through rather than removed. That is this
+       product's own mark, used on the landing page and in the gatehouse for
+       "struck from the record, not destroyed", and it is what leaves a page
+       that reads afterwards as something written rather than something clicked.
+
+     Always the dark, whatever the theme is set to, for the same reason the gate
+     is always the landing page's paper: this is a moment rather than a tool,
+     and it happens once. Everything here is scoped to body.thr-open or .thr,
+     and nothing leaks into the signed-in page.
+
+     White on black, and no sheet under it. The first cut of this drew a lit
+     page of vellum floating in the room, which was the literal reading of "a
+     quill writing on a page" and the wrong one: a rectangle of paper is a
+     card, and a card is a thing the tool would show you. Taking it away leaves
+     the writing alone in the dark with nothing around it to be, which is the
+     whole effect being reached for. The ink is what carries the moment, so the
+     ink is the only thing on screen.                                          */
+
+  body.thr-open {
+    /* Not flat black — a breath of light behind where the writing lands, so
+       the dark reads as a room rather than as a switched-off screen. */
+    background: #08090B radial-gradient(120% 80% at 50% 30%, #14161C 0%, #0B0C10 46%, #08090B 78%) fixed;
+  }
+  body.thr-open ::selection { background: #343E72; }
+  body.thr-open .sheet,
+  body.thr-open .top,
+  body.thr-open #banner { display: none; }
+  body.thr-open .app { display: block; min-height: 100vh; }
+  body.thr-open .main { display: block; }
+
+  .thr {
+    --ink:    #EFECE4;   /* dry ink — warm white, not paper white */
+    --soft:   #8A8C86;
+    --rule:   #2A2D34;
+    /* Ultramarine is the pen everywhere else in this product and is unreadable
+       on a dark ground, so the wet stroke is the same hue lifted to a legible
+       tint — exactly what the dashboard's dark theme does with --pen. */
+    --wet:    #8FA0F5;
+
+    /* Fire, and the only warm thing on the screen. Two accents with one job
+       each and no overlap: blue is ink going onto the page, amber is the page
+       going. The highlighter this screen used to mark a chosen line with has
+       gone — the torch marks it now, and one mark for one idea is the rule the
+       rest of this product is built on. */
+    --ember-hot:  #FFE1B0;
+    --ember:      #E9922F;
+    --ember-deep: #8A3F12;
+
+    --t-display: 'Fraunces', 'Hoefler Text', Georgia, serif;
+    --t-body:    'Newsreader', Georgia, 'Times New Roman', serif;
+    --t-mono:    'Spline Sans Mono', ui-monospace, Consolas, monospace;
+
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 8vh 20px 44px;
+  }
+
+  /* Centred, and holding one exchange at a time. The min-height is what stops
+     the two questions from sitting at different heights on the screen: they are
+     the same moment asked twice, and a composition that jumps between them
+     would say they were not. */
+  .thr-sheet {
+    position: relative;
+    width: 100%; max-width: 660px;
+    min-height: 330px;
+    display: flex; flex-direction: column; justify-content: center;
+    text-align: center;
+    color: var(--ink);
+    font-family: var(--t-body);
+    animation: thr-in .6s cubic-bezier(.22,.72,.2,1) both;
+  }
+  @keyframes thr-in { from { opacity: 0; transform: translateY(14px); } }
+
+  .thr-cap {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-family: var(--t-mono);
+    font-size: 10.5px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--soft); margin: 0 0 34px;
+  }
+
+  /* The lettering, and the only prose on the screen. Fraunces with WONK on is
+     the closest a variable face gets to a hand that is enjoying itself, which
+     is the whole voice here.
+
+     There is no second register. Every explaining line this screen used to
+     carry under its questions has gone: a page written one word at a time
+     cannot also have small print beside it, because the eye reads the still
+     text while the pen is still working and the effect is over before the
+     sentence is. Whatever is worth saying is said in the hand. */
+  .thr-line {
+    font-family: var(--t-display);
+    font-variation-settings: 'SOFT' 60, 'WONK' 1;
+    font-style: italic; font-weight: 400;
+    font-size: clamp(23px, 3.5vw, 31px);
+    line-height: 1.4; letter-spacing: -.012em;
+    margin: 0 auto 6px; max-width: 30ch; text-wrap: balance;
+  }
+
+  /* Ink leaves the nib wet and dries a beat later. One class per character, one
+     animation, no timer per glyph. */
+  .thr .ch { opacity: 0; }
+  .thr .ch.on { animation: thr-ink .9s ease-out forwards; }
+  /* Already on the page, and not to be written again. Anything split into
+     glyphs at the last moment — the answers, when the fire reaches them — is
+     lit rather than inked: running the writing animation over text the reader
+     has been looking at for ten seconds re-wets it in front of them. */
+  .thr .ch.lit { opacity: 1; }
+  /* One word, which a line may not be broken inside. See thrSplit. */
+  .thr .wd { white-space: nowrap; }
+  @keyframes thr-ink {
+    0%   { opacity: .5; color: var(--wet); }
+    28%  { opacity: 1;  color: var(--wet); }
+    100% { opacity: 1;  color: inherit; }
+  }
+
+  /* The quill itself, driven frame by frame from welcomeWrite.
+     No transition on the transform: a transition is a jump with a smear over
+     it, and what this has to do is travel. It turns about its own tip, which is
+     why the origin is the point of the nib in its box and not the middle. */
+  .thr-nib {
+    position: absolute; left: 0; top: 0;
+    width: 24px; height: 24px; pointer-events: none;
+    transform-origin: 5px 19px;
+    opacity: 0; transition: opacity .3s;
+    transform: translate(-100px, -100px);
+  }
+  .thr-nib.on { opacity: 1; }
+
+  /* The two answers, which are two lines in a ledger rather than two buttons.
+     Ruled off from each other, marked in the margin, and struck through once
+     the choice is made. */
+  .thr-choices { margin-top: 26px; position: relative; }
+
+  /* Everything that is not the writing itself — the small print, the choices,
+     the doors — waits until the pen has stopped. The block being written keeps
+     its lines hidden until the driver has split them into glyphs, so there is
+     no flash of the whole sentence before it is written. */
+  .thr-block.now .thr-after { opacity: 0; transition: opacity .5s ease; }
+  .thr-block.now.ready .thr-after { opacity: 1; }
+  .thr-block.now .thr-line[data-w] { opacity: 0; }
+  .thr-block.now.writing .thr-line[data-w] { opacity: 1; }
+
+  /* The written line, read rather than seen. The glyph split above is for the
+     eye only; a screen reader gets the sentence. */
+  .thr .sr {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
+
+  .thr-choice {
+    display: block; width: 100%; text-align: center;
+    position: relative;
+    padding: 16px 52px;
+    border: 0; border-top: 1px solid var(--rule);
+    background: none; color: var(--ink);
+    font-family: var(--t-body); font-size: 20px; line-height: 1.45;
+    cursor: pointer;
+    transition: color .22s;
+  }
+  .thr-choice:last-child { border-bottom: 1px solid var(--rule); }
+  .thr-choice[disabled] { cursor: default; }
+
+  /* -- The torch --------------------------------------------------------
+     ONE flame, and it marks where you are. It used to burn at the end of every
+     line at once, which made it scenery: two torches always lit say nothing
+     about which line you are on, and the thing this screen most needs to say
+     at rest is exactly that. So it is a cursor — it slides from line to line
+     as you move, and the light it throws moves with it.
+
+     Two gradients on one span — a body and a hotter core — flickering on
+     different clocks so the pair never repeats the same shape twice. No image
+     and no library: a flame is a soft teardrop and a slow scale, and anything
+     more literal would look like a sticker. */
+  .wisp {
+    position: absolute; right: 16px; top: 0;
+    width: 18px; height: 30px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .3s ease, transform .26s cubic-bezier(.3,.8,.3,1);
+  }
+  .wisp.lit { opacity: 1; }
+
+  /* The line the torch is standing at. The wash is the light it is throwing,
+     so it falls off towards the middle of the row and has a source. */
+  .thr-choice.picked {
+    color: var(--ember-hot);
+    background: radial-gradient(120% 200% at 100% 50%, #E9922F1C 0%, #E9922F00 62%);
+  }
+  .wisp::before, .wisp::after {
+    content: ''; position: absolute; left: 50%;
+    transform-origin: 50% 88%;
+  }
+  /* The body: a teardrop, narrow at the top, and the spill of light it throws
+     is the box-shadow rather than a second element. */
+  .wisp::before {
+    width: 15px; height: 20px; bottom: 5px; margin-left: -7.5px;
+    background: linear-gradient(to top, var(--ember) 0%, var(--ember-hot) 62%, #FFF6E6 100%);
+    border-radius: 50% 50% 50% 50% / 64% 64% 36% 36%;
+    box-shadow: 0 0 16px 3px #E9922F4D;
+    filter: blur(1.3px);
+    animation: wisp 2.9s ease-in-out infinite;
+  }
+  /* The core, on its own clock so the pair never repeats the same shape. */
+  .wisp::after {
+    width: 5px; height: 10px; bottom: 8px; margin-left: -2.5px;
+    background: linear-gradient(to top, var(--ember-hot), #FFFDF6);
+    border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+    filter: blur(.5px);
+    animation: wisp 1.7s ease-in-out infinite reverse;
+  }
+  @keyframes wisp {
+    0%, 100% { transform: scale(1, 1);       opacity: .85; }
+    28%      { transform: scale(.92, 1.22);  opacity: 1; }
+    54%      { transform: scale(1.06, .9);   opacity: .68; }
+    78%      { transform: scale(.97, 1.1);   opacity: .95; }
+  }
+  /* The line you took, held for half a second before the fire takes it. The
+     press has to read as a choice being made before it reads as a page being
+     destroyed — so the row lights first, the flame swells where it stands, and
+     only then does anything catch. */
+  .thr-choice.chosen {
+    color: var(--ember-hot);
+    background: radial-gradient(120% 220% at 100% 50%, #E9922F38 0%, #E9922F00 68%);
+    animation: thr-taken .5s ease-out;
+  }
+  @keyframes thr-taken {
+    0%   { background-color: #E9922F00; }
+    35%  { background-color: #E9922F1F; }
+    100% { background-color: #E9922F00; }
+  }
+  /* The flame swells where it is standing and goes up with the page. The swell
+     is on the flame's two halves rather than on the span, because the span's
+     own transform is where it is standing and an animation over that would
+     move it back to the top of the list to burn. */
+  .thr-block.burning .wisp { animation: wisp-flare 1s ease-out .28s forwards; }
+  .thr-block.burning .wisp::before,
+  .thr-block.burning .wisp::after { animation: wisp-swell .9s ease-out .28s forwards; }
+  @keyframes wisp-flare {
+    0%   { opacity: 1; filter: none; }
+    26%  { opacity: 1; filter: brightness(1.6); }
+    100% { opacity: 0; filter: blur(7px) brightness(1.9); }
+  }
+  @keyframes wisp-swell {
+    0%   { transform: scale(1); }
+    100% { transform: scale(2.8); }
+  }
+
+  /* -- Burning it away --------------------------------------------------
+     The answer does not get filed, it gets consumed: the torch flares, the
+     fire runs out from it across everything on screen, and what is left is a
+     dark page for the next line to be written on.
+
+     Every glyph is already its own span from the writing, so the front is real
+     rather than a gradient sliding over a block — each character catches when
+     the fire reaches IT, ordered by its distance from the flame. The delay is
+     set per glyph in welcomeBurn; the animation is one line of CSS.
+
+     No transform on the glyphs. They are inline spans, transforms do not apply
+     to those, and making them inline-block to get one would let the browser
+     break a line between any two letters. Colour, glow and opacity say it.
+
+     The fill is `both`, and it is load-bearing. This animation REPLACES the one
+     that wrote the glyph, and a written glyph is only visible because THAT one
+     filled forwards to opacity 1 over a base rule of opacity 0. Fill only
+     forwards and every character still waiting its turn falls back to the base
+     rule and vanishes the instant the fire starts — which looks exactly like
+     the whole page going up at once, from the wrong end. Filling backwards as
+     well holds each glyph at the 0% keyframe until its own delay is up. */
+  .thr .ch.burn { animation: thr-burn .95s ease-in both; }
+  @keyframes thr-burn {
+    0%   { opacity: 1; }
+    20%  { color: var(--ember-hot); text-shadow: 0 0 12px var(--ember); opacity: 1; }
+    55%  { color: var(--ember);     text-shadow: 0 0 20px var(--ember-deep); opacity: .82; }
+    100% { color: var(--ember-deep); text-shadow: none; opacity: 0; }
+  }
+
+  .thr-block.burning .thr-choice { animation: thr-scorch .9s ease-in forwards; }
+  @keyframes thr-scorch {
+    0%   { border-color: var(--rule); }
+    40%  { border-color: var(--ember); }
+    100% { border-color: transparent; }
+  }
+  .thr-block.burning .thr-choice:not(.chosen) .wisp { opacity: 0; }
+  /* Whatever the fire has not reached goes with the rest of the page. --ash is
+     written by welcomeBurn: it is however long the slowest glyph took. */
+  .thr-block.burning { animation: thr-ash .5s ease-in var(--ash, 1s) forwards; }
+  @keyframes thr-ash { to { opacity: 0; } }
+
+  /* -- Typed in the same hand -------------------------------------------
+     The two places this screen takes something back: what the table is called,
+     and who else is at it. Set in the same face at the same size as the
+     writing, on a rule rather than in a box — what you type continues the
+     sentence the book has just written, and a grey input box in the middle of
+     that would be the tool interrupting. The caret is the one thing in it that
+     is ember: it is the only mark on this screen being made by the reader. */
+  .thr-form { margin-top: 28px; }
+  .thr-in {
+    display: block; width: 100%; max-width: 26ch; margin: 0 auto;
+    padding: 4px 2px 10px; text-align: center;
+    background: none; border: 0; border-bottom: 1px solid var(--rule);
+    color: var(--ink); caret-color: var(--ember);
+    font-family: var(--t-display);
+    font-variation-settings: 'SOFT' 60, 'WONK' 1;
+    font-style: italic; font-weight: 400;
+    font-size: clamp(22px, 3.2vw, 28px); line-height: 1.35;
+    transition: border-color .2s;
+  }
+  .thr-in::placeholder { color: var(--soft); opacity: .6; }
+  .thr-in:focus { outline: none; border-bottom-color: var(--ember); }
+  .thr-form .thr-doors { margin-top: 20px; }
+
+  /* A refusal, or a search that found nobody. Mono, because it is the machine
+     answering rather than the book writing — the same distinction the ledger
+     entry's caption makes. */
+  .thr-note {
+    margin: 16px auto 0; max-width: 46ch;
+    font-family: var(--t-mono); font-size: 11.5px; line-height: 1.7;
+    letter-spacing: .04em; color: var(--soft);
+  }
+
+  /* Somebody the search found. The line is the person, and lighting its torch
+     asks them. */
+  .thr-choice.person { padding-top: 13px; padding-bottom: 13px; }
+  .thr-who { display: block; font-size: 19px; line-height: 1.3; }
+  .thr-at {
+    display: block; margin-top: 3px;
+    font-family: var(--t-mono); font-size: 11px; letter-spacing: .06em;
+    color: var(--soft);
+  }
+  /* Asked, and their own light is left burning on that line. Not a tick: the
+     one flame on this screen is the cursor, and what it leaves behind where it
+     has been is an ember. */
+  .thr-choice.asked { color: var(--soft); cursor: default; }
+  .thr-choice.asked::after {
+    content: ''; position: absolute; right: 21px; top: 50%; margin-top: -3px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ember); box-shadow: 0 0 9px 2px #E9922F55;
+  }
+  .thr-choice.asked.picked { color: var(--soft); }
+
+  /* The small print, and the one place this screen's no-subtext rule is broken
+     on purpose.
+
+     Everywhere else, anything worth saying is a line the pen writes at the size
+     everything else is written at — a rule that exists because explaining text
+     under a heading is where an interface starts hedging. It does not survive
+     contact with consent. "Yours as well?" is a fair question only if the
+     person answering it knows what is captured, where it goes and how long it
+     is kept, and those three facts do not fit in a written line and must not be
+     summarised into one. So they are set here, plainly, in the machine's own
+     face rather than the book's: this part is not the story talking. */
+  .thr-terms {
+    margin: 22px auto 0; max-width: 52ch; padding: 0; list-style: none;
+    font-family: var(--t-mono); font-size: 11.5px; line-height: 1.85;
+    letter-spacing: .03em; color: var(--soft); text-align: left;
+  }
+  .thr-terms li { padding-left: 16px; position: relative; }
+  .thr-terms li::before {
+    content: ''; position: absolute; left: 2px; top: 9px;
+    width: 4px; height: 4px; border-radius: 50%; background: var(--rule);
+  }
+  .thr-terms b { color: var(--ink); font-weight: 400; }
+
+  /* An address to hand round. Selectable, wrapping anywhere, and never
+     shortened: a link with an ellipsis in the middle is a link somebody copies
+     and cannot use. */
+  .thr-link {
+    display: block; margin: 18px auto 0; max-width: 46ch; padding: 12px 14px;
+    border: 1px dashed var(--rule); border-radius: 4px;
+    font-family: var(--t-mono); font-size: 12px; line-height: 1.6;
+    color: var(--wet); word-break: break-all; user-select: all;
+  }
+
+  /* The line the whole screen has been walking towards: their name, written
+     into the book. */
+  .thr-entry { margin-top: 34px; padding-top: 20px; border-top: 1px solid var(--rule); }
+  .thr-entry-name {
+    font-family: var(--t-display);
+    font-variation-settings: 'SOFT' 40, 'WONK' 1;
+    font-style: italic; font-size: clamp(28px, 4.8vw, 40px);
+    line-height: 1.1; letter-spacing: -.02em; margin: 0;
+  }
+  .thr-entry-cap {
+    font-family: var(--t-mono); font-size: 10.5px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--soft); margin: 10px 0 0;
+  }
+
+  .thr-doors {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    align-items: center; justify-content: center; margin-top: 30px;
+  }
+  /* Outlined rather than filled. A solid block of the lifted pen is the
+     brightest thing that could be put on this ground, and the brightest thing
+     on the screen has to be the writing. */
+  .thr-door {
+    font-family: var(--t-mono); font-size: 13px; letter-spacing: .02em;
+    padding: 12px 22px; border: 1px solid var(--wet); border-radius: 4px;
+    background: #8FA0F514; color: var(--wet);
+    text-decoration: none; cursor: pointer;
+    transition: background .16s, border-color .16s, color .16s;
+  }
+  .thr-door:hover { background: #8FA0F526; }
+  .thr-door.quiet { background: transparent; color: var(--soft); border-color: var(--rule); }
+  .thr-door.quiet:hover { background: transparent; color: var(--ink); border-color: var(--soft); }
+  .thr-cmd {
+    font-family: var(--t-mono); font-size: 14px;
+    padding: 11px 16px; border: 1px dashed var(--rule); border-radius: 4px;
+    color: var(--wet); background: transparent;
+  }
+
+  .thr-skip {
+    width: 100%; max-width: 660px; text-align: center;
+    margin-top: 34px;
+    font-family: var(--t-mono); font-size: 11.5px; letter-spacing: .06em;
+  }
+  .thr-skip button {
+    background: none; border: 0; padding: 0; cursor: pointer;
+    color: #6E7079; text-decoration: underline; text-underline-offset: 3px;
+    font: inherit;
+  }
+  .thr-skip button:hover { color: var(--ink); }
+
+  /* Said plainly, on the same line as the eyebrow, because a screen that is
+     still being written should say so to the person it is being written for.
+     On the eyebrow's line rather than floating in a corner: with no card under
+     it there is no corner for it to be in. */
+  .thr-wip {
+    margin-left: auto;
+    font-size: 9.5px; letter-spacing: .2em;
+    border: 1px solid var(--rule); border-radius: 3px; padding: 3px 7px;
+  }
+
+  .thr :focus-visible { outline: 2px solid var(--wet); outline-offset: 3px; }
+
+  @media (max-width: 560px) {
+    .thr { padding-top: 4vh; }
+    .thr-sheet { padding: 34px 26px 30px; }
+    .thr-choice { font-size: 17.5px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .thr-sheet { animation: none; }
+    .thr .ch, .thr .ch.on, .thr .ch.lit, .thr .ch.burn { opacity: 1; animation: none; }
+    .thr-nib { display: none; }
+    /* The torch stops flickering and stops sliding, but it stays lit and it
+       still stands beside the line you are on — it is the selector, and a
+       selector that disappears with the motion setting is a control gone. */
+    .wisp { transition: opacity .3s; }
+    .wisp::before, .wisp::after { animation: none; }
+    .thr-choice.chosen { animation: none; }
+    .thr-block.burning .wisp,
+    .thr-block.burning .wisp::before,
+    .thr-block.burning .wisp::after { animation: none; }
+    .thr-block.burning, .thr-block.burning .thr-choice { animation: none; }
+  }

@@ -1,3 +1,4 @@
+import { dashboardSource } from './lib/dashboard-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
@@ -101,6 +102,6 @@ test('no tracked text file contains a replacement character', async () => {
 // and uses em dashes throughout. If they all vanish, something has mangled them
 // rather than somebody having removed them on purpose.
 test('the em dashes are still there', async () => {
-  const page = await readFile(join(ROOT, 'dashboard', 'html', 'index.html'), 'utf8');
+  const page = await dashboardSource();
   assert.ok(page.includes('—'), 'the dashboard lost its em dashes, which is what the corruption looks like');
 });

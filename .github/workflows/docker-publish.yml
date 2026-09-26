@@ -14,7 +14,7 @@ name: Test, build and publish Docker image
 # dashboard-render, dashboard-controls and gatehouse-render extract the
 # <script> blocks and run them in a vm against a real server, and morph.test
 # loads dash/morph.js. That harness is the safety net ADR-0002 leans on when
-# it argues the dashboard may stay one 6,000-line file. Without the path here
+# it argued the dashboard could stay one file (split since; see its addendum). Without the path here
 # the net does not fail on a dashboard commit; it silently never runs, which
 # is worse.
 #

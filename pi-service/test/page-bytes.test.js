@@ -1,3 +1,4 @@
+import { dashboardSource } from './lib/dashboard-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
@@ -91,7 +92,7 @@ test('every source file is LF and carries no raw control characters', async () =
 // --- the band between a phone and a laptop -------------------------------
 
 test('the top bar releases its height in the same breakpoint that lets it wrap', async () => {
-  const page = await readFile(HTML, 'utf8');
+  const page = await dashboardSource();
 
   // The bar needs 1018px at its narrowest and was pinned to one 76px row until
   // 820, so every width in between scrolled the whole page sideways. It wraps

@@ -187,3 +187,37 @@ than it returns *today*, on the strength of the harness it would break and the
 deletion test it fails. Neither is permanent. What would change the answer is a
 second consumer for one of its screens, or a harness that no longer needs to
 regex `<script>` out of the HTML.
+
+## Addendum — 2026-09-27: the file was split, and a size now triggers a review
+
+This ADR accepted one file at 4,400 lines and said what would change the
+answer: "a harness that no longer needs to regex `<script>` out of the HTML".
+By September the page was 9,432 lines — 2,530 of CSS and about 6,750 of
+script — and nothing had asked the question again, because the decision never
+said at what size it should be.
+
+It was split without changing a line of code:
+
+- `dashboard/html/index.html` is now 86 lines of markup.
+- `dashboard/html/dash/app.css` holds the stylesheet.
+- `dashboard/html/dash/app/01-core.js` to `10-act.js` hold the script, cut at
+  the section headers that were already there, in the order they ran.
+
+They are **classic scripts, not ES modules**, deliberately. Classic scripts
+share one global scope, so every top-level function and binding is still
+visible to the others exactly as before, and there is still no build step: the
+deploy is a file copy. Turning them into modules would mean an import list for
+each of several hundred cross-references, which is a rewrite rather than a
+move. The harness already read `<script src>` files off disk (for morph.js),
+so it needed no change; the six tests that read the page's text now read it
+through `test/lib/dashboard-source.js`, which concatenates the shell and every
+file it loads.
+
+One rule comes with the split: a script may call functions from a later file
+only from inside a function, never at load time, because a later file has not
+run yet. The only load-time calls are in `10-act.js`, which runs last.
+
+**The size trigger.** Revisit this decision when any one file under
+`dashboard/html/dash/app/` passes 1,500 lines, or when a second page needs a
+screen from this one. At the split the largest are `06-campaign.js` (1,376)
+and `05-threshold.js` (1,348).

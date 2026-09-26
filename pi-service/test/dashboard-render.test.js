@@ -1,3 +1,4 @@
+import { dashboardSource } from './lib/dashboard-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -1331,7 +1332,7 @@ test('the index has a slot of its own, filled after the page is drawn', async (t
   assert.match(page.body(), /<div class="parts-slot" data-key="parts-slot">/,
                'the rail has nowhere to put an index that disagrees with the page');
 
-  const html = await readFile(PAGE, 'utf8');
+  const html = await dashboardSource();
   const paint = html.slice(html.lastIndexOf('function paint()'));
   const sync = paint.indexOf('syncParts()');
   const mark = paint.indexOf('markPart()');

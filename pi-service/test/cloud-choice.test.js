@@ -1,3 +1,4 @@
+import { dashboardSource } from './lib/dashboard-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
@@ -117,7 +118,7 @@ test('the action is reachable from the dashboard and from an old DM button', asy
 });
 
 test('the page offers the button only where the cloud is actually on', async () => {
-  const page = await readFile(fileURLToPath(new URL('../../dashboard/html/index.html', import.meta.url)), 'utf8');
+  const page = await dashboardSource();
 
   // Gated on the flag, both the button and the sentence under it. A button
   // that always showed and sometimes refused would teach every operator that

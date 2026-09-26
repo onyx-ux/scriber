@@ -89,3 +89,16 @@ The decision is unchanged and so is the rule: `revokeAllSessions` and
 `sweepExpired` still stand in front of the one credential table, and it is
 still reached from exactly one module. The cluster getting smaller is not an
 argument for moving what is left.
+
+## Addendum — 2026-09-27: a size that triggers a review
+
+When this was decided `db.js` was 1,994 lines with 100 methods. On
+2026-09-27 it is 3,152 lines with 156, and nothing had prompted a second look,
+because the decision never said when one was due.
+
+The reasoning still holds: every method hides a real query, and the schema is
+still written down in one place. What changes is that it now carries its own
+limit. **Revisit this decision when `db.js` passes 4,000 lines or 200 methods**,
+and at that point split along the clusters that have grown their own
+lifecycles (the search index and threads added today are the likeliest first
+candidates), keeping one `openDb` that composes them.
