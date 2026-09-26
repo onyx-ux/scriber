@@ -6418,9 +6418,8 @@ function nameFixer() {
       <button type="button" class="btn ghost" data-fix-cancel>Cancel</button>
     </form>
     <div class="quiet measure" style="margin-top:12px">
-      This rewrites every transcript in the campaign, the ones already recorded as well as the ones
-      still to come. These notes keep the old spelling until they are written again — the summariser
-      wrote them from the transcript as it stood.
+      Every transcript and write-up in the campaign reads it the right way, past sessions included.
+      What was heard is kept underneath, so removing the correction puts it back.
     </div>`;
 }
 
@@ -7264,18 +7263,19 @@ function correctionsTab() {
           <div class="cap">Replay</div>
           <h4>${list.length ? plural(list.length, 'rule') : 'Nothing saved'}</h4>
           <div class="quiet" style="margin-top:8px">
-            Adding a correction already rewrites this campaign's transcripts. Replay is for the sessions
-            that arrived afterwards from somewhere else — an import, or anything recovered from a crash.
+            Adding or removing a correction already works every transcript out again. Replay is for sessions
+            that arrived from somewhere else — an import, or anything recovered from a crash.
           </div>
           ${canManage() && list.length ? `<button type="button" class="btn wide" style="margin-top:16px" data-act="corrections/replay"
             data-campaign="${detail.id}"
             data-confirm="Replay every correction over this campaign's transcripts?">Replay over everything again</button>` : ''}
         </div>
         <div class="card">
-          <div class="cap">What this does not touch</div>
+          <div class="cap">Taking one back</div>
           <div class="quiet" style="margin-top:10px">
-            Notes already written keep the old spelling — the summariser wrote them from the transcript as
-            it was. Re-summarise a session to regenerate one.
+            Write-ups are corrected as they are read and never rewritten, and transcripts keep what was
+            heard underneath. Remove a correction and every line it changed goes back. Lines corrected
+            before 27 September 2026 were rewritten in place and keep their fix.
           </div>
         </div>
       </div>
@@ -9314,15 +9314,15 @@ document.addEventListener('submit', async (event) => {
   }
 });
 
-// A correction that would rewrite a large share of the campaign comes back
-// refused rather than applied, with the count. Rewriting is not reversible —
-// afterwards there is no telling which words were changed — so the number has
-// to be seen before it happens, not reported after.
+// A correction that would change a large share of the campaign comes back
+// refused rather than applied, with the count. It can be taken back, but until
+// it is every transcript and write-up reads that way, so the number is shown
+// before it happens rather than reported after.
 async function confirmBlastRadius(action, body, payload) {
   if (!payload?.needsConfirming) return false;
   const sure = confirm(
     `${payload.message}\n\n` +
-    `Apply it anyway to all ${payload.wouldChange} of ${payload.total} lines? This cannot be undone.`
+    `Apply it anyway to all ${payload.wouldChange} of ${payload.total} lines? You can remove it afterwards to put them back.`
   );
   if (!sure) return false;
   await send(action, { ...body, force: true });

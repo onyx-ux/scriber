@@ -324,17 +324,17 @@ test('a correction that changes nothing is refused before it is saved', async (t
   assert.deepEqual(db.listCorrections(campaignId), [], 'and none of them were stored');
 });
 
-test('removing a correction leaves the lines it already rewrote alone', async (t) => {
+test('removing a correction puts the lines it changed back', async (t) => {
   const { db, cfg, campaignId } = await harness(t);
   const meetingId = parked(db, 'summarize', campaignId).meetingId;
-  db.finalizeTranscription(meetingId, [{ userId: 'u', displayName: 'A', startMs: 0, endMs: 1, text: 'Vecks' }]);
+  db.finalizeTranscription(meetingId, [{ userId: 'u', displayName: 'A', startMs: 0, endMs: 1, text: 'Vecks', rawText: 'Vecks' }]);
 
   runAction({ pathname: '/actions/corrections/add', body: { campaignId, wrong: 'Vecks', right: 'Vex' }, db, cfg });
   const res = runAction({ pathname: '/actions/corrections/remove', body: { campaignId, wrong: 'Vecks' }, db, cfg });
 
   assert.equal(res.payload.ok, true);
   assert.deepEqual(db.listCorrections(campaignId), []);
-  assert.equal(db.listUtterances(meetingId)[0].text, 'Vex', 'undoing the rule is not undoing the rewrite');
+  assert.equal(db.listUtterances(meetingId)[0].text, 'Vecks', 'undoing the rule undoes what it changed');
 });
 
 test('removing a correction that was never saved says so', async (t) => {
@@ -1167,7 +1167,7 @@ test('a correction that would rewrite a quarter of the campaign is refused', asy
   assert.equal(res.payload.ok, false);
   assert.equal(res.payload.needsConfirming, true);
   assert.equal(res.payload.wouldChange, 200);
-  assert.match(res.payload.message, /cannot be undone/);
+  assert.match(res.payload.message, /every transcript and write-up reads that way until you do/);
   assert.deepEqual(db.listCorrections(campaignId), [], 'and nothing was saved');
   assert.match(db.listUtterances(1)[0].text, /found a door/, 'and nothing was rewritten');
 });

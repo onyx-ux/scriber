@@ -353,6 +353,23 @@ function migrate(db) {
   // NULL means a session transcribed before this column existed. Left null on
   // purpose rather than backfilled with a guess: the honest answer for those
   // is 'nobody wrote it down', and a made-up 'exact' is worse than a blank.
+  // What the transcriber actually heard, kept underneath the corrected text.
+  //
+  // Name corrections used to overwrite `text`, so removing a rule could not
+  // put anything back: nothing recorded which words had been changed. With
+  // the original kept here, `text` is always the saved rules applied to
+  // raw_text, and a rule taken away is a line put back. See
+  // reapplyCorrections below.
+  //
+  // NULL for lines written before this column existed. Their `text` may
+  // already have corrections baked in, so the first reapply snapshots it as
+  // the baseline rather than pretending to know what was heard.
+  const utteranceColumns = db.prepare(`PRAGMA table_info(utterances)`).all().map((c) => c.name);
+  if (!utteranceColumns.includes('raw_text')) {
+    db.exec(`ALTER TABLE utterances ADD COLUMN raw_text TEXT`);
+    console.log('[db] migrated: added utterances.raw_text');
+  }
+
   if (!meetingColumns.includes('transcribed_by')) {
     db.exec(`ALTER TABLE meetings ADD COLUMN transcribed_by TEXT`);
     db.exec(`ALTER TABLE meetings ADD COLUMN line_breaks TEXT`);
@@ -1531,8 +1548,8 @@ function wrap(db) {
     ) {
       const del = db.prepare(`DELETE FROM utterances WHERE meeting_id = ?`);
       const ins = db.prepare(
-        `INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO utterances (meeting_id, user_id, display_name, start_ms, end_ms, text, raw_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       );
       // The engine goes in with the status, inside the same transaction as the
       // utterances it describes — a transcript and the claim about how it was
@@ -1567,7 +1584,7 @@ function wrap(db) {
       const tx = db.transaction((rows) => {
         del.run(meetingId);
         for (const u of rows) {
-          ins.run(meetingId, u.userId, u.displayName, u.startMs, u.endMs, u.text);
+          ins.run(meetingId, u.userId, u.displayName, u.startMs, u.endMs, u.text, u.rawText ?? null);
         }
         // 'imported' is the synthetic speaker every line of an /import is
         // attributed to, not a Discord account — enrolling it would put a
@@ -2044,6 +2061,36 @@ function wrap(db) {
             update.run(next, row.id);
             changed++;
           }
+        }
+      });
+      tx();
+      return changed;
+    },
+
+    // Works every line of a campaign out again from what was heard.
+    //
+    // `apply` is the campaign's whole rule list applied to one string. Each
+    // line's `text` becomes apply(raw_text), so adding a rule corrects the
+    // lines it matches and removing one puts them back. A line with no
+    // raw_text predates this and may already carry corrections, so its current
+    // text becomes its baseline from here on. Returns how many lines changed.
+    reapplyCorrections(campaignId, apply) {
+      const rows = db
+        .prepare(
+          `SELECT u.id, u.text, u.raw_text FROM utterances u
+             JOIN meetings m ON m.id = u.meeting_id
+            WHERE m.campaign_id = ?`
+        )
+        .all(campaignId);
+
+      const update = db.prepare(`UPDATE utterances SET text = ?, raw_text = ? WHERE id = ?`);
+      let changed = 0;
+      const tx = db.transaction(() => {
+        for (const row of rows) {
+          const base = row.raw_text ?? row.text;
+          const next = apply(base);
+          if (next !== row.text) changed++;
+          if (next !== row.text || row.raw_text == null) update.run(next, base, row.id);
         }
       });
       tx();

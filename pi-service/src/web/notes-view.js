@@ -14,7 +14,8 @@
 // expects, and anything missing becomes empty rather than undefined.
 import { sessionRef } from '../campaign/session-ref.js';
 import { campaignLabel } from '../campaign/resolve.js';
-import { readingOf, redlineOf } from '../notes/redline.js';
+import { readingOf, redlineOf, FLAT_PARTS } from '../notes/redline.js';
+import { applyCorrections } from '../campaign/corrections.js';
 
 // A model told to return an array of strings will sometimes return one string,
 // or an array of objects with a single key. Take what is usable and drop the
@@ -79,7 +80,43 @@ export function correctedWriteUp(db, meetingId) {
   if (!meeting?.summary_json) return null;
   let raw = null;
   try { raw = JSON.parse(meeting.summary_json); } catch { return null; }
-  return readingOf(readable(raw), db.listRecapNotes(meetingId));
+  const fix = nameFixer(db, meeting.campaign_id);
+  return fixReading(readingOf(readable(raw), db.listRecapNotes(meetingId)), fix);
+}
+
+// The campaign's name corrections, applied to a write-up as it is read.
+//
+// A write-up is never rewritten for one. Anchoring stays on the summariser's
+// own lines (so a table's redlines never lose their place), and the name is
+// fixed on the way out: in the reading, and in the base and reading of every
+// redlined line. Removing the correction puts the old name back everywhere,
+// and a write-up summarised before the rule existed reads right without being
+// re-summarised. See campaign/corrections.js.
+function nameFixer(db, campaignId) {
+  const rules = campaignId ? db.listCorrections(campaignId) : [];
+  return rules.length ? (s) => (typeof s === 'string' ? applyCorrections(s, rules) : s) : null;
+}
+
+function fixReading(reading, fix) {
+  if (!fix || !reading) return reading;
+  const out = {
+    ...reading,
+    tldr: fix(reading.tldr),
+    scenes: (reading.scenes ?? []).map((sc) => ({ ...sc, title: fix(sc.title), points: (sc.points ?? []).map(fix) })),
+  };
+  for (const part of FLAT_PARTS) {
+    if (part !== 'tldr' && Array.isArray(reading[part])) out[part] = reading[part].map(fix);
+  }
+  return out;
+}
+
+function fixMarks(parts, fix) {
+  if (!fix) return parts;
+  return parts.map((p) => ({
+    ...p,
+    name: fix(p.name),
+    lines: p.lines.map((l) => ({ ...l, base: fix(l.base), reading: fix(l.reading) })),
+  }));
 }
 
 export function buildNotesView({ db, meetingId }) {
@@ -111,7 +148,8 @@ export function buildNotesView({ db, meetingId }) {
   // The document, the corrections on it, and the two readings of it.
   const written = readable(notes);
   const comments = db.listRecapNotes(meetingId);
-  const reading = readingOf(written, comments);
+  const fix = nameFixer(db, meeting.campaign_id);
+  const reading = fixReading(readingOf(written, comments), fix);
   const redline = redlineOf(written, comments);
 
   return {
@@ -141,7 +179,7 @@ export function buildNotesView({ db, meetingId }) {
     // Indexed against `written` — the tidied write-up, not the raw blob —
     // because that is the document a correction was anchored to. See
     // readable().
-    marks: redline.parts,
+    marks: fixMarks(redline.parts, fix),
     // Corrections whose line is not in the write-up any more. Never dropped:
     // somebody's own words about their own game, and losing one quietly is
     // the failure this whole feature is a defence against.

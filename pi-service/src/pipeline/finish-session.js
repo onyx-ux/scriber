@@ -93,10 +93,11 @@ export async function finishSession(
   // correcting one once should fix it forever, not just retroactively.
   const meeting = db.getMeeting(meetingId);
   const corrections = meeting?.campaign_id ? db.listCorrections(meeting.campaign_id) : [];
-  if (corrections.length > 0) {
-    for (const u of utterances) {
-      u.text = applyCorrections(u.text, corrections);
-    }
+  // What was heard is kept underneath, so a rule removed later puts the line
+  // back. See utterances.raw_text in store/db.js.
+  for (const u of utterances) {
+    u.rawText = u.text;
+    if (corrections.length > 0) u.text = applyCorrections(u.text, corrections);
   }
 
   // Single transaction: replaces utterances, flips status, and enqueues the

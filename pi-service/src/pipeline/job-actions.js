@@ -22,6 +22,7 @@ import {
   withProvider,
 } from './model-client.js';
 import { snoozeUntil, ACTION_LATER, ACTION_PI, ACTION_GEMINI, ACTION_NOW } from './transcribe-schedule.js';
+import { applyCorrections } from '../campaign/corrections.js';
 
 // A provider the caller explicitly asked for but that isn't set up (no API
 // key) should say so plainly, rather than silently falling back to the default
@@ -217,13 +218,18 @@ export function transcribeAction(db, cfg, { jobId, action = ACTION_NOW } = {}) {
 // A correction is a fact about ONE game's invented names. Scoping is not a
 // nicety — rewriting another table's transcripts with it is silent corruption
 // that nobody would notice until a recap named the wrong NPC.
-// What makes a correction dangerous, learned by doing it twice.
 //
-// A correction of "a" to "b" passes every other check here, and because the
-// rewriter is word-boundary anchored it replaced every standalone "a" in 1,010
-// of a campaign's 6,844 lines. There is no undoing that — afterwards there is
-// no telling which "b" used to be an "a" — and it took restoring from a
-// snapshot to get the transcripts back.
+// Since 2026-09-27 a correction can be taken back. Every line keeps what the
+// transcriber heard (utterances.raw_text), its text is the saved rules applied
+// to that, and write-ups are corrected as they are read rather than rewritten
+// (see web/notes-view.js). Removing a rule puts back every line it changed.
+// Lines rewritten before raw_text existed have nothing underneath, so they keep
+// the fix they already had.
+//
+// The guard below still matters, because a rule that is too broad still makes
+// every transcript read wrong until somebody notices and takes it back. It was
+// learned by doing it: a correction of "a" to "b" replaced every standalone
+// "a" in 1,010 of a campaign's 6,844 lines, and at the time there was no undo.
 //
 // The first attempt at this guard used a fraction alone, at a quarter, and did
 // not fire: 1,010 of 6,844 is 14.8%. Which was the lesson. There are two
@@ -242,6 +248,13 @@ const MIN_TERM_LENGTH = 3;
 const BLAST_FRACTION = 0.1;
 const BLAST_FLOOR = 200;
 
+// Every line in the campaign worked out again from what was heard, with the
+// rules as they are saved now.
+function reapply(db, campaignId) {
+  const rules = db.listCorrections(campaignId);
+  return db.reapplyCorrections(campaignId, (text) => applyCorrections(text, rules));
+}
+
 export function addCorrection(db, { campaignId, wrong, right, rewrite, force = false } = {}) {
   const from = String(wrong ?? '').trim();
   const to = String(right ?? '').trim();
@@ -255,8 +268,8 @@ export function addCorrection(db, { campaignId, wrong, right, rewrite, force = f
   // clean up — corrections has no foreign key to lean on.
   if (!db.getCampaign(campaignId)) return { ok: false, message: '⚠️ No such campaign.' };
 
-  // Counted before anything is written. The rewrite is not reversible, so the
-  // only safe place to find out how big it is, is beforehand.
+  // Counted before anything is written, so the size of a broad rule is seen
+  // before every transcript starts reading that way.
   const wouldChange = rewrite ? db.countRewrites(campaignId, (text) => rewrite(text, from, to)) : 0;
   const total = db.countUtterancesIn(campaignId);
 
@@ -274,16 +287,16 @@ export function addCorrection(db, { campaignId, wrong, right, rewrite, force = f
           ? `⚠️ "${from}" is too short to correct safely — matching on ${from.length} character` +
             `${from.length === 1 ? '' : 's'} catches articles and initials rather than a name. `
           : `⚠️ "${from}" appears in ${wouldChange} of this campaign's ${total} lines. `) +
-        `It would rewrite ${wouldChange} line${wouldChange === 1 ? '' : 's'}, and that cannot be undone — ` +
-        'afterwards there is no telling which words were changed. ' +
+        `It would change ${wouldChange} line${wouldChange === 1 ? '' : 's'}. You can take it back afterwards, ` +
+        'but every transcript and write-up reads that way until you do. ' +
         'Use a longer or more distinctive term, or confirm it if you really mean it.',
     };
   }
 
-  // Saved first so it applies to every future session, then replayed over
-  // everything already transcribed.
+  // Saved first so it applies to every future session, then worked out again
+  // over everything already transcribed.
   db.addCorrection(campaignId, from, to);
-  const changed = rewrite ? db.rewriteUtterances(campaignId, (text) => rewrite(text, from, to)) : 0;
+  const changed = rewrite ? reapply(db, campaignId) : 0;
 
   return {
     ok: true,
@@ -291,37 +304,31 @@ export function addCorrection(db, { campaignId, wrong, right, rewrite, force = f
     right: to,
     changed,
     message:
-      `✏️ "${from}" → "${to}". ${changed} existing line${changed === 1 ? '' : 's'} rewritten.` +
-      (changed > 0
-        ? ' Summaries written before this still say the old name — re-summarise a session to regenerate one.'
-        : ''),
+      `✏️ "${from}" → "${to}". ${changed} existing line${changed === 1 ? '' : 's'} corrected, ` +
+      'and every write-up now reads it the right way. Remove the correction to put them back.',
   };
 }
 
-// Run every saved correction back over the campaign's existing transcripts.
+// Works every line out again from what was heard, with every saved rule.
 //
-// addCorrection already replays the one rule it just saved, so this is for the
-// case that rule cannot cover: a session transcribed while the correction list
-// was shorter — an import, a session recovered from a crash, anything
-// backfilled — which is on disk uncorrected and would stay that way until
-// somebody re-typed a rule that is already saved.
-export function replayCorrections(db, { campaignId, rewrite } = {}) {
+// For the lines a single add or remove could not reach: a session transcribed
+// while the rule list was different, an import, a session recovered from a
+// crash, anything backfilled.
+export function replayCorrections(db, { campaignId } = {}) {
   const rules = db.listCorrections(campaignId);
   if (rules.length === 0) {
     return { ok: false, message: '⚠️ This campaign has no corrections saved, so there is nothing to replay.' };
   }
 
-  const changed = db.rewriteUtterances(campaignId, (text) => rewrite(text, rules));
+  const changed = reapply(db, campaignId);
   return {
     ok: true,
     rules: rules.length,
     changed,
     message:
       `✏️ Replayed ${rules.length} correction${rules.length === 1 ? '' : 's'} — ` +
-      `${changed} line${changed === 1 ? '' : 's'} rewritten. ` +
-      (changed > 0
-        ? 'Summaries written before this still say the old names — re-summarise a session to regenerate one.'
-        : 'Everything already read the right way.'),
+      `${changed} line${changed === 1 ? '' : 's'} corrected. ` +
+      (changed > 0 ? '' : 'Everything already read the right way.'),
   };
 }
 
@@ -330,14 +337,19 @@ export function removeCorrection(db, { campaignId, wrong } = {}) {
   if (!from) return { ok: false, message: '⚠️ Which correction? Name the wrong text.' };
 
   const removed = db.removeCorrection(campaignId, from);
-  return removed
-    ? {
-        ok: true,
-        message:
-          `🗑️ Dropped the correction for "${from}". Lines already rewritten stay rewritten — ` +
-          'this only stops it applying to new transcripts.',
-      }
-    : { ok: false, message: `⚠️ No saved correction for "${from}" — check the exact text.` };
+  if (!removed) return { ok: false, message: `⚠️ No saved correction for "${from}" — check the exact text.` };
+
+  const restored = reapply(db, campaignId);
+  return {
+    ok: true,
+    restored,
+    message:
+      `🗑️ Dropped the correction for "${from}". ` +
+      (restored > 0
+        ? `${restored} line${restored === 1 ? '' : 's'} put back the way ${restored === 1 ? 'it was' : 'they were'} heard.`
+        : 'No lines needed putting back.') +
+      ' Lines corrected before 27 Sep 2026 were rewritten in place and keep the fix.',
+  };
 }
 
 // Naming someone also puts them on the roster, which is deliberate and worth
