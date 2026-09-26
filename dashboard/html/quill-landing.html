@@ -35,7 +35,7 @@
   file, not a data: URI, because no unfurler accepts one.
 -->
 
-<meta name="description" content="Quill joins your D&amp;D voice channel with everyone's consent, takes down every word, and posts the recap before the dice are back in the bag.">
+<meta name="description" content="Quill joins your D&amp;D voice channel with everyone's consent, takes down every word, and posts the recap well before your next session.">
 <link rel="canonical" href="https://quill.thehouseofcake.org/">
 <meta name="theme-color" content="#E6E8E3">
 
@@ -48,7 +48,7 @@
 <meta property="og:site_name" content="Quill">
 <meta property="og:url" content="https://quill.thehouseofcake.org/">
 <meta property="og:title" content="Quill — a scribe that sits in the voice channel">
-<meta property="og:description" content="Your table talks for four hours. Quill takes down every word with everyone's consent, fixes the names it mishears, and posts the recap before the dice are back in the bag.">
+<meta property="og:description" content="Your table talks for four hours. Quill takes down every word with everyone's consent, fixes the names it mishears, and posts the recap well before your next session.">
 <meta property="og:image" content="https://quill.thehouseofcake.org/dash/og.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
@@ -57,7 +57,7 @@
 
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Quill — a scribe that sits in the voice channel">
-<meta name="twitter:description" content="Your table talks for four hours. Quill takes down every word with everyone's consent, fixes the names it mishears, and posts the recap before the dice are back in the bag.">
+<meta name="twitter:description" content="Your table talks for four hours. Quill takes down every word with everyone's consent, fixes the names it mishears, and posts the recap well before your next session.">
 <meta name="twitter:image" content="https://quill.thehouseofcake.org/dash/og.png">
 
 <!--
@@ -84,9 +84,7 @@
   var QUILL_INVITE = '';
 </script>
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1;1,9..144,300..700,0..100,0..1&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/dash/fonts/fonts.css">
 <style>
 /* ── tokens ─────────────────────────────────────────────────────────── */
 :root{
@@ -573,7 +571,7 @@ a{color:var(--pen)}
   <div class="band-inner">
     <p class="eyebrow">A scribe that sits in the voice channel</p>
     <h1 class="hero-h1">Your table talks for four hours. <em>Quill writes the page.</em></h1>
-    <p class="hero-sub">It joins the voice channel with everyone's consent, takes down every word, and posts the recap before the dice are back in the bag.</p>
+    <p class="hero-sub">It joins the voice channel with everyone's consent, takes down every word, and posts the recap well before your next session.</p>
     <div class="btns hero-btns">
       <a class="btn" data-invite>Add to Discord</a>
       <a class="btn btn-quiet" href="#writes">See what it posts</a>
@@ -598,7 +596,7 @@ a{color:var(--pen)}
         <div class="tx-fix">
           <span>correction applied</span>
           <span data-tx-alias><s>Yusdrail</s> &nbsp;<s>Use Drail</s> &nbsp;&rarr;&nbsp; <strong>Yusdrayl</strong></span>
-          <span data-tx-count>&middot; 3 sessions rewritten</span>
+          <span data-tx-count>&middot; 3 sessions corrected</span>
         </div>
       </div>
     </div>
@@ -616,15 +614,15 @@ a{color:var(--pen)}
   </div>
   <div class="band-inner">
     <p class="eyebrow">What lands in the channel</p>
-    <h2 class="h2">Four things, posted without anyone asking</h2>
-    <p class="lead">Set a campaign up once — a name, a voice channel, a channel to post in. Quill handles the rest of the season on its own.</p>
+    <h2 class="h2">Four things, kept for every night you play</h2>
+    <p class="lead">Set a campaign up once — a name, a voice channel, a channel to post in. Start and stop recording with one command each, and Quill writes up the rest.</p>
 
     <div class="outs">
       <article class="out">
-        <div class="out-key">#cipher-notes<br>posted at session end</div>
+        <div class="out-key">#cipher-notes<br>posted once written up</div>
         <div>
           <h3 class="out-h">The recap</h3>
-          <p class="out-p">What happened, in order, in about a page. It lands in the campaign channel when the last person leaves the voice channel.</p>
+          <p class="out-p">What happened, in order, in about a page. It lands in the campaign channel once the night has been transcribed and written up. If everyone leaves the voice channel and forgets to stop the recording, Quill stops it for you.</p>
         </div>
       </article>
 
@@ -637,10 +635,10 @@ a{color:var(--pen)}
       </article>
 
       <article class="out">
-        <div class="out-key">react with 📌<br>to keep a line</div>
+        <div class="out-key">worth remembering<br>in every recap</div>
         <div>
           <h3 class="out-h">Lines worth keeping</h3>
-          <p class="out-p">Quill pulls the quotable ones out of the transcript. Pin any line yourself and it joins the list.</p>
+          <p class="out-p">Each recap picks out the moments worth remembering from the night, and the whole table can read them back later.</p>
           <p class="quote" data-quote>&ldquo;The door is not warded. It is not trapped. <mark>It is pull.&rdquo;</mark><span>DM &middot; session 12 &middot; 1:04:38</span></p>
         </div>
       </article>
@@ -660,7 +658,7 @@ a{color:var(--pen)}
 <section class="band" id="names">
   <div class="rail">
     <div class="rail-stick">
-      <b>/correct</b>
+      <b>fix a name</b>
       <span data-nm-heard>heard: use drail</span><br>
       <span data-nm-write>write: yusdrayl</span>
     </div>
@@ -668,7 +666,7 @@ a{color:var(--pen)}
   <div class="band-inner">
     <p class="eyebrow">Names</p>
     <h2 class="h2">It mishears &ldquo;<span data-nm-name>Yusdrayl</span>&rdquo; once. Then never again.</h2>
-    <p class="lead">Invented names come back mangled — it is the one thing transcription is reliably bad at. Write the fix once and Quill rewrites every transcript and recap that carried the wrong spelling, then keeps the mistake as an alias so the old links still resolve.</p>
+    <p class="lead">Invented names come back mangled — it is the one thing transcription is reliably bad at. Write the fix once and every transcript and recap reads it the right way, past sessions included. The original words are kept underneath, so a fix can always be taken back.</p>
 
     <div class="note">
       <div class="note-head" data-nm-file>NPCs/Yusdrayl.md</div>
@@ -681,7 +679,7 @@ a{color:var(--pen)}
       </div>
     </div>
 
-    <p class="aside">A correction rewrites history, so Quill tells you how many sessions it is about to touch and waits for you to say yes.</p>
+    <p class="aside">Before a fix applies, Quill tells you how many lines it will change. Taking a fix back restores every one of them.</p>
   </div>
 </section>
 
@@ -730,7 +728,7 @@ a{color:var(--pen)}
       <div class="door">
         <p class="door-k">New table</p>
         <h3 class="door-h">Bring a scribe to your table</h3>
-        <p class="door-p">Set it up once and Quill handles the rest of the season on its own.</p>
+        <p class="door-p">Set it up once, then start and stop recording from Discord. Quill writes up the rest.</p>
 
         <div class="face" aria-hidden="true">
           <span class="face-v cmd">/campaign create</span>
@@ -1136,7 +1134,7 @@ var KEPT = [
       s.heard.map(function (h) { return '<s>' + esc(h) + '</s>'; }).join(' &nbsp;') +
       ' &nbsp;&rarr;&nbsp; <strong>' + esc(s.written) + '</strong>';
     tx.querySelector('[data-tx-count]').innerHTML =
-      '&middot; ' + s.rewritten + ' session' + (s.rewritten === 1 ? '' : 's') + ' rewritten';
+      '&middot; ' + s.rewritten + ' session' + (s.rewritten === 1 ? '' : 's') + ' corrected';
 
     // The Names section is about the mishearing the panel just showed, so it
     // follows the same pick. Left fixed on Yusdrayl it explained a correction
