@@ -1,0 +1,28 @@
+# Keeps the base images and the npm dependencies from quietly going stale.
+#
+# Added 2026-09-27 after the runtime sat on Node 20 for five months past its
+# end of life with nothing in the repo saying so. Dependabot opens a pull
+# request; the test job in docker-publish.yml runs on it; nothing merges or
+# deploys on its own.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /pi-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      discord:
+        patterns: ["discord.js", "@discordjs/*", "prism-media", "libsodium-wrappers", "opusscript"]
+      model-sdks:
+        patterns: ["@anthropic-ai/sdk", "@google/genai"]
+
+  - package-ecosystem: docker
+    directory: /pi-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

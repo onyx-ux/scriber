@@ -1,13 +1,12 @@
 # syntax=docker/dockerfile:1
 #
-# NOTE: this is a starting point, not a verified-on-real-hardware build.
-# whisper.cpp's CMake build is generally straightforward on both amd64 and
-# arm64, but Pi-specific quirks (available RAM during compile, exact Debian
-# base image version) sometimes need small tweaks — expect to iterate here
-# once you actually build this on the Pi. If compiling ON the Pi is too slow
-# or runs out of memory, cross-compiling on your PC with `docker buildx build
-# --platform linux/arm64` and pushing to a registry the Pi pulls from is the
-# usual workaround.
+# Built by .github/workflows/docker-publish.yml for linux/amd64 and
+# linux/arm64 on every push to main, and pulled by the Pi from GHCR. Nothing
+# compiles on the Pi itself.
+#
+# Node 22 LTS throughout. Node 20 reached end of life in April 2026 and ran
+# here for five months after it; .github/dependabot.yml now watches the base
+# image so that does not happen quietly again.
 
 
 # git clone runs on the BUILD platform (native, no QEMU) rather than the
@@ -17,7 +16,7 @@
 # often because QEMU's syscall emulation is flaky for git's process/spawn
 # calls (see docker/buildx#528). Splitting the clone into its own
 # always-native stage sidesteps that entirely.
-FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS whisper-source
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS whisper-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -29,7 +28,7 @@ RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git
 # cross-building for arm64 on an amd64 runner. That's slower than the clone
 # but doesn't hit the same crash; it's just the compile time README already
 # warned about (10-20 min for the arm64 leg).
-FROM node:20-bookworm-slim AS whisper-build
+FROM node:22-bookworm-slim AS whisper-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -61,15 +60,20 @@ RUN mkdir -p /out/bin /out/lib && \
     cp build/bin/whisper-cli /out/bin/ && \
     find build -name '*.so*' -exec cp -n {} /out/lib/ \; 2>/dev/null || true
 
-FROM node:20-bookworm-slim AS deps
+FROM node:22-bookworm-slim AS deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package.json ./
-RUN npm install --omit=dev
+# The lockfile goes in with package.json, and `npm ci` installs exactly what it
+# names. `npm install` from package.json alone resolved every caret range
+# fresh on each build, so the image drifted from the repo without anyone
+# noticing: on 2026-09-26 the Pi was running @google/genai 2.17.1 while the
+# lockfile and the test suite were on 2.15.0.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 # rclone and ffmpeg are straightforward Debian packages on both amd64 and
