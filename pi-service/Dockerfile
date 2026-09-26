@@ -16,7 +16,7 @@
 # often because QEMU's syscall emulation is flaky for git's process/spawn
 # calls (see docker/buildx#528). Splitting the clone into its own
 # always-native stage sidesteps that entirely.
-FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS whisper-source
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim AS whisper-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -28,7 +28,7 @@ RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git
 # cross-building for arm64 on an amd64 runner. That's slower than the clone
 # but doesn't hit the same crash; it's just the compile time README already
 # warned about (10-20 min for the arm64 leg).
-FROM node:22-bookworm-slim AS whisper-build
+FROM node:26-bookworm-slim AS whisper-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -60,7 +60,7 @@ RUN mkdir -p /out/bin /out/lib && \
     cp build/bin/whisper-cli /out/bin/ && \
     find build -name '*.so*' -exec cp -n {} /out/lib/ \; 2>/dev/null || true
 
-FROM node:22-bookworm-slim AS deps
+FROM node:26-bookworm-slim AS deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -73,7 +73,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 WORKDIR /app
 
 # rclone and ffmpeg are straightforward Debian packages on both amd64 and
