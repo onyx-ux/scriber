@@ -2646,8 +2646,6 @@ const view = {
   importing: false,
   creating: false,
   deleting: false,
-  askingRestore: null,   // { id, name } of a deleted campaign being asked about
-  reviewing: null,       // the id of a restore request being read
   diagnosing: false,    // the degraded banner's detail is open
   sheet: null,          // the account panel, hung off the top bar: account
   search: '',
@@ -2664,8 +2662,6 @@ const closeDialogs = () => {
   view.importing = false;
   view.creating = false;
   view.deleting = false;
-  view.askingRestore = null;
-  view.reviewing = null;
   view.picking = null;
   // A sheet is a dialog too as far as "only one thing is open" goes: the
   // campaigns sheet opens the new-campaign form, and leaving the sheet up
@@ -3773,14 +3769,13 @@ function deskScreen() {
     }));
   }
 
-  if (cap('models')) {
-    const spent = status?.models?.today;
-    doors.push(door('data-screen="models"', {
-      name: 'The bill',
-      say: 'what today cost, counted as it was spent',
-      fig: spent?.calls ? plural(spent.calls, 'call') : 'nothing yet',
-    }));
-  }
+  // Everybody's own usage, against what their account allows. A placeholder
+  // until per-account limits are built; see usageScreen.
+  doors.push(door('data-screen="usage"', {
+    name: 'Your usage',
+    say: 'what your account has used this month',
+    fig: 'preview',
+  }));
 
   // A page of its own rather than a screen of this one, so its entry is a
   // link and goes there the way any link does.
@@ -3791,7 +3786,7 @@ function deskScreen() {
         <span class="door-lead" aria-hidden="true"></span>
         <span class="door-fig"></span>
         <span class="door-arw">${ARW}</span>
-        <span class="door-say">who may sign in, and what they may spend</span>
+        <span class="door-say">who may sign in, deleted campaigns, and what the models cost</span>
       </a>`);
   }
 
@@ -3903,39 +3898,9 @@ function indexMore() {
     </button>`);
   }
 
-  // Anything deleted and still inside its window. Shown here because this is
-  // where you would come looking for a campaign that has gone missing.
-  //
-  // The operator restores; everybody else asks. Deleting is the creator's
-  // decision and restoring is not, so the page offers the same ticket Discord
-  // does rather than a shortcut around it.
-  for (const gone of status?.restorable ?? []) {
-    bits.push(`
-      <div class="camp gone">
-        <div class="l1"><span class="nm">${esc(gone.name)}</span></div>
-        <div class="meta">deleted · ${gone.daysLeft} day${gone.daysLeft === 1 ? '' : 's'} left</div>
-        ${cap('everything')
-          ? `<button type="button" class="btn sm" style="margin-top:9px"
-                     data-act="campaign/restore" data-campaign="${gone.id}">Restore</button>`
-          : `<button type="button" class="btn sm" style="margin-top:9px"
-                     data-ask-restore="${gone.id}" data-name="${esc(gone.name)}">Ask to restore</button>`}
-      </div>`);
-  }
-
-  // What is waiting on a decision. Only the operator is ever sent this.
-  for (const req of status?.restoreQueue ?? []) {
-    bits.push(`
-      <div class="camp asked">
-        <div class="l1"><span class="nm">${esc(req.name)}</span></div>
-        <div class="meta">
-          ${esc(req.requesterName || req.requestedBy)} asked${req.isTheCreator ? ' — they deleted it' : ' — they played here'}
-          <br>${req.sessions} session${req.sessions === 1 ? '' : 's'} · ${req.daysLeft} day${req.daysLeft === 1 ? '' : 's'} left
-        </div>
-        <div class="row-btns" style="margin-top:9px">
-          <button type="button" class="btn sm" data-review="${req.id}">Read it</button>
-        </div>
-      </div>`);
-  }
+  // Deleted campaigns and requests to restore one are in the gatehouse's
+  // Archive now, which only the operator opens. Somebody else who wants one
+  // back asks with /campaign restore in Discord.
 
   return bits.length ? `<div class="index-more">${bits.join('')}</div>` : '';
 }
@@ -4008,9 +3973,8 @@ function navMarks() {
               data-screen="servers" aria-label="Servers">
         ${glyph.servers}${servers ? `<span class="n">${servers}</span>` : ''}
       </button>` : ''}
-    ${cap('models') ? `
-      <button type="button" class="navmark${view.screen === 'models' ? ' on' : ''}"
-              data-screen="models" aria-label="Models">${glyph.models}</button>` : ''}
+    <button type="button" class="navmark${view.screen === 'usage' ? ' on' : ''}"
+            data-screen="usage" aria-label="Your usage">${glyph.models}</button>
     <button type="button" class="navmark${view.sheet === 'account' ? ' on' : ''}"
             data-sheet="account" aria-expanded="${view.sheet === 'account'}"
             aria-label="${me?.signedIn ? `Signed in as ${esc(me.username)}` : 'Account'}">
@@ -4067,7 +4031,7 @@ function renderTop() {
     home ? 'Quill'
     : view.screen === 'campaigns' ? 'Campaigns'
     : view.screen === 'servers' ? 'Servers'
-    : view.screen === 'models' ? 'Models'
+    : view.screen === 'usage' ? 'Your usage'
     : campaign()?.name || campaign()?.channel || (status?.campaigns?.length ? 'Quill' : 'Setup');
 
   // Below dev the health line names nothing. Which transcriber, which model
@@ -5624,7 +5588,7 @@ function renderScreen() {
 
   if (view.screen === 'transcript') { el.className = 'split'; morph(el, transcriptScreen()); return; }
   if (view.screen === 'servers')    { el.className = arriving; morph(el, serversScreen()); return; }
-  if (view.screen === 'models')     { el.className = arriving; morph(el, modelsScreen()); return; }
+  if (view.screen === 'usage')      { el.className = arriving; morph(el, usageScreen()); return; }
 
   if (status && !status.campaigns?.length) { el.className = ''; morph(el, firstRun()); return; }
 
@@ -7939,163 +7903,63 @@ function serversScreen() {
     </div>`;
 }
 
-// What the models have cost, and which one does which job.
+// Your usage. A PLACEHOLDER.
 //
-// Dev only, because it is the API bill. The framing is deliberate and matches
-// what the server sends: these are tokens THIS BOT counted as it spent them.
-// Anthropic reports a remaining balance in a header and Google reports none at
-// all, so a page that drew a "quota remaining" gauge would be inventing the
-// most important number on it.
-function modelsScreen() {
-  const m = status?.models;
-  if (!m) {
-    return `<div class="pane-main pane-wide">
-      <h1 class="display sm">Nothing measured yet.</h1>
-      <div class="say-2">This bot has not recorded any model calls. They appear here as soon as something is
-      summarised or somebody asks a question.</div>
+// Per-account limits are planned (see "Limits behind the tiers" in the
+// roadmap) and not built. This screen shows the shape they will take, with
+// dummy figures, so the page has a place for them and the words can be
+// settled early. Nothing here is read from the bot and nothing is enforced.
+// The operator's real figures for the whole bot are in the gatehouse, under
+// Usage.
+const USAGE_PREVIEW = [
+  { what: 'Sessions recorded', used: 3, limit: 8, unit: 'session' },
+  { what: 'Hours transcribed', used: 9.5, limit: 24, unit: 'hour' },
+  { what: 'Questions asked with /campaign ask', used: 12, limit: 50, unit: 'question' },
+  { what: 'Write-ups regenerated', used: 1, limit: 4, unit: 'write-up' },
+];
+
+function usageScreen() {
+  const row = ({ what, used, limit, unit }) => `
+    <div class="set-row" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div class="what">${esc(what)}</div>
+        <div class="bar" style="height:8px;margin-top:10px;max-width:420px"><i style="width:${Math.round((used / limit) * 100)}%"></i></div>
+      </div>
+      <div class="mono" style="font-size:13px;color:var(--text-2);white-space:nowrap">${used} of ${plural(limit, unit)}</div>
     </div>`;
-  }
-
-  const bar = (fraction) => `
-    <div class="bar" style="height:8px"><i style="width:${Math.round((fraction ?? 0) * 100)}%"></i></div>`;
-
-  const peak = Math.max(1, ...m.byDay.map((d) => d.tokens ?? 0));
 
   return `
     <div class="pane-main pane-wide">
-      <div class="kicker">The API bill</div>
-      <h1 class="display" style="margin-top:14px">${n(m.today.tokens)} tokens today</h1>
-      <div class="say-2">
-        ${plural(m.today.calls, 'call')}${m.today.rateLimited ? `, ${m.today.rateLimited} refused for quota` : ''}.
-        Counted by this bot as it spent them — ${esc(m.counted.split('—')[1]?.trim() ?? '')}.
+      <div class="kicker">Your usage <span class="pill" style="margin-left:8px">preview</span></div>
+      <h1 class="display" style="margin-top:14px">Your account this month</h1>
+      <div class="say-2 measure">
+        Each account will have a monthly allowance for recording, transcribing and asking questions,
+        set by its plan. <b>These figures are examples.</b> Limits are not switched on yet, so nothing
+        you do is counted or stopped.
       </div>
 
-      ${m.today.budget > 0 ? `
-        <div style="max-width:520px;margin-top:20px">
-          ${bar(m.today.fraction)}
-          <div class="mono" style="font-size:11.5px;color:var(--dim);margin-top:8px">
-            ${n(m.today.tokens)} of your ${n(m.today.budget)} daily ceiling
-          </div>
-        </div>` : `
-        <div class="quiet" style="margin-top:16px;max-width:70ch">
-          No daily ceiling set, so there is nothing to draw a bar against. Set
-          <code>MODEL_DAILY_TOKEN_BUDGET</code> to whatever your plan allows and this becomes a gauge.
-        </div>`}
-
-      <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;margin-top:40px">
-        <div style="flex:1;min-width:340px">
-          <div class="cap">Which model does what</div>
-          ${['summary', 'ask'].map((role) => `
-            <div class="set-row" style="align-items:flex-start">
-              <div>
-                <div class="what">${role === 'summary' ? 'Writing up a session' : 'Answering a question'}</div>
-                <div class="sub">${role === 'summary'
-                  ? 'The thing the bot exists to do well. Worth the best model available.'
-                  : 'A lookup over recaps already written. The flash models think even when the question needs none — measured at 109 tokens against 8 for the same prompt.'}</div>
-                ${m.roles[role].ladder.length > 1 ? `<div class="mono" style="font-size:11px;color:var(--dim);margin-top:7px">
-                  falls back to ${m.roles[role].ladder.slice(1).map(esc).join(' → ')} when quota runs out
-                </div>` : ''}
-              </div>
-              <form class="row-btns" data-act="model/choose" data-role="${role}">
-                <input class="in mono" name="model" style="width:200px;font-size:13px"
-                       value="${esc(m.roles[role].model ?? '')}" list="model-choices"
-                       aria-label="Model for ${role}">
-                <button class="btn sm go" type="submit">Use</button>
-              </form>
-            </div>`).join('')}
-          <datalist id="model-choices">
-            ${m.choices.map((c) => `<option value="${esc(c)}"></option>`).join('')}
-          </datalist>
-          <div class="quiet" style="margin-top:14px;max-width:68ch">
-            Typed rather than picked from a list, because a bot cannot know what a provider offers without
-            asking, and the answer changes underneath you. A name that does not exist fails loudly on the
-            next call and can be corrected here. Clear the box to go back to <code>pi-service/.env</code>.
-          </div>
+      <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;margin-top:34px">
+        <div style="flex:1;min-width:300px;max-width:640px">
+          <div class="cap">Plan: Adventurer (example)</div>
+          ${USAGE_PREVIEW.map(row).join('')}
+          <div class="quiet" style="margin-top:14px">Resets on the 1st of each month (example).</div>
         </div>
-
         <div class="aside">
           <div class="card">
-            <div class="cap">Last fortnight</div>
-            <div style="display:flex;align-items:flex-end;gap:3px;height:64px;margin-top:14px">
-              ${m.byDay.length ? m.byDay.map((d) => `
-                <i title="${esc(d.day)}: ${n(d.tokens)} tokens" style="flex:1;min-width:4px;background:var(--brass);
-                   opacity:.75;border-radius:1px;height:${Math.max(2, Math.round(((d.tokens ?? 0) / peak) * 100))}%"></i>
-              `).join('') : '<span class="quiet">nothing yet</span>'}
-            </div>
-            <div class="mono" style="font-size:11px;color:var(--dim);margin-top:10px">
-              peak ${n(peak)} tokens in a day
-            </div>
-          </div>
-          ${backupCard()}
-          <div class="card">
-            <div class="cap">Questions</div>
+            <div class="cap">What happens at the limit</div>
             <div class="quiet" style="margin-top:10px">
-              ${m.askLimit > 0
-                ? `Each person may ask ${plural(m.askLimit, 'question')} a day. It is the only place somebody
-                   who is not you can spend your API budget.`
-                : 'No daily limit per person. <code>/campaign ask</code> is the only place somebody who is not you can spend your API budget.'}
+              A recording that has already been made is always transcribed and written up. What stops
+              is starting new ones, and asking new questions, until the month resets.
             </div>
           </div>
+          ${cap('everything') ? `
+            <div class="card">
+              <div class="cap">The whole bot</div>
+              <div class="quiet" style="margin-top:10px">What the models have cost, and which one does which
+                job, is in the gatehouse.</div>
+              <a class="btn wide" style="margin-top:14px" href="/gatehouse/#usage">Open the gatehouse</a>
+            </div>` : ''}
         </div>
-      </div>
-
-      <div class="cap" style="margin:44px 0 0">By model, last seven days</div>
-      <div class="grid" style="margin-top:14px;max-width:900px">
-        <div class="hd" style="grid-template-columns:1.6fr 90px 90px 1fr 110px">
-          <div>Model</div><div>Role</div><div class="r">Calls</div><div class="r">Tokens</div><div class="r">Refused</div>
-        </div>
-        ${m.byModel.length ? m.byModel.map((row) => `
-          <div class="tr" style="grid-template-columns:1.6fr 90px 90px 1fr 110px">
-            <div class="mono" style="font-size:13px">${esc(row.model)}</div>
-            <div class="quiet">${esc(row.role)}</div>
-            <div class="r mono">${n(row.calls)}</div>
-            <div class="r mono">${n(row.total_tokens)}</div>
-            <div class="r mono ${row.limited ? 'waiting' : ''}">${row.limited ? n(row.limited) : '—'}</div>
-          </div>`).join('')
-          : '<div class="quiet" style="padding:16px 0">No calls in the last week.</div>'}
-      </div>
-    </div>`;
-}
-
-// Whether the newest snapshot has ever been opened.
-//
-// "Never checked" renders as its own state rather than as either good or bad,
-// because it is neither — and a green tick on a backup nobody has opened is
-// exactly the reassurance that gets somebody into trouble.
-function backupCard() {
-  const b = status?.backup;
-
-  if (!b) {
-    return `<div class="card">
-      <div class="cap">Backup</div>
-      <div class="quiet" style="margin-top:10px">
-        Not checked yet. The snapshot is verified right after it is taken, so this fills in the next time one runs.
-      </div>
-    </div>`;
-  }
-
-  const lines = b.counts
-    ? Object.entries(b.counts).map(([table, c]) =>
-        `<div style="display:flex;justify-content:space-between;font-size:12.5px">
-           <span class="muted">${esc(table)}</span><span class="mono">${n(c.backed)}</span>
-         </div>`).join('')
-    : '';
-
-  return `
-    <div class="card" ${b.ok ? '' : 'style="border-color:var(--red-br)"'}>
-      <div class="cap" style="${b.ok ? '' : 'color:var(--red-lit)'}">Backup</div>
-      <h4 style="${b.ok ? '' : 'color:var(--red-lit)'}">
-        ${b.ok ? 'Opens and reads correctly' : 'Not restorable'}
-      </h4>
-      <div class="quiet" style="margin-top:8px">
-        ${b.ok
-          ? `Verified ${b.ageHours != null ? `${b.ageHours < 1 ? 'less than an hour' : `${Math.round(b.ageHours)}h`} after it was taken` : ''}
-             — opened as a database, integrity checked, row counts compared to live.`
-          : esc(b.reason ?? 'The newest snapshot could not be opened.')}
-      </div>
-      ${lines ? `<div style="margin-top:12px;display:flex;flex-direction:column;gap:4px">${lines}</div>` : ''}
-      <div class="quiet" style="margin-top:12px;font-size:12px">
-        This proves the file is a database, not that a Pi will boot from it. Only restoring one does that.
       </div>
     </div>`;
 }
@@ -8184,8 +8048,8 @@ function deleteDialog() {
         <h1>Delete this campaign?</h1>
         <div class="say-2" style="font-size:14.5px;margin-top:12px">
           It leaves every list straight away. <b>Nothing is erased</b> — every session, every line and
-          every correction stays exactly where it is, and you have ${RESTORE_DAYS} days to bring it back
-          from the campaigns page or with <code>/campaign restore</code>.
+          every correction stays exactly where it is. It moves to the archive, where the bot owner can bring
+          it back for ${RESTORE_DAYS} days; ask them with <code>/campaign restore</code> in Discord.
         </div>
 
         <form data-act="campaign/delete" data-campaign="${detail?.id ?? ''}">
@@ -8261,91 +8125,11 @@ function voiceDialog() {
     </div>`;
 }
 
-// Asking for a campaign back.
-//
-// The same three questions the Discord modal asks, in the same order and for
-// the same reason: they are meant to be read together. "Why was it deleted in
-// the first place" and "are you taking ownership" are what separate a delete
-// somebody regrets from a table that ended on purpose and should stay ended.
-const RESTORE_QUESTIONS = [
-  ['reason', 'What is the reason for requesting the restore?'],
-  ['whyDeleted', 'Why was the campaign deleted in the first place?'],
-  ['takingOwnership', 'Are you intending to take ownership of the campaign?'],
-];
-
-function askRestoreDialog() {
-  const { id, name } = view.askingRestore ?? {};
-  return `
-    <div class="backdrop" data-backdrop>
-      <div class="dialog" role="dialog" aria-modal="true" aria-label="Ask to restore">
-        <div class="kicker">${esc(name ?? '')}</div>
-        <h1>Ask for this back</h1>
-        <div class="say-2" style="font-size:14.5px;margin-top:12px">
-          Restoring is not automatic. What you write here goes to the bot owner, who decides these one at
-          a time — you will hear back either way.
-        </div>
-
-        <form data-act="campaign/restore" data-campaign="${id ?? ''}">
-          ${RESTORE_QUESTIONS.map(([field, question], n) => `
-            <div class="field">
-              <label for="ask-${field}">${question}</label>
-              ${n === 2
-                ? `<input class="in" id="ask-${field}" name="${field}" required autocomplete="off"
-                          placeholder="yes / no, and why">`
-                : `<textarea class="in" id="ask-${field}" name="${field}" required rows="3"></textarea>`}
-            </div>`).join('')}
-          <div class="foot">
-            <button class="btn go big" type="submit" ${can() ? '' : 'disabled'}>Send it</button>
-            <button class="btn big" type="button" data-close-modal>Cancel</button>
-          </div>
-        </form>
-      </div>
-    </div>`;
-}
-
-// Reading one, and deciding it.
-function reviewDialog() {
-  const req = (status?.restoreQueue ?? []).find((r) => r.id === view.reviewing);
-  if (!req) return '';
-
-  const answer = (question, text) => `
-    <div class="field">
-      <label>${question}</label>
-      <div class="quiet" style="color:var(--text-2);white-space:pre-wrap">${esc(text || '(left blank)')}</div>
-    </div>`;
-
-  return `
-    <div class="backdrop" data-backdrop>
-      <div class="dialog" role="dialog" aria-modal="true" aria-label="Restore request">
-        <div class="kicker">${esc(req.name)}</div>
-        <h1>${esc(req.requesterName || req.requestedBy)} wants this back</h1>
-        <div class="say-2" style="font-size:14.5px;margin-top:12px">
-          ${req.isTheCreator ? 'They are the person who deleted it.' : 'They played at this table — they are not who deleted it.'}
-          ${req.sessions} session${req.sessions === 1 ? '' : 's'}, ${req.daysLeft} day${req.daysLeft === 1 ? '' : 's'} left in the window.
-        </div>
-
-        ${answer(RESTORE_QUESTIONS[0][1], req.reason)}
-        ${answer(RESTORE_QUESTIONS[1][1], req.whyDeleted)}
-        ${answer(RESTORE_QUESTIONS[2][1], req.takingOwnership)}
-
-        <div class="foot">
-          <button type="button" class="btn go big" data-act="campaign/restore-review"
-                  data-request="${req.id}" data-approve="true">Restore it</button>
-          <button type="button" class="btn big danger" data-act="campaign/restore-review"
-                  data-request="${req.id}" data-approve="false">Turn it down</button>
-          <button type="button" class="btn big" data-close-modal>Later</button>
-        </div>
-      </div>
-    </div>`;
-}
-
 let modalShowing = null;
 
 function renderModal() {
   const wanted = view.deleting
     ? 'delete'
-    : view.askingRestore ? `ask:${view.askingRestore.id}`
-    : view.reviewing ? `review:${view.reviewing}`
     : view.creating ? 'create'
     : view.importing && detail ? `import:${detail.id}`
     : view.picking ? `voice:${view.picking}`
@@ -8358,17 +8142,6 @@ function renderModal() {
   if (view.deleting) {
     morph($('modal'), deleteDialog());
     $('del-name')?.focus();
-    return;
-  }
-
-  if (view.askingRestore) {
-    morph($('modal'), askRestoreDialog());
-    $('ask-reason')?.focus();
-    return;
-  }
-
-  if (view.reviewing) {
-    morph($('modal'), reviewDialog());
     return;
   }
 
@@ -8960,15 +8733,6 @@ document.addEventListener('click', async (event) => {
     return paint();
   }
 
-  const asking = t.closest('[data-ask-restore]');
-  if (asking) {
-    closeDialogs();
-    view.askingRestore = { id: Number(asking.dataset.askRestore), name: asking.dataset.name ?? '' };
-    return paint();
-  }
-
-  const reading = t.closest('[data-review]');
-  if (reading) { closeDialogs(); view.reviewing = Number(reading.dataset.review); return paint(); }
   if (t.closest('[data-diagnose]')) { view.diagnosing = !view.diagnosing; return renderBanner(); }
   if (t.closest('[data-cancel-edit]')) { view.editing = null; return paint(); }
 
@@ -9207,7 +8971,6 @@ document.addEventListener('click', async (event) => {
 
   // A decision made is a dialog finished. Left open it would keep offering
   // buttons for a request that is no longer waiting on anything.
-  if (d.act === 'campaign/restore-review' && said?.ok) { view.reviewing = null; paint(); }
 
   // The campaign has a new manager, so the picker's own selection is now the
   // person it should be leaving out. Cleared rather than left armed, which
@@ -9363,7 +9126,6 @@ document.addEventListener('submit', async (event) => {
   if (submit) submit.disabled = true;
   if (form.dataset.act === 'import') view.importing = false;
   if (form.dataset.act === 'campaign/create') view.creating = false;
-  if (form.dataset.act === 'campaign/restore') view.askingRestore = null;
   if (form.dataset.act === 'roster/character') view.editing = null;
   // The two boxes on the write-up close on submit rather than on the reply:
   // leaving them open behind a toast reads as though nothing was sent.
@@ -9423,7 +9185,7 @@ document.addEventListener('keydown', (event) => {
   // and a correction lost to a keystroke is the thing this must never do.
   if (view.markAt) { markClose(); return paint(); }
   if (view.marking) { view.marking = false; return paint(); }
-  if (view.importing || view.creating || view.deleting || view.askingRestore || view.reviewing || view.picking) {
+  if (view.importing || view.creating || view.deleting || view.picking) {
     closeDialogs(); return paint();
   }
   if (view.sheet) { view.sheet = null; return paint(); }

@@ -730,6 +730,57 @@
     .ask-do { margin-top: 4px; }
   }
 
+  /* -- The three rooms: people, the archive, the bill --------------------
+     Deleted campaigns and the model bill moved here from the dashboard on
+     2026-09-27, so that only the operator ever meets them. A strip of three
+     tabs rather than one long page: they are three different errands. */
+  .gh-nav {
+    display: flex; gap: 4px; flex-wrap: wrap;
+    margin: 0 0 30px; padding-bottom: 10px; border-bottom: 1px solid var(--edge);
+  }
+  .gh-nav button {
+    font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    padding: 9px 12px; border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: var(--faint); cursor: pointer;
+  }
+  .gh-nav button:hover { color: var(--iron); background: var(--hover); }
+  .gh-nav button[aria-current="page"] { color: var(--bronze); border-color: var(--bronze); background: var(--bronze-bg); }
+  .gh-nav .n { margin-left: 6px; opacity: .8; }
+
+  .arch-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 18px; align-items: center;
+    padding: 16px 0; border-bottom: 1px solid var(--rule);
+  }
+  .arch-row:last-child { border-bottom: 0; }
+  .arch-row .nm { font-size: 17px; color: var(--iron); }
+  .arch-row .meta { font: 12px/1.6 var(--mono); color: var(--faint); margin-top: 3px; }
+  .arch-row .why { font-size: 14.5px; color: var(--faint); margin-top: 6px; max-width: 62ch; }
+  .arch-row .why b { color: var(--iron); font-weight: 500; }
+  .arch-row .late { color: var(--seal); }
+  .arch-do { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+
+  .use-figure { font-family: 'Libre Caslon Display', Georgia, serif; font-size: 40px; line-height: 1.1; margin: 8px 0 0; }
+  .use-sub { color: var(--faint); font-size: 15px; margin-top: 8px; max-width: 62ch; }
+  .use-bar { height: 8px; border-radius: 4px; background: var(--sunk); overflow: hidden; margin-top: 16px; max-width: 520px; }
+  .use-bar i { display: block; height: 100%; background: var(--bronze); }
+  .use-days { display: flex; align-items: flex-end; gap: 3px; height: 64px; margin-top: 14px; max-width: 520px; }
+  .use-days i { flex: 1; min-width: 4px; background: var(--bronze); opacity: .7; border-radius: 1px; }
+  .use-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14.5px; }
+  .use-table th, .use-table td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--rule); }
+  .use-table th { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .use-table td.r, .use-table th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  .use-table .mono { font-family: var(--mono); font-size: 13px; }
+  .use-wrap { overflow-x: auto; }
+  .use-role { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 18px; align-items: center;
+              padding: 14px 0; border-bottom: 1px solid var(--rule); }
+  .use-role form { display: flex; gap: 7px; flex-wrap: wrap; }
+  .use-role input { font: 13px var(--mono); padding: 8px 10px; border: 1px solid var(--edge); border-radius: 6px;
+                    background: var(--sunk); color: var(--iron); width: 210px; max-width: 100%; }
+  @media (max-width: 620px) {
+    .arch-row, .use-role { grid-template-columns: 1fr; }
+    .arch-do { justify-content: flex-start; }
+  }
+
 </style>
 </head>
 <body>
@@ -780,6 +831,16 @@ const API = samePath(new URLSearchParams(location.search).get('api')) || '/api';
 
 let me = null;
 let access = null;
+// The other two rooms, loaded with the roster. Null when the bot refused them,
+// which it does to everybody but the operator.
+let archive = null;
+let usage = null;
+
+// Which room is open. Read from the address so the dashboard can link straight
+// to /gatehouse/#usage or #archive.
+const ROOMS = ['people', 'archive', 'usage'];
+const asked = String(location.hash ?? '').slice(1);
+let room = ROOMS.includes(asked) ? asked : 'people';
 
 // Which rows are on screen. Deliberately not sent anywhere: filtering is a fact
 // about this browser at this moment, and asking the Pi to sort a list it has
@@ -870,9 +931,16 @@ async function send(action, body) {
 
 async function load() {
   try {
-    const [who, roster] = await Promise.all([get('/me'), get('/access')]);
+    const [who, roster, arch, use] = await Promise.all([
+      get('/me'),
+      get('/access'),
+      get('/archive').catch(() => null),
+      get('/usage').catch(() => null),
+    ]);
     me = who;
     access = roster;
+    archive = arch;
+    usage = use;
   } catch (err) {
     morph($('page'), `
       <div class="door">
@@ -938,7 +1006,12 @@ function paint() {
     return;
   }
 
-  morph($('page'), queue() + door() + tools() + `
+  if (room !== 'people') {
+    morph($('page'), rooms() + (room === 'archive' ? archiveRoom() : usageRoom()) + footing());
+    return;
+  }
+
+  morph($('page'), rooms() + queue() + door() + tools() + `
     <div class="grid">
       <div class="thead">
         <div>Person</div>
@@ -1408,6 +1481,164 @@ function admitForm() {
     </form>`;
 }
 
+// ==========================================================================
+// The other two rooms
+// ==========================================================================
+
+const n = (v) => Number(v ?? 0).toLocaleString();
+const plural = (count, word) => `${n(count)} ${word}${count === 1 ? '' : 's'}`;
+
+function rooms() {
+  const waiting = (archive?.requests ?? []).length;
+  const tab = (id, label, extra = '') => `
+    <button type="button" data-room="${id}" ${room === id ? 'aria-current="page"' : ''}>${label}${extra}</button>`;
+  return `
+    <nav class="gh-nav" aria-label="Gatehouse sections">
+      ${tab('people', 'People')}
+      ${tab('archive', 'Archive', archive ? `<span class="n">${archive.campaigns.length}${waiting ? ` · ${waiting} asked` : ''}</span>` : '')}
+      ${tab('usage', 'Usage')}
+    </nav>`;
+}
+
+// Deleted campaigns, and requests to bring one back.
+//
+// This used to sit under the campaign list on the dashboard, where every
+// viewer needed its own rule about what they could see and press. It lives
+// here now, where only the operator comes. Somebody else who wants a campaign
+// back asks with /campaign restore in Discord, and the request lands here.
+function archiveRoom() {
+  if (!archive) {
+    return `<div class="empty">The archive did not load. Only the bot owner can open it.</div>`;
+  }
+  const on = (iso) => onDate(stamp(iso)) ?? 'some time ago';
+  const requests = archive.requests ?? [];
+  const campaigns = archive.campaigns ?? [];
+
+  const asked = requests.map((r) => `
+    <div class="arch-row" data-key="req-${esc(String(r.id))}">
+      <div>
+        <div class="nm">${esc(r.name)}</div>
+        <div class="meta">${esc(r.requesterName || r.requestedBy)} asked ${esc(since(stamp(r.askedAt)))} ago ·
+          ${r.isTheCreator ? 'they deleted it' : 'they played here'} · ${plural(r.sessions, 'session')} ·
+          ${r.daysLeft > 0 ? `${plural(r.daysLeft, 'day')} left` : '<span class="late">past the window</span>'}</div>
+        ${r.reason ? `<div class="why"><b>Why:</b> ${esc(r.reason)}</div>` : ''}
+        ${r.whyDeleted ? `<div class="why"><b>Why it was deleted:</b> ${esc(r.whyDeleted)}</div>` : ''}
+      </div>
+      <div class="arch-do">
+        <button class="btn go" data-gh="campaign/restore-review" data-request="${esc(String(r.id))}" data-approve="true">Restore it</button>
+        <button class="btn" data-gh="campaign/restore-review" data-request="${esc(String(r.id))}" data-approve="false"
+                data-said="Turn down this request? The campaign stays deleted.">Say no</button>
+      </div>
+    </div>`).join('');
+
+  const rows = campaigns.map((c) => `
+    <div class="arch-row" data-key="arch-${esc(String(c.id))}">
+      <div>
+        <div class="nm">${esc(c.name)}</div>
+        <div class="meta">${plural(c.sessions, 'session')} · deleted ${esc(on(c.deletedAt))}${c.deletedBy ? ` by ${esc(c.deletedBy)}` : ''} ·
+          ${c.daysLeft > 0 ? `${plural(c.daysLeft, 'day')} left to restore` : '<span class="late">past the 30-day window</span>'}</div>
+      </div>
+      <div class="arch-do">
+        <button class="btn go" data-gh="campaign/restore" data-campaign="${esc(String(c.id))}"
+                ${c.daysLeft > 0 ? '' : 'disabled title="Past the 30-day window. Nothing is erased; it can still be restored by hand on the Pi."'}>Restore</button>
+      </div>
+    </div>`).join('');
+
+  return `
+    ${requests.length ? `
+      <section class="gone" style="margin-top:0">
+        <div class="gone-head"><h2>Asked to restore</h2><span class="count">${requests.length}</span></div>
+        ${asked}
+      </section>` : ''}
+    <section class="gone"${requests.length ? '' : ' style="margin-top:0"'}>
+      <div class="gone-head"><h2>Deleted campaigns</h2><span class="count">${plural(campaigns.length, 'campaign')}</span></div>
+      <p class="gone-note">
+        A deleted campaign leaves every list at once, and <b>nothing is erased</b>: every session,
+        transcript and note stays on disk. It can be restored for 30 days. Players who want one back
+        ask with <code>/campaign restore</code> in Discord, and their request appears above.
+      </p>
+      ${rows || '<div class="empty">Nothing has been deleted.</div>'}
+    </section>`;
+}
+
+// What the models have cost, and which one does which job. Moved here from
+// the dashboard's "The bill" screen with the archive.
+function usageRoom() {
+  const m = usage;
+  if (!m) return `<div class="empty">The bill did not load. Only the bot owner can open it.</div>`;
+  const today = m.today ?? {};
+  const days = m.byDay ?? [];
+  const peak = Math.max(1, ...days.map((d) => d.tokens ?? 0));
+  const roles = [
+    ['summary', 'Writing up a session', 'What the bot exists to do well. Worth the best model available.'],
+    ['ask', 'Answering a question', 'A lookup over write-ups already written, for /campaign ask.'],
+  ];
+
+  return `
+    <section class="gone" style="margin-top:0">
+      <div class="gone-head"><h2>Today</h2><span class="count">${plural(today.calls ?? 0, 'call')}</span></div>
+      <div class="use-figure">${n(today.tokens)} tokens</div>
+      <div class="use-sub">${today.rateLimited ? `${plural(today.rateLimited, 'call')} refused for quota. ` : ''}Counted by the bot as it spent them.</div>
+      ${today.budget > 0 ? `
+        <div class="use-bar" role="img" aria-label="${n(today.tokens)} of ${n(today.budget)} tokens"><i style="width:${Math.min(100, Math.round((today.fraction ?? 0) * 100))}%"></i></div>
+        <div class="use-sub">${n(today.tokens)} of your ${n(today.budget)} daily ceiling</div>` : `
+        <div class="use-sub">No daily ceiling set. Set <code>MODEL_DAILY_TOKEN_BUDGET</code> in <code>pi-service/.env</code> to draw one.</div>`}
+    </section>
+
+    <section class="gone">
+      <div class="gone-head"><h2>Which model does what</h2></div>
+      ${roles.map(([role, what, why]) => {
+        const r = m.roles?.[role] ?? { model: '', ladder: [] };
+        return `
+          <div class="use-role">
+            <div>
+              <div class="nm" style="font-size:16px">${what}</div>
+              <div class="use-sub" style="margin-top:4px">${why}${r.ladder?.length > 1
+                ? ` Falls back to ${r.ladder.slice(1).map(esc).join(' → ')} when quota runs out.` : ''}</div>
+            </div>
+            <form data-gh-model="${role}">
+              <input name="model" value="${esc(r.model ?? '')}" list="gh-models" aria-label="Model for ${role}">
+              <button class="btn go" type="submit">Use</button>
+            </form>
+          </div>`;
+      }).join('')}
+      <datalist id="gh-models">${(m.choices ?? []).map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+      <p class="gone-note">Typed rather than picked, because a provider's list of models changes underneath you. Clear a box to go back to <code>pi-service/.env</code>.</p>
+    </section>
+
+    <section class="gone">
+      <div class="gone-head"><h2>Last fortnight</h2><span class="count">peak ${n(peak)} tokens</span></div>
+      <div class="use-days">${days.length
+        ? days.map((d) => `<i title="${esc(d.day)}: ${n(d.tokens)} tokens" style="height:${Math.max(2, Math.round(((d.tokens ?? 0) / peak) * 100))}%"></i>`).join('')
+        : '<span class="use-sub">Nothing yet.</span>'}</div>
+    </section>
+
+    <section class="gone">
+      <div class="gone-head"><h2>By model, last seven days</h2></div>
+      <div class="use-wrap"><table class="use-table">
+        <thead><tr><th>Model</th><th>Role</th><th class="r">Calls</th><th class="r">Tokens</th><th class="r">Refused</th></tr></thead>
+        <tbody>${(m.byModel ?? []).map((row) => `
+          <tr><td class="mono">${esc(row.model)}</td><td>${esc(row.role)}</td><td class="r">${n(row.calls)}</td>
+              <td class="r">${n(row.total_tokens)}</td><td class="r">${row.limited ? n(row.limited) : '—'}</td></tr>`).join('')
+          || '<tr><td colspan="5" class="use-sub">No calls in the last week.</td></tr>'}</tbody>
+      </table></div>
+      <p class="gone-note">What each person may spend is the Tier column under People. The daily question allowance per tier is
+        ${m.askLimit > 0 ? `${plural(m.askLimit, 'question')} a day by default` : 'unlimited until <code>TIER_ASK_LIMITS</code> is set'}.</p>
+    </section>
+
+    <section class="gone">
+      <div class="gone-head"><h2>Database backup</h2>
+        <span class="count"${m.backup && !m.backup.ok ? ' style="color:var(--seal)"' : ''}>${
+          !m.backup ? 'not checked yet' : m.backup.ok ? 'opens and reads' : 'not restorable'}</span></div>
+      <p class="gone-note">${!m.backup
+        ? 'The daily snapshot is verified right after it is taken, so this fills in the next time one runs.'
+        : m.backup.ok
+          ? `The newest snapshot was opened as a database, integrity checked, and its row counts compared to the live one${
+              m.backup.ageHours != null ? `, ${m.backup.ageHours < 1 ? 'less than an hour' : `${Math.round(m.backup.ageHours)} hours`} after it was taken` : ''}.`
+          : esc(m.backup.reason ?? 'The newest snapshot could not be opened.')}</p>
+    </section>`;
+}
+
 function footing() {
   return `
     <div class="foot">
@@ -1482,6 +1713,40 @@ function disarm() {
 }
 
 document.addEventListener('click', async (e) => {
+  const tab = e.target.closest('[data-room]');
+  if (tab) {
+    disarm();
+    room = tab.dataset.room;
+    window.history?.replaceState?.(null, '', room === 'people' ? `${location.pathname ?? ''}${location.search ?? ''}` : `#${room}`);
+    paint();
+    return;
+  }
+
+  // The archive's buttons. Their own attribute rather than data-do, because
+  // data-do sends a user id and these are about a campaign or a request.
+  const gh = e.target.closest('[data-gh]');
+  if (gh) {
+    const asks = gh.dataset.said;
+    if (asks && armed !== gh) {
+      disarm();
+      armed = gh;
+      gh.dataset.was = gh.textContent.trim();
+      gh.textContent = 'Sure?';
+      gh.classList.add('armed');
+      gh.title = asks;
+      armedTimer = setTimeout(disarm, 5000);
+      return;
+    }
+    disarm();
+    gh.disabled = true;
+    const body = {};
+    if (gh.dataset.campaign) body.campaignId = Number(gh.dataset.campaign);
+    if (gh.dataset.request) body.requestId = Number(gh.dataset.request);
+    if (gh.dataset.approve) body.approve = gh.dataset.approve === 'true';
+    await send(gh.dataset.gh, body);
+    return;
+  }
+
   const chip = e.target.closest('[data-only]');
   if (chip) {
     disarm();
@@ -1536,6 +1801,16 @@ document.addEventListener('change', async (e) => {
 });
 
 document.addEventListener('submit', async (e) => {
+  // Choosing a model on the Usage tab.
+  const pick = e.target.closest('[data-gh-model]');
+  if (pick) {
+    e.preventDefault();
+    const btn = pick.querySelector('button');
+    btn.disabled = true;
+    await send('model/choose', { role: pick.dataset.ghModel, model: pick.querySelector('input').value.trim() });
+    return;
+  }
+
   const form = e.target.closest('#admit');
   if (!form) return;
   e.preventDefault();

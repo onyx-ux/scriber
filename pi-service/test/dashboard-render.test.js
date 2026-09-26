@@ -392,7 +392,9 @@ test('the operator sees the app, with the machinery on it', async (t) => {
   assert.match(markup, /Cipher/);
   assert.match(markup, /data-act="pause"/, 'the pause switches are the owner\'s');
   assert.match(markup, /data-import/);
-  assert.match(markup, /data-screen="models"/, 'the API bill is the owner\x27s to see');
+  // The bill moved to the gatehouse; the top bar carries everybody's own usage.
+  assert.match(markup, /data-screen="usage"/);
+  assert.doesNotMatch(markup, /data-screen="models"/);
 });
 
 // The specific failure this catches: a field read off a payload the viewer was
@@ -505,25 +507,23 @@ test('a player is shown notes and never a transcript button', async (t) => {
   assert.doesNotMatch(markup, /data-transcript/);
 });
 
-// The API bill, drawn. Its numbers are what this bot counted as it spent them,
-// and the page has to say so rather than implying it read a meter.
-test('the Models screen shows spend and never claims a remaining balance', async (t) => {
+// The bill moved to the gatehouse (see gatehouse-render.test.js). In its place
+// is a PLACEHOLDER for per-account usage, which is not built. It has to say so:
+// dummy figures that read as real would be the page lying about somebody's
+// account.
+test('the usage screen is plainly a preview with example figures', async (t) => {
   const { db, cfg, base } = await world(t);
   db.recordModelUsage({ provider: 'gemini', model: 'gemini-3.6-flash', role: 'summary',
                         inputTokens: 900, outputTokens: 300, totalTokens: 1400 });
-  db.recordModelUsage({ provider: 'gemini', model: 'gemini-3.1-flash-lite', role: 'ask',
-                        inputTokens: 40, outputTokens: 8, totalTokens: 50 });
 
-  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
-  await page.click(['[data-screen]'], { screen: 'models' }, (m) => /tokens today/.test(m));
+  const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  await page.click(['[data-screen]'], { screen: 'usage' }, (m) => /Your account this month/.test(m));
   const markup = page.body();
 
   assert.ok(balanced(markup).ok);
-  assert.match(markup, /1,450 tokens today/);
-  assert.match(markup, /gemini-3\.6-flash/, 'the summary model is named');
-  assert.match(markup, /gemini-3\.1-flash-lite/, 'and the cheap one it uses for questions');
-  assert.match(markup, /Counted by this bot/, 'the honest framing survives to the page');
-  assert.doesNotMatch(markup, /remaining balance.*\d/, 'no invented quota figure');
+  assert.match(markup, /preview/);
+  assert.match(markup, /These figures are examples/);
+  assert.doesNotMatch(markup, /gemini-3\.6-flash|1,400 tokens/, 'nothing of the real bill reaches a player');
 });
 
 // --- the desk --------------------------------------------------------------

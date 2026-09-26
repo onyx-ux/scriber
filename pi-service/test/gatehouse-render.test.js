@@ -596,3 +596,54 @@ test('a name the page cannot remove is offered no button that pretends it can', 
   assert.doesNotMatch(markup, new RegExp(`data-do="access/uninvite" data-user="${FRIEND}"`),
     'a Remove was offered for a row only pi-service/.env can change');
 });
+
+// --- the archive and the bill, which moved here from the dashboard -----------
+
+test('the archive lists a deleted campaign and restores it from here', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const gone = db.createCampaign('guild-1', 'Strahd', DEV);
+  db.archiveCampaign(gone, DEV);
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await page.click('data-room="archive"');
+  let markup = page.body();
+  assert.match(markup, /Deleted campaigns/);
+  assert.match(markup, /Strahd/);
+  assert.match(markup, /days? left to restore/);
+  assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
+
+  await page.click('data-gh="campaign/restore"', `data-campaign="${gone}"`);
+  assert.match(page.toast(), /is back/);
+  assert.ok(db.getCampaign(gone), 'the campaign is on the lists again');
+  markup = page.body();
+  assert.match(markup, /Nothing has been deleted/);
+});
+
+test('a restore request is decided in the archive', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const gone = db.createCampaign('guild-1', 'Ashfall', PLAYER);
+  db.archiveCampaign(gone, PLAYER);
+  db.createRestoreRequest({ campaignId: gone, requestedBy: PLAYER, requesterName: 'saf', reason: 'We still play.' });
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await page.click('data-room="archive"');
+  assert.match(page.body(), /Asked to restore/);
+  assert.match(page.body(), /We still play\./);
+
+  await page.click('data-gh="campaign/restore-review"', 'data-approve="true"');
+  assert.ok(db.getCampaign(gone), 'approving the request brings it back');
+});
+
+test('the bill is in the gatehouse', async (t) => {
+  const { db, cfg, base } = await world(t);
+  db.recordModelUsage({ provider: 'gemini', model: 'gemini-3.6-flash', role: 'summary',
+                        inputTokens: 900, outputTokens: 300, totalTokens: 1400 });
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await page.click('data-room="usage"');
+  const markup = page.body();
+  assert.match(markup, /1,400 tokens/);
+  assert.match(markup, /gemini-3\.6-flash/);
+  assert.match(markup, /data-gh-model="summary"/, 'the model can still be chosen, and says for which role');
+  assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
+});

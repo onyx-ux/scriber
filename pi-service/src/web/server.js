@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 
-import { buildStatus, statusEtag } from './status.js';
+import { buildStatus, statusEtag, modelReport } from './status.js';
+import { lastBackupCheck } from '../maintenance/backup-check.js';
 import { accessRoster } from './access.js';
 import { allowanceFor } from '../access/tiers.js';
 import { buildCampaignView } from './campaign-view.js';
@@ -25,7 +26,7 @@ import { handleAuthRoute } from './auth-routes.js';
 import { sweepExpired, authSecret } from './auth.js';
 import { oauthReady, redirectUri as discordRedirectUri } from './discord-oauth.js';
 import { guildsCreatableBy } from '../campaign/create.js';
-import { restorableBy, mayDelete } from '../campaign/archive.js';
+import { mayDelete, daysLeftToRestore } from '../campaign/archive.js';
 import { pendingRestoreRequests } from '../campaign/restore-request.js';
 import { notifyRestoreRequested, notifyRestoreDecided } from '../delivery/restore-notify.js';
 import { runAction } from './actions.js';
@@ -522,6 +523,43 @@ export function startStatusServer({
       return;
     }
 
+    // Deleted campaigns and the requests to bring one back, for the
+    // gatehouse's Archive section. The operator's alone, like the roster: the
+    // archive used to sit on the dashboard's campaign list, where every viewer
+    // needed its own rule about what they could see and press. Moving it to
+    // the one page only the operator opens replaced those rules with this one.
+    if (url.pathname === '/archive') {
+      if (!viewer.can?.everything) {
+        send(res, 403, { ok: false, message: 'Only the bot owner can see deleted campaigns.' });
+        return;
+      }
+      send(res, 200, {
+        campaigns: db.listArchivedCampaigns().map((c) => ({
+          id: c.id,
+          name: c.name ?? c.channel_name,
+          guildId: c.guild_id,
+          sessions: c.sessions ?? 0,
+          managerUserId: c.manager_user_id ?? null,
+          deletedBy: c.archived_by ?? null,
+          deletedAt: c.archived_at,
+          daysLeft: daysLeftToRestore(c.archived_at),
+        })),
+        requests: pendingRestoreRequests({ db }),
+      });
+      return;
+    }
+
+    // What the models have cost, for the gatehouse's Usage section. Moved
+    // off the dashboard with the archive, for the same reason.
+    if (url.pathname === '/usage') {
+      if (!viewer.can?.everything) {
+        send(res, 403, { ok: false, message: 'Only the bot owner can see what the models cost.' });
+        return;
+      }
+      send(res, 200, { ...modelReport({ db, cfg }), backup: lastBackupCheck(db) ?? null });
+      return;
+    }
+
     if (url.pathname !== '/status') {
       send(res, 404, { ok: false, message: 'not found' });
       return;
@@ -554,27 +592,10 @@ export function startStatusServer({
       });
       if (creatable.length) payload.canCreateIn = creatable;
 
-      // Campaigns this viewer deleted and can still bring back. Only ever
-      // their own, and only while the window is open.
-      //
-      // Asked as a single question now: a request with no acting id has nobody
-      // to list campaigns FOR, and asking anyway used to reach
-      // listArchivedCampaigns({ userId: undefined }) on an install whose owner
-      // was never configured.
-      const acting = actingUserId(viewer, cfg);
-      const waiting = acting ? restorableBy({ db, cfg, userId: acting }) : [];
-      // Restore tickets waiting on a decision. The operator's queue, so it
-      // rides behind the same capability as the access roster.
-      if (viewer.can?.everything) {
-        const queue = pendingRestoreRequests({ db });
-        if (queue.length) payload.restoreQueue = queue;
-      }
-
-      if (waiting.length) {
-        payload.restorable = waiting.map((c) => ({
-          id: c.id, name: c.name ?? c.channel_name, sessions: c.sessions, daysLeft: c.daysLeft,
-        }));
-      }
+      // Deleted campaigns and restore requests used to ride on this payload
+      // for the dashboard's campaign list. They live in the gatehouse now,
+      // behind /archive, where only the operator looks. Somebody who wants a
+      // campaign back asks with /campaign restore in Discord.
 
       // Twelve polls a minute per open tab, and most of them find nothing new.
       // An unchanged snapshot answers 304 with no body; see statusEtag.

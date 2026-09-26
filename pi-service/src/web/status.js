@@ -35,7 +35,7 @@ export function statusEtag(payload) {
 // sends nothing at all — so every number below is what THIS bot counted as it
 // spent it. It is not a reading off Google's meter and must not be shown as
 // one, because the difference matters the day they disagree.
-function modelReport({ db, cfg }) {
+export function modelReport({ db, cfg }) {
   try {
     const today = db.modelUsageToday();
     const budget = Number(cfg.modelDailyTokenBudget ?? 0);

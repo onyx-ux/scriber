@@ -520,13 +520,12 @@ test('every control the dashboard renders does something', async (t) => {
     ['campaign / settings, choosing a channel',
      [CAMPAIGN, nav({ tab: 'settings' }, ['tab']), nav({ pickChannel: '' })]],
     ['transcript reader', [CAMPAIGN, nav({ transcript: String(parked) })]],
-    ['models', [nav({ screen: 'models' }, ['navlink'])]],
+    ['usage', [nav({ screen: 'usage' }, ['navlink'])]],
     ['servers', [nav({ screen: 'servers' }, ['navlink'])]],
     ['import dialog', [CAMPAIGN, nav({ import: '' })]],
     // Both dialogs get their own stop, because the controls inside one only
     // exist while it is open and are invisible to the walk otherwise.
     ['new campaign dialog', [CAMPAIGN, nav({ newCampaign: '' })]],
-    ['restore review dialog', [CAMPAIGN, nav({ review: String(requestId) })]],
   ];
 
   const reset = async (steps) => { for (const step of steps) await page.fire(step); };
