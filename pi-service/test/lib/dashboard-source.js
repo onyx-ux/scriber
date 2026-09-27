@@ -14,7 +14,7 @@ export const DASHBOARD_DIR = fileURLToPath(new URL('../../../dashboard/html/', i
 export async function dashboardSource(page = 'index.html') {
   const html = await readFile(join(DASHBOARD_DIR, page), 'utf8');
   const refs = [
-    ...html.matchAll(/<link rel="stylesheet" href="\/(dash\/[^"]+\.css)">|<script src="\/(dash\/[^"]+\.js)"><\/script>/g),
+    ...html.matchAll(/<link rel="stylesheet" href="\/(dash\/[^"?]+\.css)(?:[?][^"]*)?">|<script src="\/(dash\/[^"?]+\.js)(?:[?][^"]*)?"><\/script>/g),
   ].map((m) => m[1] ?? m[2]);
   const parts = await Promise.all(refs.map((ref) => readFile(join(DASHBOARD_DIR, ref), 'utf8')));
   return [html, ...parts].join('\n');

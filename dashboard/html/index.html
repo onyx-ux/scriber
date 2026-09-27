@@ -26,7 +26,11 @@
     } catch (e) {}
   })();
 </script>
-<link rel="stylesheet" href="/dash/app.css">
+<!-- The ?v= is the commit the files last changed in. Cloudflare had kept
+     these for four hours on 2026-09-27 and a phone went on running the old
+     dashboard after a deploy; nginx now sends no-cache for /dash/, so this
+     only needed changing once, to walk past the copies already held. -->
+<link rel="stylesheet" href="/dash/app.css?v=0929f9a">
 </head>
 <body>
 
@@ -73,15 +77,15 @@
      scope, loaded in order, with no build step. nginx serves them from
      `location /dash/`, which is open like /app/ because they hold no data. -->
 <script src="/dash/morph.js"></script>
-<script src="/dash/app/01-core.js"></script>
-<script src="/dash/app/02-names.js"></script>
-<script src="/dash/app/03-chrome.js"></script>
-<script src="/dash/app/04-screens.js"></script>
-<script src="/dash/app/05-threshold.js"></script>
-<script src="/dash/app/06-campaign.js"></script>
-<script src="/dash/app/07-tabs.js"></script>
-<script src="/dash/app/08-readers.js"></script>
-<script src="/dash/app/09-paint.js"></script>
-<script src="/dash/app/10-act.js"></script>
+<script src="/dash/app/01-core.js?v=0929f9a"></script>
+<script src="/dash/app/02-names.js?v=0929f9a"></script>
+<script src="/dash/app/03-chrome.js?v=0929f9a"></script>
+<script src="/dash/app/04-screens.js?v=0929f9a"></script>
+<script src="/dash/app/05-threshold.js?v=0929f9a"></script>
+<script src="/dash/app/06-campaign.js?v=0929f9a"></script>
+<script src="/dash/app/07-tabs.js?v=0929f9a"></script>
+<script src="/dash/app/08-readers.js?v=0929f9a"></script>
+<script src="/dash/app/09-paint.js?v=0929f9a"></script>
+<script src="/dash/app/10-act.js?v=0929f9a"></script>
 </body>
 </html>

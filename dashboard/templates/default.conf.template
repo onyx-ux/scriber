@@ -218,7 +218,7 @@ server {
     # moment a location declares one add_header of its own, it drops every
     # add_header inherited from the server block. Two locations do that --
     # `= /robots.txt` and `/api/` -- so both carry their own copy of these
-    # four. Any location that adds a header later has to copy them too, or it
+    # four. (Since 2026-09-27 `/dash/` does too.) Any location that adds a header later has to copy them too, or it
     # silently loses all four. Check with `curl -I`, never by reading.
     add_header X-Frame-Options DENY always;
     add_header X-Content-Type-Options nosniff always;
@@ -366,6 +366,18 @@ server {
         limit_conn quill_conn 24;
 
         root /usr/share/nginx/html;
+
+        # Revalidate, every time. With no Cache-Control of its own this block
+        # let Cloudflare pick one, and it picked four hours: on 2026-09-27 a
+        # phone went on running the old dashboard for hours after a deploy,
+        # served from the edge. no-cache still lets both keep a copy; they ask
+        # first, and an unchanged file is a bodiless 304 off the ETag.
+        add_header Cache-Control "no-cache" always;
+        # add_header from the server block. See the inheritance note up there.
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'none'; form-action 'self'" always;
     }
 
     # The gatehouse, which decides who may sign in at all.

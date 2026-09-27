@@ -177,7 +177,7 @@ async function pageScripts(html, what) {
 
   return Promise.all(found.map(([, attrs, inline]) => {
     const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(attrs);
-    return src ? readFile(join(HTML, src[1].replace(/^\//, '')), 'utf8') : inline;
+    return src ? readFile(join(HTML, src[1].replace(/^\//, '').replace(/[?].*$/, '')), 'utf8') : inline;
   }));
 }
 
