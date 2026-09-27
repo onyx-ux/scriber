@@ -1160,7 +1160,7 @@ they were cleared to make room for. That section is empty again.
 - [x] **Gemini's rate limits, baked in** — the key's limits from AI Studio
       (the 3.5 to 3.8 flash models 5 requests and 250,000 tokens a minute; the
       live transcriber 20,000 tokens a minute) ship as defaults, and
-       overrides them. Google reports no remaining
+      `GEMINI_RATE_LIMITS` overrides them. Google reports no remaining
       quota, so the bot counts and waits for room: a write-up waits for the
       next minute instead of dropping to an older model, and every speaker
       being transcribed draws on one shared per-minute budget. That budget is
