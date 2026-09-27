@@ -1154,3 +1154,18 @@ they were cleared to make room for. That section is empty again.
       summarising leave the dashboard's top bar for a Status tab in the
       gatehouse, which reads itself again every 15 seconds while open. The
       dashboard keeps its banner for a transcriber that cannot be reached.
+
+## 2026-09-28
+
+- [x] **Gemini's rate limits, baked in** — the key's limits from AI Studio
+      (the 3.5 to 3.8 flash models 5 requests and 250,000 tokens a minute; the
+      live transcriber 20,000 tokens a minute) ship as defaults, and
+       overrides them. Google reports no remaining
+      quota, so the bot counts and waits for room: a write-up waits for the
+      next minute instead of dropping to an older model, and every speaker
+      being transcribed draws on one shared per-minute budget. That budget is
+      what session 32 lacked: six speakers at 4x realtime spent the 20,000 in
+      thirty seconds. A quota refusal mid-transcription now pauses every
+      speaker for a minute and carries on, three times before giving up,
+      instead of failing at once. The gatehouse's Usage tab shows each
+      model's limits against this minute's use.

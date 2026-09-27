@@ -1724,6 +1724,8 @@ function usageRoom() {
       <p class="gone-note">Typed rather than picked, because a provider's list of models changes underneath you. Clear a box to go back to <code>pi-service/.env</code>.</p>
     </section>
 
+    ${limitsSection(m.limits)}
+
     <section class="gone">
       <div class="gone-head"><h2>Last fortnight</h2><span class="count">peak ${n(peak)} tokens</span></div>
       <div class="use-days">${days.length
@@ -1754,6 +1756,33 @@ function usageRoom() {
           ? `The newest snapshot was opened as a database, integrity checked, and its row counts compared to the live one${
               m.backup.ageHours != null ? `, ${m.backup.ageHours < 1 ? 'less than an hour' : `${Math.round(m.backup.ageHours)} hours`} after it was taken` : ''}.`
           : esc(m.backup.reason ?? 'The newest snapshot could not be opened.')}</p>
+    </section>`;
+}
+
+// What Google lets this key spend a minute and a day, per model, and how
+// much of this minute the bot has spent. Google reports none of it back, so
+// the bot counts and paces itself to these — see
+// pi-service/src/pipeline/rate-limits.js, and GEMINI_RATE_LIMITS to change them.
+function limitsSection(limits) {
+  if (!Array.isArray(limits) || !limits.length) return '';
+  const used = (now, max) => (max
+    ? `<span${now / max >= 0.85 ? ' style="color:var(--seal)"' : ''}>${n(now)} / ${n(max)}</span>`
+    : n(now));
+  return `
+    <section class="gone">
+      <div class="gone-head"><h2>Rate limits</h2><span class="count">per minute, and today</span></div>
+      <div class="use-wrap"><table class="use-table">
+        <thead><tr><th>Model</th><th class="r">Requests this minute</th><th class="r">Tokens this minute</th><th class="r">Today</th></tr></thead>
+        <tbody>${limits.map((l) => `
+          <tr><td class="mono">${esc(l.model)}${l.pausedForMs > 0 ? ' <span class="count" style="color:var(--seal)">waiting</span>' : ''}</td>
+              <td class="r">${used(l.requests ?? 0, l.rpm)}</td>
+              <td class="r">${used(l.tokens ?? 0, l.tpm)}</td>
+              <td class="r">${l.rpd ? used(l.today ?? 0, l.rpd) : n(l.today ?? 0)}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <p class="gone-note">From the key's rate-limit page in AI Studio. Google never says how much is left, so the bot
+        counts what it sends and waits for room rather than being refused: a write-up waits a few seconds for the
+        next minute instead of dropping to an older model, and the speakers being transcribed share one budget of
+        tokens between them. Counted since the bot last started; set <code>GEMINI_RATE_LIMITS</code> in <code>pi-service/.env</code> to add a daily cap or change one.</p>
     </section>`;
 }
 

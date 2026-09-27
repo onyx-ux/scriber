@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 
 import { readPcmWav } from '../pipeline/wav-merge.js';
+import { limitsFor, rateLimiter } from '../pipeline/rate-limits.js';
 
 // Gemini 3.5 Transcribe Live, fed one continuous stream PER SPEAKER.
 //
@@ -87,12 +88,21 @@ const CLOSE_WAIT_MS = 3_000;
 const RAPID_DEATH_MS = 15_000;
 const MAX_RAPID_DEATHS = 4;
 
-// A close that says the key is out of quota is final. A fresh socket will be
-// refused the same way, so the run fails at once rather than retrying.
+// A close that says the key is out of quota. It used to end the run at once,
+// on the reading that a fresh socket would be refused the same way — true of a
+// daily quota, not of the one that actually bit. The live transcriber's limit
+// is 20,000 tokens a MINUTE for the whole key, and the close reason is cut to
+// "You exceeded your curre…" either way, so the two cannot be told apart from
+// here. So a quota close now stops every speaker for a minute and tries again;
+// only a run that keeps being refused after that many waits gives up.
 const OUT_OF_QUOTA = /quota|RESOURCE_EXHAUSTED|billing/i;
+const QUOTA_PAUSE_MS = 65_000;
+const MAX_QUOTA_STRIKES = 3;
 
 function timingsFrom(cfg) {
   return {
+    quotaPauseMs: cfg.geminiTranscribeQuotaPauseMs ?? QUOTA_PAUSE_MS,
+    maxQuotaStrikes: cfg.geminiTranscribeMaxQuotaStrikes ?? MAX_QUOTA_STRIKES,
     connectTimeoutMs: cfg.geminiTranscribeConnectTimeoutMs ?? CONNECT_TIMEOUT_MS,
     retryDelaysMs: cfg.geminiTranscribeRetryDelaysMs ?? RETRY_DELAYS_MS,
     closeWaitMs: cfg.geminiTranscribeCloseWaitMs ?? CLOSE_WAIT_MS,
@@ -101,8 +111,8 @@ function timingsFrom(cfg) {
   };
 }
 
-// Why a socket the server closed means the run cannot go on, or null when a
-// fresh socket is worth trying.
+// The quota error behind a socket the server closed, or null for any other
+// close. A quota close waits out the minute before a fresh socket; see roll().
 function terminalClose(state) {
   if (state.closedByUs || !state.closed) return null;
   if (OUT_OF_QUOTA.test(state.closeReason ?? '')) {
@@ -280,11 +290,15 @@ async function openSocket(cfg, vocabulary, connect, { label, connectTimeoutMs })
 
 // Opening with retries. Throws once they are spent, naming the last reason, so
 // the run fails with something an operator can act on.
-async function openWithRetry(cfg, vocabulary, connect, { label, run, timings }) {
+async function openWithRetry(cfg, vocabulary, connect, { label, run, timings, budget }) {
   const attempts = timings.retryDelaysMs.length + 1;
   let last = null;
+  let quotaRefusals = 0;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    if (attempt > 1) {
+    if (attempt > 1 && quotaRefusals && last && OUT_OF_QUOTA.test(last.message)) {
+      // Waited out in the budget, which every speaker shares.
+      await budget.coolDown();
+    } else if (attempt > 1) {
       const wait = timings.retryDelaysMs[attempt - 2];
       console.warn(`[gemini-stt] ${label}: retrying in ${Math.round(wait / 1000)}s (attempt ${attempt}/${attempts})`);
       await sleep(wait);
@@ -297,8 +311,13 @@ async function openWithRetry(cfg, vocabulary, connect, { label, run, timings }) 
     } catch (err) {
       last = err;
       console.warn(`[gemini-stt] ${label}: could not open a live socket: ${err.message}`);
-      // Out of quota: a retry will be refused the same way.
-      if (OUT_OF_QUOTA.test(err.message)) throw new Error(`${label}: Gemini is out of quota (${err.message})`);
+      if (OUT_OF_QUOTA.test(err.message)) {
+        quotaRefusals += 1;
+        budget?.refused();
+        if (quotaRefusals > timings.maxQuotaStrikes) {
+          throw new Error(`${label}: Gemini is out of quota (${err.message})`);
+        }
+      }
     }
   }
   throw new Error(`${label}: could not reopen the live socket after ${attempts} attempts — ${last?.message ?? 'unknown'}`);
@@ -316,13 +335,19 @@ async function waitForClose(socket, ms) {
 async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, connect, onAudioMs, { label, run }) {
   const pace = cfg.geminiTranscribeMaxRealtime > 0 ? cfg.geminiTranscribeMaxRealtime : 1;
   const timings = timingsFrom(cfg);
-  const open = () => openWithRetry(cfg, vocabulary, connect, { label, run, timings });
+  const budget = run.budget;
+  const open = () => openWithRetry(cfg, vocabulary, connect, { label, run, timings, budget });
   const collected = [];
 
   let socket = await open();
   let socketStartedAt = Date.now();
   let cursorMs = 0;
-  const startedAt = Date.now();
+  // Where the pacing counts from. Moved on after any wait for the budget, so a
+  // speaker who waited does not then burst the whole backlog at full speed.
+  let paced = { at: Date.now(), cursorMs: 0 };
+
+  // Quota closes in a row with no audio carried in between.
+  let quotaStrikes = 0;
 
   // Fragments are drained with the cursor value they arrived at, so a roll
   // does not lose the mapping.
@@ -336,10 +361,17 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
   const roll = async () => {
     drain();
     const serverClosed = socket.state.closed && !socket.state.closedByUs;
-    // A close that means no fresh socket will do better ends the run here.
-    const fatal = terminalClose(socket.state);
-    if (fatal) throw new Error(`${label}: ${fatal.message}`);
-    if (serverClosed && Date.now() - socket.state.openedAt < timings.rapidDeathMs) {
+    const quota = terminalClose(socket.state);
+    if (quota) {
+      // Out of quota for this minute, most likely: every speaker stops, the
+      // budget is taken down a notch, and this one tries again after.
+      quotaStrikes += 1;
+      if (quotaStrikes > timings.maxQuotaStrikes) throw new Error(`${label}: ${quota.message}`);
+      console.warn(
+        `[gemini-stt] ${label}: ${quota.message}, so every speaker waits ${Math.round(timings.quotaPauseMs / 1000)}s (${quotaStrikes}/${timings.maxQuotaStrikes})`
+      );
+      budget.refused();
+    } else if (serverClosed && Date.now() - socket.state.openedAt < timings.rapidDeathMs) {
       rapidDeaths += 1;
       if (rapidDeaths >= timings.maxRapidDeaths) {
         throw new Error(
@@ -348,6 +380,7 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
       }
     } else {
       rapidDeaths = 0;
+      quotaStrikes = 0;
     }
 
     socket.state.closedByUs = true;
@@ -359,14 +392,22 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
     await waitForClose(socket, timings.closeWaitMs);
     // What the old socket said after the drain above, before it went.
     drain();
+    if (quota) await budget.coolDown();
     socket = await open();
     socketStartedAt = Date.now();
+    paced = { at: Date.now(), cursorMs };
   };
 
   for (const range of ranges) {
     if (run.error) throw run.error;
     const pcm = await readAudio(range.clip);
     if (!pcm) continue;
+
+    // This clip and the gap after it, charged against the per-minute budget
+    // every speaker shares. Waits here, between clips, never mid-utterance.
+    if (await budget.spend(pcm.length / BYTES_PER_MS + GAP_MS, label)) {
+      paced = { at: Date.now(), cursorMs };
+    }
 
     // Roll BEFORE the clip rather than during it, so no utterance straddles a
     // seam. goAway gives ~50s of warning, which is ample for this.
@@ -393,7 +434,7 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
 
       // Hold to `pace` times realtime. Above ~4x the server drops audio
       // silently; at 1x the arrival time IS the timestamp.
-      const owed = cursorMs / pace - (Date.now() - startedAt);
+      const owed = (cursorMs - paced.cursorMs) / pace - (Date.now() - paced.at);
       if (owed > 0) await sleep(owed);
     }
 
@@ -438,13 +479,46 @@ async function streamOneSpeaker(ranges, totalMs, readAudio, cfg, vocabulary, con
   return collected;
 }
 
+// The live transcriber's per-minute token limit, shared by every speaker's
+// socket. Each clip is charged at a flat rate per second of audio before it is
+// sent (the model reports no usage of its own to charge afterwards), and a
+// quota refusal takes the rate up by a quarter for the rest of the run — the
+// estimate was evidently low — and stops everyone for a minute.
+function audioBudget(cfg, limiter) {
+  const model = cfg.geminiTranscribeModel;
+  const limits = limitsFor(cfg, model);
+  let perSecond = cfg.geminiTranscribeTokensPerSecond > 0 ? cfg.geminiTranscribeTokensPerSecond : 25;
+  const pauseMs = cfg.geminiTranscribeQuotaPauseMs ?? QUOTA_PAUSE_MS;
+  return {
+    // Resolves once the audio fits; true when it had to wait for it.
+    async spend(audioMs, label) {
+      if (!limits) return false;
+      const booking = await limiter.acquire(model, {
+        limits,
+        tokens: Math.ceil((audioMs / 1000) * perSecond),
+        label: `${label} (transcribing)`,
+      });
+      return booking.waitedMs > 0;
+    },
+    refused() {
+      perSecond *= 1.25;
+      limiter.pause(model, pauseMs);
+    },
+    // Waits out a pause somebody set, without booking anything.
+    async coolDown() {
+      if (limits) await limiter.acquire(model, { limits: { ...limits, rpm: null, rpd: null }, tokens: 0 });
+      else await sleep(pauseMs);
+    },
+  };
+}
+
 // clips: [{ userId, displayName, wavPath, startMs, endMs }]
 //
 // Returns the same { results, failures } shape the whisper paths produce.
 export async function transcribeSpeakerStreams(
   clips,
   cfg,
-  { vocabulary = [], onProgress, connect = defaultConnect, readAudio = null } = {}
+  { vocabulary = [], onProgress, connect = defaultConnect, readAudio = null, limiter = rateLimiter } = {}
 ) {
   const bySpeaker = new Map();
   for (const c of clips) {
@@ -502,7 +576,7 @@ export async function transcribeSpeakerStreams(
   // back in the queue with the reason on it. The shared flag stops the other
   // speakers early rather than letting them stream an hour of audio into a
   // result that is going to be discarded.
-  const run = { error: null };
+  const run = { error: null, budget: audioBudget(cfg, limiter) };
 
   // Concurrently — measured working on six sockets at once, and the wall clock
   // is then the LONGEST speaker rather than the sum of all of them.

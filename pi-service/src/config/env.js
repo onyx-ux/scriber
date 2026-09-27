@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+import { parseLimits } from '../pipeline/rate-limits.js';
+
 // The bot runs as root inside the container, but the files it writes are
 // collected over SFTP by an ordinary user on the host. Deleting a file needs
 // write permission on its DIRECTORY, so with the default 022 umask every
@@ -252,6 +254,17 @@ export const config = validate({
   // proportionally slower (60 min of speech takes ~15 min at 4x).
   geminiTranscribeMaxRealtime: parseFloat(optional('GEMINI_TRANSCRIBE_MAX_REALTIME', '4')),
 
+  // That ceiling is per KEY, not per socket — 20,000 tokens a minute on
+  // gemini-3.5-transcribe-live, shared by every speaker. 4x was measured on
+  // one stream; six speakers at 4x each is 24x, and that is what ran session
+  // 32 out of quota 30 seconds in (26 Sep 2026). The speakers now draw on one
+  // shared budget (pipeline/rate-limits.js), and this is what a second of
+  // audio is charged against it. 25 is Google's published rate for live audio
+  // and on the safe side of what was measured: the transcribe model reports
+  // no usage at all, and gemini-3.8-live counted ~12 a second on the same
+  // audio (28 Sep 2026).
+  geminiTranscribeTokensPerSecond: parseFloat(optional('GEMINI_TRANSCRIBE_TOKENS_PER_SECOND', '25')),
+
   // How long to wait for one clip's transcription before giving up on it.
   // Generous — a timeout costs the session it was on, because a late
   // transcription arriving during the NEXT clip would attribute one person's
@@ -368,6 +381,11 @@ export const config = validate({
     'gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.1-flash-lite'
   ),
   geminiAskModel: optional('GEMINI_ASK_MODEL', 'gemini-3.1-flash-lite'),
+
+  // Per-model limits for this key, over the ones pipeline/rate-limits.js
+  // ships with: model=rpm/tpm/rpd, comma separated, an empty part for none.
+  // Google reports no remaining quota, so these are what the bot paces to.
+  geminiRateLimits: parseLimits(optional('GEMINI_RATE_LIMITS', '')),
   anthropicModelFallbacks: optional('ANTHROPIC_MODEL_FALLBACKS', 'claude-sonnet-5'),
   anthropicAskModel: optional('ANTHROPIC_ASK_MODEL', 'claude-haiku-4-5'),
 

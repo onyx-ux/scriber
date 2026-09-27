@@ -3,6 +3,7 @@ import { nextAutoWindowStart } from '../pipeline/transcribe-schedule.js';
 import { detectOpusBackend } from '../voice/opus-backend.js';
 import { configuredProviders } from '../pipeline/model-client.js';
 import { topModel, ladderFor, knownModels } from '../pipeline/model-choice.js';
+import { allLimits, rateLimiter } from '../pipeline/rate-limits.js';
 import { lastBackupCheck } from '../maintenance/backup-check.js';
 import { createHash } from 'node:crypto';
 
@@ -59,6 +60,16 @@ export function modelReport({ db, cfg }) {
       byModel: db.modelUsage(7),
       byDay: db.modelUsageByDay(14),
       askLimit: Number(cfg.askDailyLimit ?? 0),
+      // What each model may spend a minute and a day, and what this process
+      // has spent of it in the last minute. Counted here, because Google
+      // reports none of it back.
+      limits: Object.entries(allLimits(cfg)).map(([model, l]) => ({
+        model,
+        rpm: l.rpm ?? null,
+        tpm: l.tpm ?? null,
+        rpd: l.rpd ?? null,
+        ...rateLimiter.usage(model),
+      })),
       // Said out loud in the payload so the page cannot forget to say it.
       counted: 'by this bot, as it spent them — neither provider reports a remaining balance',
     };

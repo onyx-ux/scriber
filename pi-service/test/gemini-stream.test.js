@@ -11,6 +11,7 @@ import {
   assignToRange,
   joinFragments,
 } from '../src/stt/gemini-stream.js';
+import { createRateLimiter } from '../src/pipeline/rate-limits.js';
 import { writePcmWav } from '../src/pipeline/wav-merge.js';
 
 // The per-clip design this replaced failed in two measured ways: waiting for
@@ -112,6 +113,8 @@ const fast = {
   geminiTranscribeConnectTimeoutMs: 50,
   geminiTranscribeRetryDelaysMs: [5, 5],
   geminiTranscribeCloseWaitMs: 20,
+  // A quota refusal waits out Google's minute before trying again. Here, not.
+  geminiTranscribeQuotaPauseMs: 20,
 };
 
 // --- the pure parts -------------------------------------------------------
@@ -425,19 +428,66 @@ test('progress is reported against the audio, not the clip count', async (t) => 
 // each time kept the run going, feeding audio into sockets that dropped it, and
 // it "finished" with 852 lines of a four-hour session. Committing that let the
 // archive step delete the clips a retry needed.
+//
+// It used to fail at the first quota close. But the limit that bit was 20,000
+// tokens a MINUTE for the whole key, so a minute's wait is worth trying — and
+// the close reason is cut short, so a daily quota cannot be told apart. Three
+// waits, then the run fails.
 test('running out of quota fails the run rather than rolling forever', { timeout: 5000 }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
 
-  const clips = [clip(await wav(dir, 'long.wav', 5000), { startMs: 0 })];
+  const clips = [clip(await wav(dir, 'long.wav', 9000), { startMs: 0 })];
   const quota = { closeAfterMs: 1000, closeReason: 'You exceeded your current quota, please check your plan and billing details.' };
-  const transport = fakeTransport([quota, quota, quota, quota, quota, quota]);
+  const transport = fakeTransport(Array.from({ length: 10 }, () => quota));
 
   await assert.rejects(
-    transcribeSpeakerStreams(clips, fast, { connect: transport.connect }),
+    transcribeSpeakerStreams(clips, fast, { connect: transport.connect, limiter: createRateLimiter() }),
     /quota/
   );
-  assert.equal(transport.sockets.length, 1, 'quota is not something a fresh socket fixes');
+  assert.equal(transport.sockets.length, 4, 'three waits for the minute to turn, then it stops');
+});
+
+test('a quota refusal waits the minute out and then carries on', { timeout: 5000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const clips = [
+    clip(await wav(dir, 'a.wav', 1000), { startMs: 0 }),
+    clip(await wav(dir, 'b.wav', 1000), { startMs: 10_000 }),
+  ];
+  const quota = { closeAfterMs: 500, closeReason: 'You exceeded your current quota, please check your plan and billing details.' };
+  const transport = fakeTransport([quota, [{ afterMs: 500, text: 'the second clip, heard' }]]);
+  const limiter = createRateLimiter();
+
+  const { results } = await transcribeSpeakerStreams(clips, fast, { connect: transport.connect, limiter });
+  assert.equal(transport.sockets.length, 2);
+  assert.match(results.map((r) => r.text).join(' '), /the second clip, heard/);
+});
+
+// Six speakers at 4x realtime each is what spent 20,000 tokens a minute in
+// thirty seconds. The budget is one for all of them.
+test('every speaker draws on one per-minute budget', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'gemini-stream-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+
+  const clips = [];
+  for (const u of ['a', 'b', 'c']) clips.push(clip(await wav(dir, `${u}.wav`, 1000), { userId: u, displayName: u }));
+  const booked = [];
+  const limiter = {
+    async acquire(model, { tokens, limits }) {
+      booked.push({ model, tokens, tpm: limits?.tpm });
+      return { waitedMs: 0, settle() {} };
+    },
+    pause() {},
+    usage: () => ({}),
+  };
+  await transcribeSpeakerStreams(clips, { ...fast, geminiTranscribeTokensPerSecond: 25 }, { connect: fakeTransport().connect, limiter });
+
+  assert.equal(booked.length, 3, 'one booking per clip, whoever said it');
+  assert.ok(booked.every((b) => b.model === 'gemini-3.5-transcribe-live' && b.tpm === 20_000));
+  // 1s of speech and the 0.7s gap after it, at 25 tokens a second.
+  assert.deepEqual(booked.map((b) => b.tokens), [43, 43, 43]);
 });
 
 // The general form of the same failure: whatever the reason, sockets that die

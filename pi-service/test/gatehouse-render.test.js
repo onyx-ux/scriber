@@ -669,5 +669,9 @@ test('the bill is in the gatehouse', async (t) => {
   assert.match(markup, /1,400 tokens/);
   assert.match(markup, /gemini-3\.6-flash/);
   assert.match(markup, /data-gh-model="summary"/, 'the model can still be chosen, and says for which role');
+  // The key's own limits, and how much of this minute is spent.
+  assert.match(markup, /Rate limits/);
+  assert.match(markup, /gemini-3\.5-transcribe-live/);
+  assert.match(markup, /0 \/ 20,000/, 'the live transcriber’s shared 20,000 tokens a minute');
   assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
 });

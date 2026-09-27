@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import { ladderFor, topModel } from './model-choice.js';
+import { estimateTextTokens, limitsFor, rateLimiter } from './rate-limits.js';
 
 // One place that knows how to ask a language model a question, so the
 // summariser and /ask don't each carry their own HTTP client.
@@ -112,6 +113,16 @@ async function callAnthropic(systemPrompt, userMessage, cfg, timeoutMs, model) {
 const GEMINI_BLOCKED_REASONS = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'RECITATION', 'BLOCKLIST', 'SPII']);
 
 async function callGemini(systemPrompt, userMessage, cfg, timeoutMs, model) {
+  // Paced to the key's limits before the clock starts: five requests a minute
+  // on the flash models, and a write-up with its note builders behind it is a
+  // burst of calls on one model. Waiting here costs seconds; being refused
+  // steps the session down the ladder to an older model. See rate-limits.js.
+  const limits = limitsFor(cfg, model);
+  const booking = await rateLimiter.acquire(model, {
+    limits,
+    tokens: estimateTextTokens(systemPrompt, userMessage),
+  });
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -139,6 +150,7 @@ async function callGemini(systemPrompt, userMessage, cfg, timeoutMs, model) {
     // lite models do not do. Recording all three is what makes the difference
     // visible on the dashboard instead of a mystery in the bill.
     const used = response.usageMetadata ?? {};
+    if (used.totalTokenCount) booking.settle(used.totalTokenCount);
     return {
       text,
       usage: {
@@ -154,6 +166,10 @@ async function callGemini(systemPrompt, userMessage, cfg, timeoutMs, model) {
     if (err.name === 'AbortError') {
       throw new Error(`Gemini request timed out after ${Math.round(timeoutMs / 1000)}s`);
     }
+    // Refused for rate anyway: something else spent this minute (AI Studio in
+    // a browser, a probe script). Nothing more goes to this model until the
+    // minute has turned over, so the next job waits rather than being refused.
+    if ((err?.status ?? err?.code) === 429 && limits) rateLimiter.pause(model, 60_000);
     throw err;
   } finally {
     clearTimeout(timer);
