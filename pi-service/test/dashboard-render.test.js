@@ -391,7 +391,9 @@ test('the operator sees the app, with the machinery on it', async (t) => {
 
   assert.ok(balanced(markup).ok, 'unbalanced markup means a template threw part-way');
   assert.match(markup, /Cipher/);
-  assert.match(markup, /data-act="pause"/, 'the pause switches are the owner\'s');
+  // The pause switches are still the operator's, in the gatehouse's Status
+  // room now rather than on every screen's top bar.
+  assert.doesNotMatch(markup, /data-act="pause"/, 'the pause switches moved to the gatehouse');
   assert.match(markup, /data-import/);
   // The bill moved to the gatehouse; the top bar carries everybody's own usage.
   assert.match(markup, /data-screen="usage"/);
@@ -466,16 +468,40 @@ for (const [level, userId, username] of [
   });
 }
 
-// The user's own rule: no mention of which model wrote anything, below dev.
-test('the health line names the machinery only for the operator', async (t) => {
+// The health line left the top bar for the gatehouse's Status room on
+// 2026-09-27. Below dev it still names no machinery, because it is not there.
+test('the top bar carries no health line and no pause switch, for anybody', async (t) => {
   const { db, cfg, base } = await world(t);
 
   const dev = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
-  assert.match(dev.body(), /whisper server/);
+  assert.doesNotMatch(dev.body(), /whisper server|writing up is|data-act="pause"/);
+  assert.match(dev.body(), /href="\/gatehouse\/"/, 'the operator still has the way to it');
 
   const player = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
-  assert.match(player.body(), /writing up is/, 'they are still told whether it works');
-  assert.doesNotMatch(player.body(), /whisper|gemini/i);
+  assert.doesNotMatch(player.body(), /whisper|gemini|writing up is|data-act="pause"/i);
+});
+
+// On a phone the column used to draw as nothing at all. It is a drawer there
+// and can be folded on a wide window; either way the ribbon over the pane has
+// the button that brings it back and names the night being read.
+test('the campaign column folds away into a ribbon that names the session', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /class="ribbon-name"/.test(m));
+
+  let markup = page.body();
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /class="col-bar"/, 'the column has its own menu button');
+  assert.match(markup, /<div class="ribbon-name">Session \d+<\/div>/, 'the night is the ribbon\'s hero');
+  assert.match(markup, /class="menu-btn" data-rail aria-controls="campaign-column"\s+aria-expanded="true"/);
+
+  await page.click(['[data-rail]'], {});
+  markup = page.body();
+  assert.match(markup, /class="menu-btn" data-rail aria-controls="campaign-column"\s+aria-expanded="false"/,
+    'folded, the ribbon\'s button says the column is closed');
+
+  await page.click(['[data-rail]'], {});
+  assert.match(page.body(), /class="menu-btn" data-rail aria-controls="campaign-column"\s+aria-expanded="true"/);
 });
 
 // --- signed out ---

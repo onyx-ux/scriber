@@ -782,6 +782,31 @@
     .arch-do { justify-content: flex-start; }
   }
 
+  /* -- Status: the machinery, and the two switches that stop it ----------
+     Moved here from the dashboard's top bar on 2026-09-27. A dot, a name, a
+     sentence, and for the two queues the switch that holds them. Filled is
+     a fact (answering, not answering); a ring is a state somebody chose
+     (paused) or one nobody knows yet. */
+  .st-row {
+    display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px 14px;
+    align-items: baseline; padding: 16px 0; border-bottom: 1px solid var(--rule);
+  }
+  .st-row:last-child { border-bottom: 0; }
+  .st-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--faint); transform: translateY(-1px); }
+  .st-dot.ok { background: var(--bronze); border-color: var(--bronze); }
+  .st-dot.bad { background: var(--seal); border-color: var(--seal); }
+  .st-dot.held { border-color: var(--seal); }
+  .st-row .nm { font-size: 17px; color: var(--iron); }
+  .st-row .meta { font: 12px/1.6 var(--mono); color: var(--faint); margin-top: 3px; }
+  .st-row .meta .bad { color: var(--seal); }
+  .st-row .btn { align-self: center; }
+  .st-tag { font-size: 18px; margin-left: 4px; }
+  .gh-nav .warn { color: var(--seal); }
+  @media (max-width: 620px) {
+    .st-row { grid-template-columns: 14px minmax(0, 1fr); }
+    .st-row .btn { grid-column: 2; justify-self: start; margin-top: 6px; }
+  }
+
 </style>
 </head>
 <body>
@@ -836,10 +861,13 @@ let access = null;
 // which it does to everybody but the operator.
 let archive = null;
 let usage = null;
+// The bot's own status snapshot, for the Status room: whether the transcriber
+// and the summariser answer, and whether either queue is paused.
+let snap = null;
 
 // Which room is open. Read from the address so the dashboard can link straight
 // to /gatehouse/#usage or #archive.
-const ROOMS = ['people', 'archive', 'usage'];
+const ROOMS = ['people', 'status', 'archive', 'usage'];
 const asked = String(location.hash ?? '').slice(1);
 let room = ROOMS.includes(asked) ? asked : 'people';
 
@@ -932,16 +960,18 @@ async function send(action, body) {
 
 async function load() {
   try {
-    const [who, roster, arch, use] = await Promise.all([
+    const [who, roster, arch, use, st] = await Promise.all([
       get('/me'),
       get('/access'),
       get('/archive').catch(() => null),
       get('/usage').catch(() => null),
+      get('/status').catch(() => null),
     ]);
     me = who;
     access = roster;
     archive = arch;
     usage = use;
+    snap = st;
   } catch (err) {
     morph($('page'), `
       <div class="door">
@@ -1008,7 +1038,8 @@ function paint() {
   }
 
   if (room !== 'people') {
-    morph($('page'), rooms() + (room === 'archive' ? archiveRoom() : usageRoom()) + footing());
+    const body = room === 'status' ? statusRoom() : room === 'archive' ? archiveRoom() : usageRoom();
+    morph($('page'), rooms() + body + footing());
     return;
   }
 
@@ -1503,6 +1534,7 @@ function rooms() {
   return `
     <nav class="gh-nav" aria-label="Gatehouse sections">
       ${tab('people', 'People')}
+      ${tab('status', 'Status', trouble() ? '<span class="n warn">●</span>' : '')}
       ${tab('archive', 'Archive', archive ? `<span class="n">${archive.campaigns.length}${waiting ? ` · ${waiting} asked` : ''}</span>` : '')}
       ${tab('usage', 'Usage')}
     </nav>`;
@@ -1566,6 +1598,84 @@ function archiveRoom() {
         ask with <code>/campaign restore</code> in Discord, and their request appears above.
       </p>
       ${rows || '<div class="empty">Nothing has been deleted.</div>'}
+    </section>`;
+}
+
+// Anything in the Status room that wants looking at: a machine not
+// answering, or a queue somebody paused and may have forgotten.
+function trouble() {
+  const h = snap?.health;
+  return Boolean(h && (h.whisperServer === false || h.summariser === false || h.transcribePaused || h.summarisePaused));
+}
+
+// The machinery, and the two switches that stop it. These were on the
+// dashboard's top bar, on every screen, and the operator is the only person
+// they were ever drawn for; a bar carrying them needed 1018px and wrapped into
+// three rows on a phone. The dashboard still raises its banner when the
+// transcriber cannot be reached, and links here.
+//
+// Each switch says the state it moves TO, so it is the same press whatever
+// the page last managed to draw: sent twice from two tabs, it lands where the
+// person pressing it meant, not on the opposite.
+function statusRoom() {
+  const h = snap?.health;
+  if (!h) return `<div class="empty">The status did not load. Only the bot owner can open it.</div>`;
+  const q = snap.queue ?? {};
+  const w = snap.working ?? {};
+  const count = (list) => (Array.isArray(list) ? list.length : 0);
+  const ago = (iso) => {
+    const s = since(stamp(iso));
+    return s === '—' ? 'never' : s === 'now' ? 'just now' : `${s} ago`;
+  };
+  const reach = (v) => (v === true ? ['ok', 'answering'] : v === false ? ['bad', 'not answering'] : ['', 'not checked yet']);
+
+  const machine = (dot, name, say) => `
+    <div class="st-row">
+      <span class="st-dot ${dot}" aria-hidden="true"></span>
+      <div>
+        <div class="nm">${name}</div>
+        <div class="meta">${say}</div>
+      </div>
+    </div>`;
+
+  const queue = (id, name, paused, busy, waiting) => {
+    const said = [
+      busy ? `${plural(busy, 'session')} being worked on` : '',
+      waiting ? `${plural(waiting, 'session')} waiting` : '',
+    ].filter(Boolean).join(' · ') || 'nothing in the queue';
+    return `
+      <div class="st-row">
+        <span class="st-dot ${paused ? 'held' : 'ok'}" aria-hidden="true"></span>
+        <div>
+          <div class="nm">${name} ${paused ? '<span class="count" style="color:var(--seal)">paused</span>' : ''}</div>
+          <div class="meta">${paused ? '<span class="bad">nothing new will start</span> · ' : ''}${esc(said)}</div>
+        </div>
+        <button type="button" class="btn${paused ? ' go' : ''}" data-gh="pause" data-queue="${id}" data-paused="${!paused}"
+          ${paused ? '' : `data-said="Pause ${name.toLowerCase()}? Anything already running finishes; nothing new starts."`}>
+          ${paused ? 'Resume' : 'Pause'}</button>
+      </div>`;
+  };
+
+  const [tDot, tSay] = reach(h.whisperServer);
+  const [sDot, sSay] = reach(h.summariser);
+  const provider = ({ gemini: 'Gemini', anthropic: 'Claude' })[h.summariserName] ?? h.summariserName ?? 'the summariser';
+
+  return `
+    <section class="gone" style="margin-top:0">
+      <div class="gone-head"><h2>The machinery</h2><span class="count">checked ${esc(ago(h.checkedAt))}</span></div>
+      ${machine(tDot, 'Transcriber', `${h.whisperServer === false ? `<span class="bad">${tSay}</span>` : tSay}${h.whisperServerHost ? ` · ${esc(h.whisperServerHost)}` : ''}`)}
+      ${machine(sDot, 'Summariser', `${h.summariser === false ? `<span class="bad">${sSay}</span>` : sSay} · ${esc(provider)}`)}
+      ${machine(snap.bot?.online ? 'ok' : 'bad', 'Discord', `${esc(snap.bot?.user || 'not signed in')}${snap.bot?.uptimeMs != null ? ` · up ${esc(since(Date.now() - snap.bot.uptimeMs))}` : ''}`)}
+      <p class="gone-note">A transcriber that is not answering is nearly always the PC being asleep. Nothing is lost while it is:
+        recording, consent and slash commands carry on, and every held session keeps its audio until a transcript exists.</p>
+    </section>
+
+    <section class="gone">
+      <div class="gone-head"><h2>The queues</h2></div>
+      ${queue('transcribe', 'Transcribing', h.transcribePaused, count(w.transcribing), count(q.queuedTranscribe) + count(q.awaitingTranscribe))}
+      ${queue('summarize', 'Summarising', h.summarisePaused, count(w.summarising), count(q.queuedSummary) + count(q.awaitingSummary))}
+      <p class="gone-note">Pausing holds new work, and only that. A session already being transcribed or written up finishes,
+        and anything that arrives while a queue is paused waits in it until you resume.</p>
     </section>`;
 }
 
@@ -1751,6 +1861,8 @@ document.addEventListener('click', async (e) => {
     if (gh.dataset.campaign) body.campaignId = Number(gh.dataset.campaign);
     if (gh.dataset.request) body.requestId = Number(gh.dataset.request);
     if (gh.dataset.approve) body.approve = gh.dataset.approve === 'true';
+    if (gh.dataset.queue) body.queue = gh.dataset.queue;
+    if (gh.dataset.paused) body.paused = gh.dataset.paused === 'true';
     await send(gh.dataset.gh, body);
     return;
   }
@@ -1844,6 +1956,11 @@ window.addEventListener?.('hashchange', () => {
   room = ROOMS.includes(next) ? next : 'people';
   paint();
 });
+
+// The Status room is a reading of a machine that changes on its own, so it is
+// read again every fifteen seconds while it is the room on screen. Only then:
+// the other rooms are lists somebody may be halfway through editing.
+setInterval(() => { if (room === 'status' && !armed && document.visibilityState !== 'hidden') load(); }, 15000);
 
 // Escape disarms a half-pressed button, the same as clicking away.
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') disarm(); });

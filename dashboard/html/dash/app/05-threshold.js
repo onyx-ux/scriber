@@ -1274,9 +1274,17 @@ function renderScreen() {
 
   if (status && !status.campaigns?.length) { el.className = ''; morph(el, firstRun()); return; }
 
-  el.className = `split ${arriving}`.trim();
+  // The campaign column is a column on a wide window, folded away when its
+  // reader asks, and a drawer over the page on a narrow one. Whichever way it
+  // is not showing, the ribbon over the pane is the way back to it.
+  const wide = railWide();
+  const folded = wide && railFolded();
+  const drawer = !wide && view.drawer;
+  document.body.classList?.toggle?.('drawer-lock', drawer);
+  el.className = `split ${arriving}${folded ? ' rail-folded' : ''}${drawer ? ' drawer-open' : ''}`.trim();
   morph(el, `
-    <div class="sessions">
+    <div class="sessions" id="campaign-column"${wide ? '' : ` role="dialog" aria-label="This campaign"${drawer ? ' aria-modal="true"' : ' inert'}`}>
+      ${columnBar(wide)}
       <div class="shelf-slider ${view.shelfPicking ? 'picking' : 'picked'}">
         <div class="shelf-page chooser" ${view.shelfPicking ? '' : 'aria-hidden="true"'}>
           ${shelfChooser()}
@@ -1291,7 +1299,9 @@ function renderScreen() {
         </div>
       </div>
     </div>
+    ${wide ? '' : '<div class="drawer-scrim" data-rail-close aria-hidden="true"></div>'}
     <div class="pane">
+      ${ribbon(wide, folded, drawer)}
       <div class="pane-main${view.tab === 'notes' && view.shelf === 'sessions' && marking() ? ' marking' : ''}">
         ${tabsBar()}
         ${paneBody()}

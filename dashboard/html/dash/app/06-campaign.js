@@ -8,6 +8,98 @@
 // The session column
 // ==========================================================================
 
+// --- folded, drawn over the page, and the ribbon that brings it back ---------
+//
+// Below 1181px the column used to be laid out above the pane with its pages
+// absolutely positioned inside a frame of no height, so on a phone or a
+// half-screen window it was simply not there: no sessions, no NPCs, no way to
+// another night. It is a drawer there now, opened from the ribbon's menu
+// button. On a wide window it is the column it always was, and the same
+// button folds it away for a wider read; folded, the ribbon takes its place.
+//
+// Folded is this browser's preference, kept like the theme. The drawer is not
+// kept at all: a phone reopening the page wants the write-up, not the menu.
+
+const RAIL_KEY = 'quill-rail';
+const RAIL_WIDE = '(min-width: 1181px)';
+const railWide = () => window.matchMedia?.(RAIL_WIDE)?.matches ?? true;
+function railFolded() {
+  try { return localStorage.getItem(RAIL_KEY) === 'folded'; } catch (e) { return false; }
+}
+function setRailFolded(folded) {
+  try {
+    if (folded) localStorage.setItem(RAIL_KEY, 'folded');
+    else localStorage.removeItem(RAIL_KEY);
+  } catch (e) {}
+}
+
+const MENU_GLYPH = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+const SHUT_GLYPH = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path d="m6.5 6.5 11 11m0-11-11 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+
+// The top of the column: the same button in the same place as the ribbon's,
+// so folding and unfolding is one spot on the screen, and the campaign's name,
+// which on a phone is otherwise only in the top bar behind the drawer.
+function columnBar(wide) {
+  const c = campaign();
+  const name = c?.name || detail?.name || c?.channel || 'This campaign';
+  return `
+    <div class="col-bar">
+      <button type="button" class="menu-btn" data-rail aria-controls="campaign-column" aria-expanded="true"
+              aria-label="${wide ? 'Fold the campaign column away' : 'Close the campaign menu'}"
+              title="${wide ? 'Fold away' : 'Close'}">${wide ? MENU_GLYPH : SHUT_GLYPH}</button>
+      <span class="col-name">${esc(name)}</span>
+    </div>`;
+}
+
+// The ribbon over the pane, drawn whenever the column is not: the menu button,
+// and the night being read as the largest thing on it. On a shelf that is not
+// a night, the shelf is the name.
+function ribbon(wide, folded, drawer) {
+  const c = campaign();
+  const s = view.shelf === 'sessions' ? selected() : null;
+  const list = view.shelf === 'sessions' ? sessions() : [];
+  const at = s ? list.findIndex((x) => x.meetingId === s.meetingId) : -1;
+  const hero = s ? sessionName(s) : SHELVES.find(([id]) => id === view.shelf)?.[1] ?? 'Sessions';
+  const kicker = s
+    ? [longDate(s.startedAt), list.length > 1 ? `${list.length - at} of ${list.length}` : ''].filter(Boolean).join('  ·  ')
+    : c?.name || c?.channel || '';
+  const state = s && s.state !== 'posted' ? s.state : '';
+  return `
+    <div class="ribbon">
+      <button type="button" class="menu-btn" data-rail aria-controls="campaign-column"
+              aria-expanded="${wide ? !folded : drawer}"
+              aria-label="${wide ? 'Show the campaign column' : 'Open the campaign menu'}"
+              title="${wide ? 'Show the column' : 'Sessions, people, places'}">${MENU_GLYPH}</button>
+      <div class="ribbon-hero">
+        ${kicker ? `<div class="ribbon-kicker">${esc(kicker)}</div>` : ''}
+        <div class="ribbon-name">${esc(hero)}</div>
+      </div>
+      ${state ? `<span class="pill ${state}">${esc(PILL_WORD[state] || state)}</span>` : ''}
+    </div>`;
+}
+
+// Folds or unfolds on a wide window; opens or closes the drawer on a narrow
+// one. Focus follows the button to wherever it now is, so a keyboard reader
+// is never left on an element that has just been hidden.
+function railToggle() {
+  const wide = railWide();
+  if (wide) setRailFolded(!railFolded());
+  else view.drawer = !view.drawer;
+  paint();
+  const into = wide ? !railFolded() : view.drawer;
+  document.querySelector(into ? '.col-bar .menu-btn' : '.ribbon .menu-btn')?.focus?.();
+}
+
+function drawerClose() {
+  if (!view.drawer) return false;
+  view.drawer = false;
+  paint();
+  document.querySelector('.ribbon .menu-btn')?.focus?.();
+  return true;
+}
+
 const PILL_WORD = { posted: 'posted', approval: 'approval', failed: 'failed',
                     recording: 'recording', queued: 'queued', working: 'working' };
 

@@ -54,6 +54,7 @@ const view = {
   deleting: false,
   diagnosing: false,    // the degraded banner's detail is open
   sheet: null,          // the account panel, hung off the top bar: account
+  drawer: false,        // the campaign column, opened over the page on a narrow window
   search: '',
   speaker: null,        // transcript filter, a user id
   picking: null,        // whose colour the picker is open for, a user id

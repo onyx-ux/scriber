@@ -427,7 +427,7 @@ Three tiers, and none of them is a Discord permission.
 |---|---|---|
 | **The table** | `/campaign` `join` `leave` `create` `setchar` `whoami` `consent` `restore` + the read subcommands | anyone in the server |
 | **Campaign manager** | `/campaign` `rename` `invite` `remove` `output`, plus corrections, threads, renaming and deleting on the dashboard | whoever created the campaign |
-| **Bot owner** | the pipeline — approvals, pause/resume, re-summarise, import, transcripts — and the gatehouse (access, the archive, usage) | the dashboard |
+| **Bot owner** | the pipeline — approvals, re-summarise, import, transcripts — and the gatehouse (access, status and pause/resume, the archive, usage) | the dashboard |
 
 The tiers are per **subcommand** now. There is no owner tier left in Discord at
 all: those commands spend the owner's GPU, API budget and disk, so nobody else
@@ -569,7 +569,8 @@ The operator's half, which used to be another dozen slash commands:
 
 - **approvals** — release a parked transcription (now / not yet / on the Pi) or
   a parked summary, choosing which model writes it
-- **pause / resume** — either queue, without losing queued work
+- **pause / resume** — either queue, without losing queued work (in the
+  gatehouse's Status room, beside whether the transcriber and summariser answer)
 - **re-summarise** — write a session's notes again, after a correction landed
   or a recap came out badly
 - **roster** — who is at the table, what they play, whether they agreed to be

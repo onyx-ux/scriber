@@ -1140,3 +1140,17 @@ they were cleared to make room for. That section is empty again.
       longer describes Ollama on the PC; the 31 July overnight summary moved to
       `docs/history/`. `test/docs.test.js` fails if the README names a slash
       command the bot does not register.
+
+- [x] **The dashboard on a phone** — the campaign column is a drawer below
+      1181px, opened from a menu button in a new ribbon over the page, which
+      names the session being read. Before this the column drew as nothing on
+      a phone or a half-screen window, so there was no way to another night.
+      On a wide window the same button folds the column away (remembered per
+      browser) and the ribbon takes its place. The top bar is one row on a
+      phone; the theme switch moves into the account sheet there.
+
+- [x] **Status and the pause switches move to the gatehouse** — the health
+      line (transcriber, summariser) and Pause transcribing / Pause
+      summarising leave the dashboard's top bar for a Status tab in the
+      gatehouse, which reads itself again every 15 seconds while open. The
+      dashboard keeps its banner for a transcriber that cannot be reached.

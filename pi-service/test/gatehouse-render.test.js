@@ -128,6 +128,9 @@ async function render({ base, cookie }) {
     URLSearchParams, URL, Date, Math, JSON, Number, String, Boolean, Array, Object, Set, Map, Intl,
     location: { search: '' },
     setTimeout, clearTimeout,
+    // The Status room reads itself again on a timer, which would keep firing
+    // under the test runner.
+    setInterval: () => 0,
     document: {
       getElementById: node,
       addEventListener: (type, fn) => { listeners[type] = fn; },
@@ -632,6 +635,27 @@ test('a restore request is decided in the archive', async (t) => {
 
   await page.click('data-gh="campaign/restore-review"', 'data-approve="true"');
   assert.ok(db.getCampaign(gone), 'approving the request brings it back');
+});
+
+// The health line and the pause switches moved here from the dashboard's top
+// bar on 2026-09-27.
+test('the status room says what answers, and pauses a queue', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await page.click('data-room="status"');
+  let markup = page.body();
+  assert.match(markup, /The machinery/);
+  assert.match(markup, /Transcriber/);
+  assert.match(markup, /Summariser/);
+  assert.doesNotMatch(markup, /undefined|\bNaN\b|\[object Object\]/);
+
+  await page.click('data-gh="pause"', 'data-queue="transcribe"');
+  assert.equal(db.getSetting('transcribe_paused'), 'true', 'the press paused transcription');
+  markup = page.body();
+  assert.match(markup, /data-gh="pause" data-queue="transcribe" data-paused="false"/, 'and it now offers to resume');
+
+  await page.click('data-gh="pause"', 'data-queue="transcribe"');
+  assert.notEqual(db.getSetting('transcribe_paused'), 'true', 'resumed');
 });
 
 test('the bill is in the gatehouse', async (t) => {

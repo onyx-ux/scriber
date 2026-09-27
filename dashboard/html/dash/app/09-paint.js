@@ -63,6 +63,11 @@ function measureChrome() {
   const root = document.documentElement;
   const next = `${above}px`;
   if (root.style.getPropertyValue('--above') !== next) root.style.setProperty('--above', next);
+  // The top bar alone, which is what the ribbon sticks under. 76px on a
+  // laptop; shorter on a phone, where it is one row with less padding.
+  const bar = $('top');
+  const tall = bar?.getBoundingClientRect ? `${Math.round(bar.getBoundingClientRect().height)}px` : null;
+  if (tall && tall !== '0px' && root.style.getPropertyValue('--top-h') !== tall) root.style.setProperty('--top-h', tall);
 }
 
 function paint() {
@@ -132,6 +137,7 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
   // whenever the network gets back.
   view.campaignId = id;
   view.sheet = null;
+  view.drawer = false;
   if (!keepScreen) {
     view.screen = 'campaign';
     entering();

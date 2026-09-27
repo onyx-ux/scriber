@@ -389,11 +389,6 @@
          display: flex; align-items: center; gap: 14px; padding: 0 22px 0 26px;
          background: var(--panel); position: sticky; top: 0; z-index: 5; }
   .top h2 { font-family: var(--serif); font-size: 22px; font-weight: 400; }
-  .top .health { display: flex; gap: 20px; align-items: center; margin-left: 14px;
-                 font-family: var(--mono); font-size: 12px; color: var(--dim); }
-  .top .health .dot { margin-right: 7px; }
-  .top .health .down { color: var(--red-lit); }
-  .top .health .held { color: var(--brass-lit); }
   .top .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
   .crumb { font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
   .crumb-sep { color: var(--edge); }
@@ -2529,4 +2524,133 @@
     .thr-block.burning .wisp::before,
     .thr-block.burning .wisp::after { animation: none; }
     .thr-block.burning, .thr-block.burning .thr-choice { animation: none; }
+  }
+
+  /* ======================================================================
+     The campaign column folded, the drawer, and the ribbon (2026-09-27)
+     ======================================================================
+     Below 1181px the column's two pages are absolutely positioned inside a
+     frame that had no height once the column stopped being sticky, so on a
+     phone the whole column drew as nothing: no sessions, no NPCs, no way to
+     another night. It is a drawer there now, over the page from the left.
+     On a wide window it stays a column and can be folded away.
+
+     Wherever the column is not showing, the ribbon is: a strip over the pane
+     with the menu button that brings the column back, and the night being
+     read as the largest thing on it. Both bars are the same height and put
+     the button in the same place, so folding and unfolding is one spot. */
+
+  .col-bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+    min-height: 64px; padding: 0 22px 0 16px; border-bottom: 1px solid var(--line);
+  }
+  .col-name {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--dim);
+  }
+
+  .menu-btn {
+    flex: 0 0 40px; width: 40px; height: 40px;
+    display: inline-grid; place-items: center;
+    border: 1px solid var(--line-2); border-radius: 10px;
+    background: transparent; color: var(--text-2); cursor: pointer;
+    transition: background .13s, color .13s, border-color .13s;
+  }
+  .menu-btn:hover { background: var(--hover); color: var(--text); border-color: var(--edge); }
+  .menu-btn:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; }
+
+  /* Wrapped so the ribbon can take a line of its own, and packed to the top so
+     a pane taller than its content does not share the spare height out
+     between the ribbon and the page as a gap. */
+  .pane { flex-wrap: wrap; align-content: flex-start; }
+  .ribbon {
+    flex: 0 0 100%; display: none; align-items: center; gap: 16px;
+    min-height: 64px; padding: 10px 22px 10px 16px;
+    background: var(--ink); border-bottom: 1px solid var(--line);
+    position: sticky; top: var(--top-h, 76px); z-index: 4;
+  }
+  .ribbon-hero { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .ribbon-kicker {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ribbon-name {
+    font-family: var(--display); font-variation-settings: 'SOFT' 0, 'WONK' 1;
+    font-size: clamp(22px, 2.3vw, 28px); line-height: 1.1; letter-spacing: -.01em;
+    color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ribbon .pill { flex: 0 0 auto; }
+
+  /* A wide window, folded: no column, the ribbon in its place, and the facts
+     rail sticking under the ribbon rather than behind it. */
+  @media (min-width: 1181px) {
+    .split.rail-folded .sessions { display: none; }
+    .split.rail-folded .ribbon { display: flex; }
+    .split.rail-folded .facts {
+      top: calc(76px + 65px);
+      height: calc(100vh - var(--above, 76px) - 65px);
+    }
+  }
+
+  /* A narrow window: the column is a drawer, closed until asked for, and the
+     ribbon is always there. Hidden as well as moved while closed, so a
+     keyboard never tabs into a menu nobody can see. */
+  @media (max-width: 1180px) {
+    .ribbon { display: flex; }
+    .split .sessions {
+      position: fixed; top: 0; bottom: 0; left: 0; z-index: 40;
+      width: min(380px, 88vw); height: auto; max-height: none;
+      border-right: 1px solid var(--line); border-bottom: 0;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      box-shadow: 0 0 48px var(--shadow-hard);
+      transform: translateX(-104%); visibility: hidden;
+      transition: transform .32s cubic-bezier(.22,.72,.2,1), visibility 0s linear .32s;
+    }
+    .split.drawer-open .sessions {
+      transform: none; visibility: visible;
+      transition: transform .32s cubic-bezier(.22,.72,.2,1);
+    }
+    .split .sess-list { max-height: none; }
+    .drawer-scrim {
+      position: fixed; inset: 0; z-index: 39; background: var(--scrim);
+      opacity: 0; pointer-events: none; transition: opacity .25s;
+    }
+    .split.drawer-open .drawer-scrim { opacity: 1; pointer-events: auto; }
+    body.drawer-lock { overflow: hidden; }
+  }
+  @media (max-width: 820px) {
+    .ribbon { min-height: 58px; padding: 8px 18px 8px 14px; gap: 14px; }
+    .col-bar { min-height: 58px; padding: 0 18px 0 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .split .sessions, .split.drawer-open .sessions, .drawer-scrim { transition-duration: .01ms; }
+  }
+
+  /* --- the top bar on a phone -------------------------------------------
+     With the health line and the pause switches gone to the gatehouse, the
+     bar is the mark, the campaign's name and the account, and on a phone it
+     stays one row. The name gives way first, with an ellipsis; the theme
+     switch moves into the account sheet; the "Desk" crumb goes, because the
+     quill beside it goes to the same place. */
+  .top h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-theme { display: none; padding: 14px 14px 0; }
+  .sheet-theme .seg { display: flex; }
+  .sheet-theme .seg button { flex: 1; }
+  @media (max-width: 1023px) {
+    .top:not(.tools) { flex-wrap: nowrap; }
+    .top:not(.tools) .right { margin-left: auto; flex-wrap: nowrap; }
+  }
+  @media (max-width: 820px) {
+    .top:not(.tools) .theme { display: none; }
+    .sheet-theme { display: block; }
+    .top:not(.tools) { gap: 10px; padding: 10px 14px; }
+    .top:not(.tools) h2 { font-size: 20px; }
+  }
+  @media (max-width: 560px) {
+    .top:not(.tools) .crumb-back,
+    .top:not(.tools) .crumb-back + .crumb-sep { display: none; }
+    .top:not(.tools) .right { gap: 2px; }
   }

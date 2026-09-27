@@ -193,6 +193,16 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
+  // The campaign column: folded and unfolded on a wide window, a drawer on a
+  // narrow one. Choosing a night, a name or a thread out of the drawer closes
+  // it on the way, so the choice lands on the page rather than behind the menu.
+  if (t.closest('[data-rail]')) return railToggle();
+  if (t.closest('[data-rail-close]')) return drawerClose();
+  if (view.drawer && t.closest('.sessions [data-session], .sessions [data-entry], .sessions [data-jump]')) {
+    view.drawer = false;
+  }
+  if (t.closest('[data-screen]')) view.drawer = false;
+
   // One dialog at a time. Opening any has to close the others, or a page left
   // with two flags set shows the first one forever and every later click on
   // the second looks like a dead button.
@@ -669,6 +679,7 @@ document.addEventListener('keydown', (event) => {
     closeDialogs(); return paint();
   }
   if (view.sheet) { view.sheet = null; return paint(); }
+  if (drawerClose()) return;
   if (view.editing) { view.editing = null; return paint(); }
   if (view.screen === 'transcript') { view.screen = 'campaign'; return paint(); }
   if (view.screen !== 'campaigns' && status?.campaigns?.length) {
@@ -682,6 +693,14 @@ document.addEventListener('keydown', (event) => {
 // six at 390px — so the height the sticky columns are budgeted from has to be
 // taken again. Nothing here re-renders; it only re-measures.
 window.addEventListener('resize', measureChrome);
+
+// Crossing the column's breakpoint changes what the campaign screen is made
+// of — a column or a drawer — so that one resize repaints. A drawer left open
+// on a narrow window is closed on the way to a wide one.
+window.matchMedia?.(RAIL_WIDE)?.addEventListener?.('change', () => {
+  view.drawer = false;
+  paint();
+});
 
 // The recording timers tick on their own second, so they keep counting between
 // polls rather than jumping every five.

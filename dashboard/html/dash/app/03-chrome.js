@@ -364,7 +364,7 @@ function deskScreen() {
         <span class="door-lead" aria-hidden="true"></span>
         <span class="door-fig"></span>
         <span class="door-arw">${ARW}</span>
-        <span class="door-say">who may sign in, deleted campaigns, and what the models cost</span>
+        <span class="door-say">whether the transcriber answers, the pause switches, who may sign in, and the archive</span>
       </a>`);
   }
 
@@ -521,10 +521,17 @@ function accountSheet() {
         </div>`
       : `<div class="quiet">signed in as the operator</div>`}
     </div>
+    <!-- The theme switch leaves the top bar on a phone, where the bar is one
+         row and has no room for three buttons that are pressed once a year. -->
+    <div class="sheet-theme">${themeSwitch()}</div>
     ${me?.can?.everything ? `
       <a class="sheet-link" href="/gatehouse/">
         <span>Gatehouse</span>
-        <span class="quiet">who can sign in</span>
+        <span class="quiet">people, status, the archive</span>
+      </a>
+      <a class="sheet-link" href="/gatehouse/#status">
+        <span>Status</span>
+        <span class="quiet">the transcriber, and the pause switches</span>
       </a>` : ''}
     <div class="sheet-foot">
       ${b ? `${esc(b.user || 'offline')}<br>${uptime(b.uptimeMs)}` : 'connecting…'}
@@ -578,7 +585,9 @@ const homeMark = `
 // ==========================================================================
 
 function renderTop() {
-  const h = status?.health ?? {};
+  // The transcript's bar is a row of tools and is allowed to wrap on a phone.
+  // Every other bar is one row there: the mark, the name, the account.
+  $('top').classList?.toggle?.('tools', view.screen === 'transcript');
 
   if (view.screen === 'transcript') {
     morph($('top'), `
@@ -613,36 +622,11 @@ function renderTop() {
     : view.screen === 'usage' ? 'Your usage'
     : campaign()?.name || campaign()?.channel || (status?.campaigns?.length ? 'Quill' : 'Setup');
 
-  // Below dev the health line names nothing. Which transcriber, which model
-  // and whose GPU are facts about the owner's machine and their bill; whether
-  // the bot can currently turn speech into notes at all is not, and it is the
-  // answer to "why hasn't last night appeared".
-  const health = !status
-    ? ''
-    : cap('models')
-      ? [
-          `<span class="${h.whisperServer === false ? 'down' : ''}">${dotFor(h.whisperServer)}whisper server</span>`,
-          `<span class="${h.summariser === false ? 'down' : ''}">${dotFor(h.summariser)}${esc(h.summariserName || 'summariser')}</span>`,
-          h.transcribePaused ? '<span class="held"><span class="dot warn"></span>transcribing paused</span>' : '',
-          h.summarisePaused ? '<span class="held"><span class="dot warn"></span>summarising paused</span>' : '',
-        ].filter(Boolean).join('')
-      : `<span class="${h.working === false ? 'down' : ''}">${dotFor(h.working)}${
-          h.working === false ? 'writing up is delayed' : h.paused ? 'writing up is paused' : 'writing up is working'
-        }</span>`;
-
-  // Each button says the state it moves TO, so it is the same click whatever
-  // the page last managed to render — a toggle sent twice by a double-click,
-  // or by two tabs open on this page, lands on the opposite of what the person
-  // who clicked it saw.
-  const buttons = can() && cap('machinery') && status
-    ? `<button type="button" class="btn" data-act="pause" data-queue="transcribe" data-paused="${!h.transcribePaused}"
-         ${h.transcribePaused ? '' : 'data-confirm="Pause transcription? Nothing new will start."'}>
-         ${h.transcribePaused ? 'Resume transcribing' : 'Pause transcribing'}</button>
-       <button type="button" class="btn" data-act="pause" data-queue="summarize" data-paused="${!h.summarisePaused}"
-         ${h.summarisePaused ? '' : 'data-confirm="Pause summarising? Nothing new will start."'}>
-         ${h.summarisePaused ? 'Resume summarising' : 'Pause summarising'}</button>`
-    : '';
-
+  // The health line and the two pause switches used to sit here, on every
+  // screen, for everybody. They are the operator's and they are in the
+  // gatehouse's Status room now (2026-09-27): a bar that carried them needed
+  // 1018px and wrapped into three rows on a phone. The degraded banner below
+  // still says so when the transcriber cannot be reached.
   morph($('top'), `
     ${homeMark}
     ${home ? '' : `<button type="button" class="crumb crumb-back" data-screen="desk">Desk</button>
@@ -650,8 +634,7 @@ function renderTop() {
     <h2>${esc(title)}</h2>
     ${view.screen === 'campaign' && canRename() ? `<button type="button" class="rename-pen" data-rename
        aria-label="Rename ${esc(title)}" title="Rename this campaign">${glyph.pen}</button>` : ''}
-    <div class="health">${health}</div>
-    <div class="right">${buttons}${themeSwitch()}${navMarks()}</div>`);
+    <div class="right">${themeSwitch()}${navMarks()}</div>`);
 }
 
 // ==========================================================================
