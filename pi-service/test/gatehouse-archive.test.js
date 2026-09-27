@@ -81,3 +81,21 @@ test('the dashboard snapshot no longer carries the archive', async (t) => {
   assert.equal(res.body.restorable, undefined);
   assert.equal(res.body.restoreQueue, undefined);
 });
+
+// The dashboard's campaign list read every row of the table, so a deleted
+// campaign sat on it after it had moved to the Archive — and a table in a
+// server the bot had left sat beside it. Found on the live Pi on 2026-09-27:
+// Test, Test1 and Testfor2bots, all deleted weeks earlier, all still listed.
+test('a deleted campaign is on the archive, not on the dashboard list', async (t) => {
+  const { db, get, kept, gone } = await serving(t);
+  const stranded = db.createCampaign('guild-2', 'Lost Mine', 'dm-3');
+  db.markGuildLeft('guild-2');
+
+  let listed = (await get('/status')).body.campaigns.map((c) => c.id);
+  assert.deepEqual(listed, [kept], 'only the live table is listed');
+  assert.ok(!listed.includes(stranded), 'a table in a server the bot left is not listed either');
+
+  db.restoreCampaign(gone);
+  listed = (await get('/status')).body.campaigns.map((c) => c.id);
+  assert.deepEqual(listed.sort(), [kept, gone].sort(), 'restored, it is back on the list');
+});

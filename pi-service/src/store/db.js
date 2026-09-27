@@ -3080,6 +3080,11 @@ function wrap(db) {
                      JOIN meetings m ON m.id = j.meeting_id
                     WHERE m.campaign_id = c.id AND j.status = 'awaiting_approval') AS awaiting
              FROM campaigns c
+            -- The live tables only, like every other list in this file. This one
+            -- read the whole table, so a deleted campaign stayed on the
+            -- dashboard's list after it had moved to the gatehouse's Archive,
+            -- and a campaign in a server the bot has left stayed beside it.
+            WHERE c.archived_at IS NULL AND ${IN_A_LIVE_GUILD}
             ORDER BY (last_session_at IS NULL), last_session_at DESC, c.id`
         )
         .all();
