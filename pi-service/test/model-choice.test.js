@@ -275,18 +275,18 @@ const defaultOf = (source, name) => {
   return found[1];
 };
 
-test('the summariser ships on 3.7 and falls back to 3.6', async () => {
+test('the summariser ships on 3.8 and falls back to 3.7', async () => {
   const env = await readFile(ENV_JS, 'utf8');
 
   const top = defaultOf(env, 'GEMINI_MODEL');
   const rungs = defaultOf(env, 'GEMINI_MODEL_FALLBACKS').split(',');
 
-  assert.equal(top, 'gemini-3.7-flash', 'the default summariser moved');
+  assert.equal(top, 'gemini-3.8-flash', 'the default summariser moved');
   assert.equal(
     rungs[0],
-    'gemini-3.6-flash',
-    'the first rung down is no longer 3.6 — which is the model every session on '
-      + 'this install was written up with before 3.7, and what a table falls back '
+    'gemini-3.7-flash',
+    'the first rung down is no longer 3.7 — which is the model every session on '
+      + 'this install was written up with before 3.8, and what a table falls back '
       + 'to reading when the top rung is out of quota mid-evening'
   );
 

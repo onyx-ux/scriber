@@ -958,10 +958,10 @@ overwrote the other's archive with its own sessions.
   to `claude-opus-5`. Anthropic's API is paid-tier only (no free tier).
 - `gemini` (the default) — sends the finished **transcript text** to Gemini. Set
   `GEMINI_API_KEY` (free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey));
-  `GEMINI_MODEL` defaults to `gemini-3.7-flash` — pick this provider if the
+  `GEMINI_MODEL` defaults to `gemini-3.8-flash` — pick this provider if the
   goal is a cloud recap at low cost rather than Claude's higher quality. If
   that model is out of quota mid-session, `GEMINI_MODEL_FALLBACKS` steps down
-  through `3.6-flash`, `3.5-flash` and `3.1-flash-lite` — but only for "out of
+  through `3.7-flash`, `3.6-flash`, `3.5-flash` and `3.1-flash-lite` — but only for "out of
   quota", never for an ordinary failure, since a refusal would fail the same
   way one model cheaper.
 

@@ -20,7 +20,7 @@
 export const ROLES = ['summary', 'ask'];
 
 // Defaults, all probed against a live key rather than read off a list — last
-// on 2026-09-06, when gemini-3.7-flash started answering and became the top
+// on 2026-09-27, when gemini-3.8-flash started answering and became the top
 // rung. The existing note in config/env.js is worth repeating: ListModels lies
 // in both directions here — gemini-3.6-flash used to serve requests while
 // missing from the list, and gemini-3.1-flash exists in neither.
@@ -34,7 +34,7 @@ export const ROLES = ['summary', 'ask'];
 // where an alias quietly changes what you are paying for and how it writes.
 const DEFAULTS = {
   gemini: {
-    summary: ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
+    summary: ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
     ask: 'gemini-3.1-flash-lite',
   },
   anthropic: {
