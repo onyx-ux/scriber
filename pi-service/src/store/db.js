@@ -1824,6 +1824,48 @@ function wrap(db) {
       );
     },
 
+    // A session written up again takes back what its last write-up did: the
+    // threads it opened that nobody has acted on, and the closes it proposed.
+    // Without this every Re-summarise added a fresh set of threads beside the
+    // old ones, each worded a little differently, so none of them matched.
+    //
+    // Spared: anything the table has touched (resolved, dropped, or carrying
+    // a proposal from another session), anything the new write-up raises
+    // again, and anything another session's write-up also lists — that
+    // session opened it too, it just arrived second.
+    retractSessionThreads(campaignId, meetingId, keepTexts = []) {
+      const keep = new Set(keepTexts.map(threadKey));
+      for (const m of db
+        .prepare(
+          `SELECT summary_json FROM meetings
+            WHERE campaign_id = ? AND id != ? AND summary_json IS NOT NULL`
+        )
+        .all(campaignId, meetingId)) {
+        let listed = [];
+        try {
+          listed = JSON.parse(m.summary_json)?.unresolvedThreads ?? [];
+        } catch {
+          listed = [];
+        }
+        for (const text of Array.isArray(listed) ? listed : []) keep.add(threadKey(text));
+      }
+      const unproposed = db.prepare(
+        `UPDATE campaign_threads SET proposed_meeting_id = NULL, proposed_evidence = NULL, updated_at = datetime('now')
+          WHERE campaign_id = ? AND proposed_meeting_id = ?`
+      ).run(campaignId, meetingId).changes;
+      const drop = db.prepare(`DELETE FROM campaign_threads WHERE id = ?`);
+      let retracted = 0;
+      for (const row of db
+        .prepare(
+          `SELECT id, key FROM campaign_threads
+            WHERE campaign_id = ? AND opened_meeting_id = ? AND status = 'open' AND proposed_meeting_id IS NULL`
+        )
+        .all(campaignId, meetingId)) {
+        if (!keep.has(row.key)) retracted += drop.run(row.id).changes;
+      }
+      return { retracted, unproposed };
+    },
+
     listThreads(campaignId) {
       return db
         .prepare(

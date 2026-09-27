@@ -15,24 +15,32 @@
 export const THREAD_STATUSES = ['open', 'resolved', 'dropped'];
 
 // What the summariser is shown: the open threads' wording, oldest first.
-export function openThreadTexts(db, campaignId) {
+// Leaves out the ones this very session opened last time it was written up —
+// shown those, a re-summarise reads its own old write-up back as "earlier
+// sessions" and words every thread slightly differently a second time.
+export function openThreadTexts(db, campaignId, { meetingId = null } = {}) {
   if (!campaignId) return [];
   return db
     .listThreads(campaignId)
-    .filter((t) => t.status === 'open')
+    .filter((t) => t.status === 'open' && (meetingId == null || t.openedMeetingId !== meetingId))
     .map((t) => t.text);
 }
 
 // After a session is summarised: open the threads it raised, and turn any it
 // says it settled into proposals. A "settled" thread that is not open on this
 // campaign is ignored rather than invented.
+//
+// A session written up before takes its last write-up's threads back first,
+// so a Re-summarise replaces them instead of adding to them.
 export function recordSessionThreads(db, { campaignId, meetingId, notes }) {
-  if (!campaignId) return { opened: 0, proposed: 0 };
+  if (!campaignId) return { opened: 0, proposed: 0, retracted: 0 };
+  const raised = (notes?.unresolvedThreads ?? []).filter((t) => typeof t === 'string');
+  const { retracted } = meetingId ? db.retractSessionThreads(campaignId, meetingId, raised) : { retracted: 0 };
   let opened = 0;
   let proposed = 0;
 
-  for (const text of notes?.unresolvedThreads ?? []) {
-    if (typeof text === 'string' && db.openThread(campaignId, text, meetingId)) opened += 1;
+  for (const text of raised) {
+    if (db.openThread(campaignId, text, meetingId)) opened += 1;
   }
 
   for (const r of notes?.resolvedThreads ?? []) {
@@ -42,5 +50,5 @@ export function recordSessionThreads(db, { campaignId, meetingId, notes }) {
     proposed += db.proposeThreadClose(thread.id, meetingId, r.evidence);
   }
 
-  return { opened, proposed };
+  return { opened, proposed, retracted };
 }

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { openDb } from '../src/store/db.js';
-import { recordSessionThreads } from '../src/campaign/threads.js';
+import { openThreadTexts, recordSessionThreads } from '../src/campaign/threads.js';
 import { runAction } from '../src/web/actions.js';
 import { buildCampaignView } from '../src/web/campaign-view.js';
 import { buildSummaryUserMessage, DND_SUMMARY_PROMPT, DND_REDUCE_PROMPT, DND_CHUNK_PROMPT } from '../src/prompts/dnd-summary-prompt.js';
@@ -112,6 +112,66 @@ test('a thread from another table cannot be touched through this one', async (t)
   const res = act('threads/set', { threadId: theirs.id, status: 'dropped' });
   assert.equal(res.ok, false);
   assert.equal(db.listThreads(other)[0].status, 'open');
+});
+
+// Session 32 on 2026-09-27 was written up three times in an evening and ended
+// with nine open threads, three of them the same thread worded twice: "Finding
+// Gertrude" and "Locating Gertrude", both still open, both from one session.
+test('writing a session up again replaces its threads instead of adding to them', async (t) => {
+  const { db, campaignId, meeting } = await world(t);
+  const one = meeting();
+  recordSessionThreads(db, { campaignId, meetingId: one, notes: { unresolvedThreads: ['Who else has a key?'] } });
+  const two = meeting();
+  recordSessionThreads(db, {
+    campaignId,
+    meetingId: two,
+    notes: {
+      unresolvedThreads: ['Finding Gertrude in the castle.', 'Burying Ismark’s father.'],
+      resolvedThreads: [{ thread: 'Who else has a key?', evidence: 'Wren.' }],
+    },
+  });
+
+  const again = recordSessionThreads(db, {
+    campaignId,
+    meetingId: two,
+    notes: { unresolvedThreads: ['Locating Gertrude, taken to the castle.', 'Burying Ismark’s father.'] },
+  });
+
+  assert.equal(again.retracted, 1, 'the old wording of the Gertrude thread goes');
+  const texts = db.listThreads(campaignId).map((th) => th.text);
+  assert.deepEqual(texts.sort(), ['Burying Ismark’s father.', 'Locating Gertrude, taken to the castle.', 'Who else has a key?'].sort());
+  assert.equal(db.listThreads(campaignId).find((th) => /key/.test(th.text)).proposal, null, 'the old write-up’s proposal goes too');
+});
+
+test('a re-summarise leaves alone what the table decided and what another session raised', async (t) => {
+  const { db, campaignId, meeting, act } = await world(t);
+  const two = meeting();
+  recordSessionThreads(db, {
+    campaignId,
+    meetingId: two,
+    notes: { unresolvedThreads: ['The mists.', 'The raven.', 'The locked tower.'] },
+  });
+  const three = meeting();
+  db.setSummary(three, { tldr: 'x', unresolvedThreads: ['The locked tower.'] });
+  recordSessionThreads(db, { campaignId, meetingId: three, notes: { unresolvedThreads: ['The locked tower.'] } });
+  const raven = db.listThreads(campaignId).find((th) => th.text === 'The raven.');
+  act('threads/set', { threadId: raven.id, status: 'dropped' });
+
+  recordSessionThreads(db, { campaignId, meetingId: two, notes: { unresolvedThreads: [] } });
+
+  const left = Object.fromEntries(db.listThreads(campaignId).map((th) => [th.text, th.status]));
+  assert.deepEqual(left, { 'The locked tower.': 'open', 'The raven.': 'dropped' });
+});
+
+test('a re-summarise is not shown its own last write-up as earlier threads', async (t) => {
+  const { db, campaignId, meeting } = await world(t);
+  const one = meeting();
+  recordSessionThreads(db, { campaignId, meetingId: one, notes: { unresolvedThreads: ['Who else has a key?'] } });
+  const two = meeting();
+  recordSessionThreads(db, { campaignId, meetingId: two, notes: { unresolvedThreads: ['Finding Gertrude.'] } });
+
+  assert.deepEqual(openThreadTexts(db, campaignId, { meetingId: two }), ['Who else has a key?']);
+  assert.equal(openThreadTexts(db, campaignId).length, 2, 'everyone else still sees both');
 });
 
 test('threads already in old write-ups are opened when the table first appears', async (t) => {

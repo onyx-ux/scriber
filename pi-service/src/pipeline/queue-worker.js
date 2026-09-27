@@ -121,7 +121,7 @@ export async function tick(db, discordClient, cfg) {
       // The campaign's open threads, most recent forty, so the summariser can
       // say which this session settled. It only proposes; see
       // campaign/threads.js.
-      openThreads: openThreadTexts(db, campaignId).slice(-40),
+      openThreads: openThreadTexts(db, campaignId, { meetingId: meeting.id }).slice(-40),
     };
 
     if (job.provider) {
@@ -189,8 +189,11 @@ export async function tick(db, discordClient, cfg) {
     // be updated must not fail a finished write-up.
     try {
       const threads = recordSessionThreads(db, { campaignId, meetingId: meeting.id, notes });
-      if (threads.opened || threads.proposed) {
-        console.log(`[threads] meeting ${meeting.id}: ${threads.opened} opened, ${threads.proposed} proposed closed`);
+      if (threads.opened || threads.proposed || threads.retracted) {
+        console.log(
+          `[threads] meeting ${meeting.id}: ${threads.opened} opened, ${threads.proposed} proposed closed` +
+            (threads.retracted ? `, ${threads.retracted} from its last write-up taken back` : '')
+        );
       }
     } catch (err) {
       console.warn(`[threads] meeting ${meeting.id}: not updated: ${err.message}`);
