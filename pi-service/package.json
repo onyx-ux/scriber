@@ -16,7 +16,7 @@
     "@discordjs/opus": "^0.10.0",
     "opusscript": "^0.0.8",
     "libsodium-wrappers": "^0.7.15",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^13.0.3",
     "dotenv": "^16.4.5"
   }
 }
