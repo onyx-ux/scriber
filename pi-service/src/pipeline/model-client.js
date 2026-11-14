@@ -191,6 +191,39 @@ export function isQuotaError(err) {
   return /RESOURCE_EXHAUSTED|rate.?limit|quota|too many requests|overloaded|high demand/i.test(message);
 }
 
+// How long a model is waited on while there is another one below it.
+//
+// Session 37 (14 Nov 2026): gemini-3.8-flash was overloaded, and instead of
+// refusing it accepted the request and said nothing. Node's fetch gives up on
+// a silent server after five minutes and reports only "fetch failed", which
+// read here as "Google cannot be reached" — so the ladder was never walked,
+// the job failed, and the retry did exactly the same thing. Ten minutes gone
+// on a model that was never going to answer, while 3.6-flash, asked third
+// time round, wrote the session in twenty-two seconds.
+//
+// A real write-up on this key has never taken as long as half a minute, so two
+// minutes of silence is a model that is not coming. The LAST rung still gets
+// the caller's whole timeout: with nothing below it, waiting is all there is.
+export const RUNG_PATIENCE_MS = 120_000;
+
+// Whether a model was reached and then did not answer in time — as opposed to
+// not being reachable at all. The difference is which way to go: a slow model
+// has a faster one below it on the same host, and an unreachable host does not.
+const SLOW_CODES = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
+export function isTooSlow(err) {
+  if (SLOW_CODES.has(err?.code) || SLOW_CODES.has(err?.cause?.code)) return true;
+  if (/^(APIConnectionTimeoutError|TimeoutError)$/.test(err?.name ?? '')) return true;
+  return /timed out/i.test(String(err?.message ?? ''));
+}
+
+// The provider answering "not now" for its own reasons rather than ours. Only
+// for the log: both walk the ladder, but "out of quota" printed over a 503
+// sent somebody looking at a rate-limit page that had nothing wrong on it.
+const isOverloaded = (err) => {
+  const status = err?.status ?? err?.code ?? err?.response?.status;
+  return status === 503 || status === 529 || /overloaded|high demand/i.test(String(err?.message ?? ''));
+};
+
 // Whether the provider could not be reached at all, as opposed to answering
 // badly.
 //
@@ -298,10 +331,15 @@ async function askProvider(provider, systemPrompt, userMessage, cfg, timeoutMs, 
   const ladder = ladderFor(pinned, role, db);
 
   let lastError = null;
+  // Why the rungs above the one that answers were passed over, for the log.
+  let passed = '';
   for (const [index, model] of ladder.entries()) {
     const startedAt = Date.now();
+    const last = index === ladder.length - 1;
+    // See RUNG_PATIENCE_MS: a short wait while there is somewhere else to go.
+    const patience = last ? timeoutMs : Math.min(timeoutMs, RUNG_PATIENCE_MS);
     try {
-      const result = await ask(provider, systemPrompt, userMessage, pinned, timeoutMs, model);
+      const result = await ask(provider, systemPrompt, userMessage, pinned, patience, model);
 
       recordUsage(db, {
         provider, model, role, meetingId, outcome: 'ok',
@@ -309,15 +347,20 @@ async function askProvider(provider, systemPrompt, userMessage, cfg, timeoutMs, 
       });
 
       if (index > 0) {
-        console.log(`[model] ${role}: ${ladder[0]} was out of quota, ${model} answered instead`);
+        console.log(`[model] ${role}: ${ladder[0]} ${passed || 'could not answer'}, ${model} answered instead`);
       }
       return result.text;
     } catch (err) {
       const limited = isQuotaError(err);
-      const unreachable = isProviderUnreachable(err);
+      // Asked before "unreachable", which a timeout also looks like: a model
+      // that went quiet has a faster one below it, so it is a step down
+      // rather than a reason to stop. On the last rung there is no below, and
+      // it falls through to being the provider's failure as it always did.
+      const slow = !last && isTooSlow(err);
+      const unreachable = !slow && isProviderUnreachable(err);
       recordUsage(db, {
         provider, model, role, meetingId,
-        outcome: limited ? 'rate_limited' : 'failed',
+        outcome: limited ? 'rate_limited' : slow ? 'timed_out' : 'failed',
         ms: Date.now() - startedAt,
         error: err.message,
       });
@@ -326,10 +369,15 @@ async function askProvider(provider, systemPrompt, userMessage, cfg, timeoutMs, 
       // Nobody is home. A cheaper model of theirs is the same host over the
       // same broken link, so stop walking down and let the caller step across.
       if (unreachable) throw unavailable(err);
-      // Only quota sends us down the ladder. Anything else is the request's
-      // fault and would fail again, one model cheaper.
-      if (!limited) throw err;
-      console.warn(`[model] ${model} is out of quota (${err.message.slice(0, 120)})`);
+      // Only "this model cannot take it right now" sends us down the ladder.
+      // Anything else is the request's fault and would fail again, one model
+      // cheaper.
+      if (!limited && !slow) throw err;
+      const why = slow
+        ? `did not answer within ${Math.round(patience / 1000)}s`
+        : isOverloaded(err) ? 'is overloaded' : 'is out of quota';
+      if (!passed) passed = why.replace(/^is /, 'was ');
+      console.warn(`[model] ${model} ${why} — trying the next one down (${err.message.slice(0, 120)})`);
     }
   }
 

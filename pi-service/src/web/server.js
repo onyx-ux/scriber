@@ -7,6 +7,9 @@ import { allowanceFor } from '../access/tiers.js';
 import { buildCampaignView } from './campaign-view.js';
 import { buildNotesView } from './notes-view.js';
 import { buildTranscriptView } from './transcript-view.js';
+import { buildSearchView, cleanQuery, MIN_QUERY } from './search-view.js';
+import { joinLink } from '../delivery/dashboard-link.js';
+import { audioSummary } from '../campaign/audio-facts.js';
 import { rulesFor, EDITIONS, DEFAULT_EDITION, isEdition } from './rules.js';
 import { createDiscordBridge } from './discord-bridge.js';
 // Every question about who may do what goes through this one module — the
@@ -445,6 +448,22 @@ export function startStatusServer({
       // page keeps the picker shut and says why — the same state the switch
       // was permanently in before any of this existed.
       if (mayManage(viewer, id)) {
+        // The invitation link, when one is out. The token is the whole of the
+        // authority to join this table, so it goes only to somebody who could
+        // have made it — and it goes to them every time, because until
+        // 2026-11-14 nothing anywhere showed a manager that a live link existed
+        // or let them pull it. Null is "none is out"; absent is "you may not
+        // know", and the page draws those differently.
+        const link = db.liveInviteLinkFor?.(id) ?? null;
+        scoped.inviteLink = link
+          ? { url: joinLink(cfg, link.token), expiresAt: link.expires_at ?? null }
+          : null;
+
+        // What this install does with a recording, for the Settings tab's
+        // Audio card. Facts about the operator's machine, so they go with the
+        // rest of what only a manager is shown.
+        scoped.audio = audioSummary(cfg);
+
         const channels = await ctx.discord
           ?.listChannels?.({ guildId: view.guildId })
           .catch(() => null);
@@ -507,6 +526,34 @@ export function startStatusServer({
           'Content-Disposition': `attachment; filename="${sessionLabel(meeting)}.txt"`,
         })
         .end(text || '(no transcript yet)');
+      return;
+    }
+
+    // A word, looked for in every transcript one campaign has. See
+    // web/search-view.js.
+    //
+    // Gated exactly as /transcript is, and in the same order, because what it
+    // returns is transcript lines: a campaign this viewer cannot see does not
+    // exist, and one they can see but may not read the transcripts of is
+    // refused by name. Write-ups are not searched here at all — the page does
+    // that itself, out of notes it is already allowed to hold.
+    if (url.pathname === '/search') {
+      const id = Number(url.searchParams.get('campaign'));
+      const known = Number.isInteger(id) && id > 0 ? db.getCampaign(id) : null;
+      if (!known || !maySee(viewer, id)) {
+        send(res, 404, { ok: false, message: 'No such campaign.' });
+        return;
+      }
+      if (!viewer.can.transcripts) {
+        send(res, 403, { ok: false, message: 'You can search the notes for this campaign, but not its transcripts.' });
+        return;
+      }
+      const query = cleanQuery(url.searchParams.get('q'));
+      if (query.length < MIN_QUERY) {
+        send(res, 400, { ok: false, message: 'Two letters or more.' });
+        return;
+      }
+      send(res, 200, buildSearchView({ db, campaignId: id, query }));
       return;
     }
 

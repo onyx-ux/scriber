@@ -168,3 +168,170 @@ function signInScreen() {
     </div>`;
 }
 
+// ==========================================================================
+// Which screen is drawn
+// ==========================================================================
+//
+// Moved here from 05-threshold.js on 2026-11-14, unchanged. It decides between
+// every screen the page has, of which the threshold is one, and that file had
+// reached the 1,500 lines docs/adr/0002 says to stop and look at.
+
+function renderScreen() {
+  const el = $('screen');
+
+  const arriving = Date.now() < entersUntil ? 'arriving' : '';
+
+  // The threshold comes before everything, including the gate: somebody who
+  // has just signed in for the first time gets this screen and no dashboard
+  // behind it. Drawn once per step rather than on every poll — the writing is
+  // in the DOM and a five-second repaint would start it over.
+  if (welcome.open) {
+    document.body.classList.remove('gate-open');
+    document.body.classList.add('thr-open');
+    const key = `thr-${welcome.step}`;
+    if (welcomeKey !== key) {
+      welcomeKey = key;
+      el.className = '';
+      morph(el, welcomeScreen());
+      // After the markup has actually landed, and through whichever of the two
+      // exists — the render harness has no frames to wait for.
+      if (window.requestAnimationFrame) window.requestAnimationFrame(welcomeWrite);
+      else setTimeout(welcomeWrite, 0);
+    }
+    return;
+  }
+  document.body.classList.remove('thr-open');
+
+  // Nobody home. Shown instead of the app rather than over it: a dashboard
+  // that renders its chrome and then refuses every request is a worse way to
+  // learn you are signed out than being asked to sign in.
+  // Sign-in is shown when this install demands it, and also when somebody
+  // asks for it. Without the second case there was no way to sign in at all
+  // while DASHBOARD_REQUIRE_LOGIN was off — which made the one safe order
+  // for turning it on (sign in first, so you cannot lock yourself out)
+  // impossible to follow.
+  // Toggled here rather than in paint() so the class and the screen can never
+  // disagree: whatever this function decides to draw is what the body is
+  // dressed for. body.gate-open folds away the top bar and turns the page to
+  // paper, because the gate is a full-page takeover in the landing
+  // page's world rather than a card floating in the dark tool.
+  const gateOpen = Boolean(me && !me.signedIn && (me.loginRequired || view.signingIn));
+  document.body.classList.toggle('gate-open', gateOpen);
+
+  if (gateOpen) {
+    el.className = '';
+    // Turned away is its own screen, not a red line under the sign-in button.
+    // Offering Continue with Discord again to somebody Discord has already
+    // vouched for is a loop, and the loop is what makes it read as a fault.
+    morph(el, view.notInvited ? notInvitedScreen() : signInScreen());
+    return;
+  }
+
+  // The desk. Answered before everything else because it is where the page
+  // starts and where the quill goes back to.
+  if (view.screen === 'desk' && status?.campaigns?.length) {
+    el.className = arriving;
+    morph(el, deskScreen());
+    return;
+  }
+
+  // The ledger of tables, one step in from the desk.
+  if (view.screen === 'campaigns' && status?.campaigns?.length) {
+    el.className = arriving;
+    morph(el, campaignsScreen());
+    return;
+  }
+
+  if (view.screen === 'transcript') { el.className = 'split'; morph(el, transcriptScreen()); return; }
+  if (view.screen === 'servers')    { el.className = arriving; morph(el, serversScreen()); return; }
+  if (view.screen === 'usage')      { el.className = arriving; morph(el, usageScreen()); return; }
+
+  if (status && !status.campaigns?.length) { el.className = ''; morph(el, firstRun()); return; }
+
+  // The campaign column is a column on a wide window, folded away when its
+  // reader asks, and a drawer over the page on a narrow one. Whichever way it
+  // is not showing, the ribbon over the pane is the way back to it.
+  const wide = railWide();
+  const folded = wide && railFolded();
+  const drawer = !wide && view.drawer;
+  document.body.classList?.toggle?.('drawer-lock', drawer);
+  el.className = `split ${arriving}${folded ? ' rail-folded' : ''}${drawer ? ' drawer-open' : ''}`.trim();
+  morph(el, `
+    <div class="sessions" id="campaign-column"${wide ? '' : ` role="dialog" aria-label="This campaign"${drawer ? ' aria-modal="true"' : ' inert'}`}>
+      ${columnBar(wide)}
+      <div class="shelf-slider ${view.shelfPicking ? 'picking' : 'picked'}">
+        <div class="shelf-page chooser" ${view.shelfPicking ? '' : 'aria-hidden="true"'}>
+          ${shelfChooser()}
+        </div>
+        <div class="shelf-page list" ${view.shelfPicking ? 'aria-hidden="true"' : ''}>
+          ${shelfHeader()}
+          ${columnList()}
+          ${view.shelf === 'sessions' && cap('machinery') ? `
+            <div class="foot">
+              <button class="btn wide" data-import>${detail?.sessions?.length ? 'Import a recording' : 'Import a recording instead'}</button>
+            </div>` : ''}
+        </div>
+      </div>
+    </div>
+    ${wide ? '' : '<div class="drawer-scrim" data-rail-close aria-hidden="true"></div>'}
+    <div class="pane">
+      ${ribbon(wide, folded, drawer)}
+      <div class="pane-main${view.tab === 'notes' && view.shelf === 'sessions' && marking() ? ' marking' : ''}">
+        ${tabsBar()}
+        ${paneBody()}
+      </div>
+      ${view.tab === 'notes' && view.shelf === 'sessions' ? factsRail() : ''}
+    </div>`);
+}
+
+// --- the first run ---------------------------------------------------------
+
+function firstRun() {
+  const h = status?.health ?? {};
+  return `
+    <div class="center">
+      <div class="kicker">Nothing has been recorded yet</div>
+      <h1 class="display" style="font-size:44px;margin-top:18px">Quill is on your server and listening for a table.</h1>
+      <div class="say-2" style="font-size:16px">Four things to do once, then it runs on its own.</div>
+      <div class="steps" style="margin-top:36px">
+        <div>
+          <span class="mark done">✓</span>
+          <div style="flex:1">
+            <div class="what">Quill is signed in${status?.servers?.length ? ` on ${plural(status.servers.length, 'server')}` : ''}</div>
+            <div class="sub">${esc(status?.bot?.user || 'connecting…')}${status?.bot?.uptimeMs ? ` · ${uptime(status.bot.uptimeMs)}` : ''}</div>
+          </div>
+        </div>
+        <div class="now">
+          <span class="mark" style="border-color:var(--brass);color:var(--brass)">2</span>
+          <div style="flex:1">
+            <div class="what" style="font-weight:500">Make a campaign</div>
+            <div class="sub" style="font-family:var(--sans);font-size:13px">One per game. It holds the roster, the corrections and every session.</div>
+          </div>
+          ${canCreate()
+            ? `<button type="button" class="btn sm go" data-new-campaign>New campaign</button>`
+            : `<code>/campaign create</code>`}
+        </div>
+        <div>
+          <span class="mark">3</span>
+          <div style="flex:1">
+            <div class="what" style="color:var(--dim)">Point it at a voice channel</div>
+            <div class="sub" style="font-family:var(--sans);font-size:13px">Run it from the channel you are playing in. Quill records until somebody ends the session with <code>/campaign leave</code>.</div>
+          </div>
+          <code>/campaign join</code>
+        </div>
+        <div>
+          <span class="mark">4</span>
+          <div style="flex:1">
+            <div class="what" style="color:var(--dim)">Ask the table</div>
+            <div class="sub" style="font-family:var(--sans);font-size:13px">Nobody is recorded until they say yes in a DM.</div>
+          </div>
+          <code>/campaign invite</code>
+        </div>
+      </div>
+      <div class="quiet" style="margin-top:26px">
+        The transcriber runs on your own machine —
+        ${h.whisperServer === false ? 'Quill cannot reach it right now.' : h.whisperServer ? 'Quill can reach it.' : 'Quill has not checked yet.'}
+        ${status?.health?.cloudTranscribe ? '' : 'Nothing is uploaded to be transcribed.'}
+      </div>
+    </div>`;
+}

@@ -28,6 +28,8 @@ import {
 } from '../pipeline/job-actions.js';
 import { ACTION_NOW, ACTION_LATER, ACTION_PI, ACTION_GEMINI } from '../pipeline/transcribe-schedule.js';
 import { createCampaign, guildsCreatableBy } from '../campaign/create.js';
+import { canOptOut, readsAsNoOptOut, NO_OPT_OUT_DUTY } from '../campaign/opt-out.js';
+import { audioSummary } from '../campaign/audio-facts.js';
 import { archiveCampaign, restoreArchivedCampaign } from '../campaign/archive.js';
 import { handOverCampaign } from '../campaign/handover.js';
 import { requestRestore, decideRestoreRequest } from '../campaign/restore-request.js';
@@ -628,7 +630,10 @@ export const ACTIONS = {
       );
     }
 
-    const made = createCampaign({ db, cfg, guildId, userId, name: body?.name });
+    // Whether a player may choose not to be recorded, asked of whoever is
+    // making it. Only an explicit no turns it off — see campaign/opt-out.js.
+    const optOut = !readsAsNoOptOut(body?.optOut);
+    const made = createCampaign({ db, cfg, guildId, userId, name: body?.name, optOut });
     if (!made.ok) return { status: 200, payload: { ok: false, message: made.message } };
 
     return {
@@ -637,7 +642,12 @@ export const ACTIONS = {
         ok: true,
         campaignId: made.id,
         name: made.name,
-        message: `📖 **${made.name}** exists. Notes are filed in \`${made.folder}/\`. Invite your players from the table tab.`,
+        optOut: made.optOut,
+        message:
+          `📖 **${made.name}** exists. Notes are filed in \`${made.folder}/\`. ` +
+          (made.optOut
+            ? 'Invite your players from the table tab.'
+            : `It records everyone you add on the table tab. ${NO_OPT_OUT_DUTY}`),
       },
     };
   },
@@ -801,6 +811,11 @@ export const ACTIONS = {
         url: joinLink(cfg, row.token),
         expiresAt: row.expires_at,
         campaignId: id,
+        // For the table tab, which answers a press with a toast. The threshold
+        // asks through its own channel and never reads this.
+        message: joinLink(cfg, row.token)
+          ? '🔗 The invite link is ready to copy.'
+          : '🔗 A link was made, but this bot has no DASHBOARD_URL set, so there is no address to hand out.',
       },
     };
   },
@@ -843,7 +858,14 @@ export const ACTIONS = {
         // asking somebody to join something they are halfway through.
         alreadyIn: Boolean(who) && db.mayRecord(campaign.id, who),
         characterName: who ? db.getCharacterName(campaign.id, who) : null,
+        // Whether saying no is one of the answers. At a table set up to record
+        // everyone it is not, and the screen has to say so before they join
+        // rather than after.
+        optOut: canOptOut(campaign),
         retentionDays: cfg?.audioRetentionDays ?? 0,
+        // What this install does with a recording, as the sentences the join
+        // screen shows — the same ones the invitation DM uses.
+        audio: audioSummary(cfg),
       },
     };
   },
@@ -869,6 +891,22 @@ export const ACTIONS = {
     // direction of a loose read here is somebody being recorded who never said
     // so, and that is the one bug in this file that cannot be apologised for.
     const agreed = body?.consent === true;
+
+    // A table set up to record everyone has no "join, but leave me out".
+    // Refused rather than quietly turned into a yes: the rule above is that a
+    // yes is typed out, and it holds here too — somebody who will not be
+    // recorded does not join this table, and is told so.
+    if (!agreed && !canOptOut(campaign)) {
+      return {
+        status: 200,
+        payload: {
+          ok: false,
+          message:
+            `${campaign.name || 'This table'} records everyone at it, so there is no joining it unrecorded. ` +
+            'If that is not for you, tell whoever sent the link.',
+        },
+      };
+    }
 
     // The same call /campaign consent makes, so somebody arriving by link ends
     // up in exactly the state somebody arriving by DM does. Declining is

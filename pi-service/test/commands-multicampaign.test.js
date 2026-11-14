@@ -872,8 +872,9 @@ test('the invitation DM says what happens and when it expires', async (t) => {
   assert.equal(cmd.dms.length, 1, 'exactly one DM, to the invited person');
   const dm = cmd.dms[0].payload.content;
   assert.match(dm, /your voice is recorded whenever Quill is in the voice channel/i);
-  assert.match(dm, /turned into text through a transcription Model/i);
-  assert.match(dm, /never sent anywhere else/i);
+  assert.match(dm, /being recorded is your choice/i, 'it says which kind of table this is');
+  assert.match(dm, /turned into text on the machine running this bot/i);
+  assert.match(dm, /That text — not your audio — is then sent to an AI service/);
   assert.match(dm, /<t:\d+:f>/, 'and an expiry Discord renders in their own timezone');
   assert.ok(cmd.dms[0].payload.components?.length, 'with something to answer on');
 });
@@ -883,12 +884,45 @@ test('the retention promise is read from config, never hardcoded', async (t) => 
   h.cfg.audioRetentionDays = 7;
   const seven = command('campaign', { user: DM_A, sub: 'invite', options: { player: 'a', campaign: h.cipher.id } });
   await h.dispatch(seven);
-  assert.match(seven.dms[0].payload.content, /deleted after \*\*7 days\*\*/);
+  assert.match(seven.dms[0].payload.content, /deleted after 7 days/);
 
   h.cfg.audioRetentionDays = 30;
   const thirty = command('campaign', { user: DM_A, sub: 'invite', options: { player: 'b', campaign: h.cipher.id } });
   await h.dispatch(thirty);
-  assert.match(thirty.dms[0].payload.content, /deleted after \*\*30 days\*\*/, 'a promise the bot cannot keep is worse than none');
+  assert.match(thirty.dms[0].payload.content, /deleted after 30 days/, 'a promise the bot cannot keep is worse than none');
+});
+
+// The DM said "never sent anywhere else" as fixed text until 2026-11-14, and
+// three settings make that false. Each is now said when it is on, and the
+// reassurance is only given when none of them is.
+test('the invitation says where a recording goes, from the settings that send it there', async (t) => {
+  const h = await twoTables(t);
+  const ask = async (player) => {
+    const cmd = command('campaign', { user: DM_A, sub: 'invite', options: { player, campaign: h.cipher.id } });
+    await h.dispatch(cmd);
+    return cmd.dms[0].payload.content;
+  };
+
+  Object.assign(h.cfg, { geminiTranscribe: false, driveSyncEnabled: false, driveSyncAudio: false, audioOffloadDir: '' });
+  const local = await ask('a');
+  assert.match(local, /never sent anywhere else/);
+  assert.match(local, /not uploaded anywhere to be transcribed/);
+
+  Object.assign(h.cfg, { geminiTranscribe: true, geminiApiKey: 'k' });
+  const cloud = await ask('b');
+  assert.match(cloud, /Google \(Gemini\)/);
+  assert.doesNotMatch(cloud, /never sent anywhere else|not uploaded anywhere/);
+
+  Object.assign(h.cfg, { geminiTranscribe: false, driveSyncEnabled: true, driveSyncAudio: true });
+  const drive = await ask('c');
+  assert.match(drive, /Google Drive/);
+  assert.doesNotMatch(drive, /never sent anywhere else/);
+
+  Object.assign(h.cfg, { driveSyncEnabled: false, audioOffloadDir: '/data/audio-outbox', audioRetentionDays: 0 });
+  const kept = await ask('d');
+  assert.match(kept, /moved to the computer of whoever runs this bot, and kept there/);
+  assert.match(kept, /kept until the person running it deletes it/);
+  assert.doesNotMatch(kept, /never sent anywhere else/);
 });
 
 test('accepting is what puts someone at the table and allows recording', async (t) => {

@@ -296,6 +296,14 @@ test('the summariser ships on 3.8 and falls back to 3.7', async () => {
   const ladder = [top, ...rungs];
   assert.equal(new Set(ladder).size, ladder.length, `a model appears twice: ${ladder.join(' > ')}`);
 
+  // Best first, and it ends on the lite models: 500 requests a day on this key
+  // against the flash models' 20, so the foot of the ladder is the rung that
+  // is practically never spent.
+  assert.deepEqual(rungs, [
+    'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-4-hydrogen',
+    'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+  ]);
+
   // /ask does not climb. It starts cheap and stays there, because a question
   // asked in passing is not worth reaching for the summariser’s bill.
   assert.equal(defaultOf(env, 'GEMINI_ASK_MODEL'), 'gemini-3.1-flash-lite');

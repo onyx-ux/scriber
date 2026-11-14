@@ -253,6 +253,15 @@ const band = (attrs, { tone, mark, name, say, fig, figAttrs = '', go }) => `
     </span>
   </button>`;
 
+// Who is offered the usage page while it is still dummy figures.
+//
+// Only whoever runs the bot, who is the person settling its words. A player
+// was being shown a door marked "preview" that opened onto somebody else's
+// made-up numbers, with nothing saying whose they were.
+function usagePreviewShown() {
+  return cap('everything');
+}
+
 function deskScreen() {
   const camps = status?.campaigns ?? [];
   const rec = camps.find((c) => c.recording) ?? null;
@@ -348,12 +357,14 @@ function deskScreen() {
   }
 
   // Everybody's own usage, against what their account allows. A placeholder
-  // until per-account limits are built; see usageScreen.
-  doors.push(door('data-screen="usage"', {
-    name: 'Your usage',
-    say: 'what your account has used this month',
-    fig: 'preview',
-  }));
+  // until per-account limits are built; see usageScreen and usagePreviewShown.
+  if (usagePreviewShown()) {
+    doors.push(door('data-screen="usage"', {
+      name: 'Your usage',
+      say: 'what an account will be shown once limits are switched on',
+      fig: 'example only',
+    }));
+  }
 
   // A page of its own rather than a screen of this one, so its entry is a
   // link and goes there the way any link does.
@@ -390,8 +401,6 @@ function deskScreen() {
 
       ${bands.join('')}
 
-      <div class="index-rank">${doors.join('')}</div>
-
       ${recent.length ? `
         <div class="desk-back">
           <span class="desk-back-cap">Last at</span>
@@ -401,6 +410,8 @@ function deskScreen() {
               <span class="when">${esc(lastPlayed(c.lastSessionAt).replace(/^played /, ''))}</span>
             </button>`).join('')}
         </div>` : ''}
+
+      <div class="index-rank">${doors.join('')}</div>
     </div>`;
 }
 
@@ -546,24 +557,46 @@ const glyph = {
     <rect x="3.5" y="4.5" width="17" height="6" rx="1.6" stroke="currentColor" stroke-width="1.3"/>
     <rect x="3.5" y="13.5" width="17" height="6" rx="1.6" stroke="currentColor" stroke-width="1.3"/>
     <path d="M7 7.5h.01M7 16.5h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>`,
-  models: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M12 3.5 13.9 9l5.6.6-4.2 3.8 1.2 5.5-4.5-2.9-4.5 2.9 1.2-5.5L4.5 9.6 10.1 9z"
-          stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`,
+  // A gauge, because the page behind it is an allowance being used up. It was
+  // a star, which says "favourite" to everybody and "usage" to nobody.
+  usage: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M4.5 17.5a8.5 8.5 0 1 1 15 0" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+    <path d="m12 14 3.6-4.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M12 14h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
 };
 
+// The transcriber being away with nothing waiting on it: worth knowing, not
+// worth a banner. A link for whoever can open the gatehouse's Status room and
+// a plain mark for an operator who cannot.
+function awayMark() {
+  if (!status || !cap('machinery') || status.health?.whisperServer !== false || heldByTranscriber()) return '';
+  const say = 'The transcriber on your PC is not answering. Nothing is waiting on it.';
+  // Amber, the colour this page already uses for "waiting", and a word beside
+  // it where there is room: a bare dot in a top bar reads as a notification.
+  const dot = '<span class="dot warn"></span><span class="lbl">PC away</span>';
+  return cap('everything')
+    ? `<a class="navmark away" href="/gatehouse/#status" title="${say}" aria-label="${say} Open status.">${dot}</a>`
+    : `<span class="navmark away" role="img" title="${say}" aria-label="${say}">${dot}</span>`;
+}
+
+// Every mark carries a title as well as a label: the label is for a screen
+// reader, and without the title a mouse had no way to learn what a glyph was
+// short of pressing it.
 function navMarks() {
   const servers = status?.servers?.length ?? 0;
+  const who = me?.signedIn ? `Signed in as ${esc(me.username)}` : 'Account';
   return `
+    ${awayMark()}
     ${cap('servers') ? `
       <button type="button" class="navmark${view.screen === 'servers' ? ' on' : ''}"
-              data-screen="servers" aria-label="Servers">
-        ${glyph.servers}${servers ? `<span class="n">${servers}</span>` : ''}
-      </button>` : ''}
-    <button type="button" class="navmark${view.screen === 'usage' ? ' on' : ''}"
-            data-screen="usage" aria-label="Your usage">${glyph.models}</button>
+              data-screen="servers" aria-label="Servers"
+              title="Servers${servers ? ` (${servers})` : ''}">${glyph.servers}</button>` : ''}
+    ${usagePreviewShown() ? `
+      <button type="button" class="navmark${view.screen === 'usage' ? ' on' : ''}"
+              data-screen="usage" aria-label="Your usage" title="Your usage (example figures)">${glyph.usage}</button>` : ''}
     <button type="button" class="navmark${view.sheet === 'account' ? ' on' : ''}"
             data-sheet="account" aria-expanded="${view.sheet === 'account'}"
-            aria-label="${me?.signedIn ? `Signed in as ${esc(me.username)}` : 'Account'}">
+            aria-label="${who}" title="${who}">
       <span class="who">${esc((me?.username || '?').slice(0, 1))}</span>
     </button>`;
 }
@@ -641,16 +674,28 @@ function renderTop() {
 // The banner — the transcriber being unreachable, said once, at the top
 // ==========================================================================
 
+// How many sessions are stopped because the PC is not answering. Shared by the
+// banner and the quiet mark in the top bar, so the two can never both speak or
+// both stay silent about the same state.
+function heldByTranscriber() {
+  return (status?.queue?.queuedTranscribe?.length ?? 0) + (status?.working?.transcribing?.length ?? 0);
+}
+
 function renderBanner() {
   const h = status?.health ?? {};
+  const held = heldByTranscriber();
   // The degraded banner is a machine problem with a machine fix, and every
   // control on it belongs to whoever owns the machine.
-  if (!status || !cap('machinery') || h.whisperServer !== false || view.screen === 'transcript') {
+  //
+  // Only while something is actually waiting on that machine (2026-11-14). The
+  // PC is off most of the week by design, and a red bar across every screen
+  // for the ordinary state taught its reader to stop seeing it — and on a
+  // phone it took more than half of the first screen to say so. With nothing
+  // held, the same fact is a small mark in the top bar; see awayMark().
+  if (!status || !cap('machinery') || h.whisperServer !== false || view.screen === 'transcript' || !held) {
     morph($('banner'), '');
     return;
   }
-
-  const held = (status.queue?.queuedTranscribe?.length ?? 0) + (status.working?.transcribing?.length ?? 0);
 
   morph($('banner'), `
     <div class="banner">

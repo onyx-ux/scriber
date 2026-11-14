@@ -34,6 +34,8 @@ import { handleRestoreModal } from './restore-request.js';
 import { notifyRestoreRequested } from '../delivery/restore-notify.js';
 import { resolveSessionRef, sessionRef } from '../campaign/session-ref.js';
 import { renameCampaign } from '../campaign/rename.js';
+import { canOptOut, addWithoutAsking, noSwitchMessage, NO_OPT_OUT_DUTY } from '../campaign/opt-out.js';
+import { audioFacts, audioLines } from '../campaign/audio-facts.js';
 import {
   CONSENT_PREFIX,
   parseConsentButton,
@@ -330,6 +332,11 @@ export const commandDefs = [
           .setName('create')
           .setDescription('Start a new campaign in this server — you become its DM')
           .addStringOption((o) => o.setName('name').setDescription('e.g. "Sunless Citadel"').setRequired(true))
+          .addBooleanOption((o) =>
+            o
+              .setName('opt-out')
+              .setDescription('Can players choose not to be recorded? Yes if left out — each one is asked in a DM')
+          )
       )
       .addSubcommand((s) =>
         s
@@ -680,12 +687,28 @@ async function handleCampaignInvite(interaction, db, cfg, target) {
     });
   }
 
+  // A table set up to record everyone at it: nothing is sent and nothing is
+  // asked, and they are on the roster as recorded from this moment. See
+  // campaign/opt-out.js.
+  if (!canOptOut(target)) {
+    addWithoutAsking(db, { campaignId: target.id, userId: user.id });
+    if (name) setCharacter(db, { campaignId: target.id, userId: user.id, name });
+    return interaction.reply({
+      content:
+        `🪶 **${user.username}** is at the table for **${label}**${name ? `, as **${name}**` : ''}, ` +
+        'and will be recorded from the next session.\n' +
+        `_This campaign records everyone on its roster. ${NO_OPT_OUT_DUTY}_`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
   const expiresAt = inviteExpiry();
   const dm = buildInviteDm({
     campaignId: target.id,
     campaignName: label,
     inviterName: interaction.user.username,
     retentionDays: cfg.audioRetentionDays,
+    audio: audioFacts(cfg),
     expiresAt,
   });
 
@@ -757,6 +780,8 @@ async function handleCampaignCreate(interaction, db, cfg) {
     guildId: interaction.guildId,
     userId: interaction.user.id,
     name: interaction.options.getString('name'),
+    // Only an explicit False turns the opt-out off. Left out, it is on.
+    optOut: interaction.options.getBoolean?.('opt-out') !== false,
   });
 
   if (!made.ok) {
@@ -778,10 +803,13 @@ async function handleCampaignCreate(interaction, db, cfg) {
       `\`${sessionRef(made.name, 1)}\` everywhere you go looking for it.\n` +
       '🗺️ What the party decided, every NPC met and place visited, the loot, the threads left hanging — ' +
       'and the lines that made everyone laugh.\n' +
-      '🔇 Nothing at all from anyone who has not agreed. Each player is asked in a DM, and silence is not a yes.\n\n' +
+      (made.optOut
+        ? '🔇 Nothing at all from anyone who has not agreed. Each player is asked in a DM, and silence is not a yes.\n\n'
+        : `🎙️ Everyone you put on the roster, from the moment you do. ${NO_OPT_OUT_DUTY} ` +
+          'Anyone in the channel who is not on the roster is skipped.\n\n') +
 
       '**Before your first session**\n' +
-      '**1.** `/campaign invite player:@them name:<their character>` — asks them, and gives them a name. ' +
+      `**1.** \`/campaign invite player:@them name:<their character>\` — ${made.optOut ? 'asks them' : 'adds them'}, and gives them a name. ` +
       'Without one they get written up as an NPC in their own story.\n' +
       '**2.** `/campaign output` — where the write-up lands, if not the channel you record in.\n\n' +
 
@@ -1140,7 +1168,7 @@ async function handleJoin(interaction, db, cfg, pool = voicePool(interaction.cli
       pick(JOIN_STARTED, { channel: voiceChannel.name }) +
         (several ? `\n_Recording **${campaignLabel(target)}**${ref ? ` — \`${ref}\`` : ''}._` : '') +
         second +
-        describeUnrecorded(unrecorded)
+        describeUnrecorded(unrecorded, { optOut: canOptOut(target) })
     );
   } finally {
     // Must run even if startCapture/createMeeting throws, or the channel would
@@ -1649,7 +1677,20 @@ async function handleConsent(interaction, db, cfg) {
     campaignId: campaignRow.id,
     userId: interaction.user.id,
     retentionDays: cfg.audioRetentionDays ?? null,
+    audio: audioFacts(cfg),
   });
+
+  // No switch at a table set up to record everyone — and the card says why
+  // rather than offering a button that would be refused.
+  if (!canOptOut(campaignRow)) {
+    return interaction.reply({
+      content:
+        noSwitchMessage(campaignLabel(campaignRow)) +
+        `\n\n**Right now** — ${now.mayRecord ? 'you are on the roster, and recorded' : 'you are not on the roster, so nothing of yours is recorded'}.` +
+        `\n\n**What happens to a recording**\n${audioLines(audioFacts(cfg)).map((line) => `• ${line}`).join('\n')}`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
 
   await interaction.reply({
     ...buildStandingMessage(now, campaignLabel(campaignRow)),

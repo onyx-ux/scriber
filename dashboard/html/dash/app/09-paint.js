@@ -142,11 +142,14 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
     view.screen = 'campaign';
     entering();
   }
-  // Opening a campaign lands on what it holds, not on one of the four. The
-  // column offers Sessions, NPCs, Places and Items; picking one is the next
-  // move, the same shape as picking the campaign was.
+  // Opening a campaign lands on its sessions (2026-11-14). It used to land on
+  // the chooser — Sessions, NPCs, Places, Items, Threads — on the grounds that
+  // picking one was the next move. In practice the move was nearly always
+  // Sessions, so the list of nights sat one click behind a row that did not
+  // say it was a button. The chooser is still one press away, on the header.
   view.shelf = 'sessions';
-  view.shelfPicking = true;
+  view.shelfPicking = false;
+  view.moreTools = false;
   view.entry = null;
   compendium = null;
   view.meetingId = null;
@@ -163,6 +166,8 @@ async function loadCampaign(id, { keepScreen = false } = {}) {
   // A search is scoped to one server; carrying its results to the next
   // campaign would offer to invite people who are not in that Discord.
   people.query = ''; people.results = null; people.error = '';
+  // And a word looked for in one campaign was not looked for in the next.
+  huntReset();
 
   paint();
 
@@ -259,6 +264,9 @@ async function openTranscript(meetingId) {
 const countAwaiting = () =>
   (detail?.sessions ?? []).filter((s) => s.job?.status === 'awaiting_approval').length;
 
+// Whether the first poll has decided where this page opens. See tick().
+let landed = false;
+
 async function tick() {
   try {
     // Who the bot thinks is asking, before anything else — it decides both
@@ -285,6 +293,20 @@ async function tick() {
     // survive the desk, which is not an index of campaigns. Even a one-table
     // operator has the bill, the servers and the gatehouse on it, and the one
     // table is still a single click away, by name, in its own square.
+
+    // One exception, for the reader that argument never covered: somebody
+    // with exactly one table and none of the operator's rooms. Their desk is
+    // a single door, and a player sent here to read a recap was going Desk,
+    // Campaigns, Cipher to reach it. Once per page load, and only from the
+    // desk, so the crumb back to the desk still lands on the desk.
+    if (!landed) {
+      landed = true;
+      const only = status.campaigns?.length === 1 ? status.campaigns[0] : null;
+      if (only && view.screen === 'desk' && me?.signedIn && !cap('servers') && !cap('everything')
+          && !welcome.forced && !thrPendingToken()) {
+        await loadCampaign(only.id);
+      }
+    }
 
     // The open campaign's detail does not come from the poll, so refresh it
     // when the poll says something about it changed.

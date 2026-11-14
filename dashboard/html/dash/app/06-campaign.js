@@ -77,6 +77,7 @@ function ribbon(wide, folded, drawer) {
         <div class="ribbon-name">${esc(hero)}</div>
       </div>
       ${state ? `<span class="pill ${state}">${esc(PILL_WORD[state] || state)}</span>` : ''}
+      ${s && at >= 0 && list.length > 1 ? nightSteps(list, at) : ''}
     </div>`;
 }
 
@@ -160,7 +161,8 @@ function shelfHeader() {
   return `
     <div class="head">
       <button type="button" class="shelf-back" data-shelf-back
-              aria-label="Back to what this campaign holds">
+              aria-label="Back to what this campaign holds"
+              title="Sessions, NPCs, places, items and threads">
         <span class="arw" aria-hidden="true">←</span>${esc(name)}${
           count == null ? '' : `<span class="n">${count}</span>`}
       </button>
@@ -508,7 +510,7 @@ function sessionCard(s) {
   // exist. Where they do not, the state is the sentence — which is the whole
   // reason the column is readable at a glance.
   const say = s.tldr
-    ? `<div class="say">${esc(trim(s.tldr, 190))}</div>`
+    ? `<div class="say">${esc(trim(s.tldr, s.title ? 140 : 190))}</div>`
     : s.state === 'failed'   ? '<div class="plain">No usable audio in this session.</div>'
     : s.state === 'approval' && s.job?.type === 'summarize'
       ? '<div class="plain">Transcript is ready. Nothing has been summarised or posted yet.</div>'
@@ -533,6 +535,7 @@ function sessionCard(s) {
         <span class="ref">${esc(sessionName(s))}</span>
         <span class="pill ${s.state}">${esc(PILL_WORD[s.state] || s.state)}</span>
       </div>
+      ${s.title ? `<span class="ttl">${esc(s.title)}</span>` : ''}
       <span class="when">${esc(when)}</span>
       ${say}
       ${facets.length ? `<div class="facets">${facets.map((f) => `<span>${esc(f)}</span>`).join('')}</div>` : ''}
@@ -575,7 +578,7 @@ function tabsBar() {
   return `<div class="tabs">${tabs.map(([id, name, count]) => `
     <button class="tab${view.tab === id ? ' on' : ''}" data-tab="${id}">
       ${esc(name)}${count ? `<span class="n">${count}</span>` : ''}
-    </button>`).join('')}${canManage() ? `
+    </button>`).join('')}${findTab()}${canManage() ? `
     <button class="tab apart${view.tab === 'settings' ? ' on' : ''}" data-tab="settings">
       Settings
     </button>` : ''}</div>`;
@@ -585,6 +588,7 @@ function paneBody() {
   if (!detail) return '<div class="quiet" style="padding-top:30px">Loading…</div>';
   if (view.tab === 'table') return rosterTab();
   if (view.tab === 'corrections') return correctionsTab();
+  if (view.tab === 'search') return searchTab();
   // Settings belongs to whoever runs this campaign. Anybody else — including
   // somebody who was managing it a moment ago and is not now — gets the
   // reading rather than a screen of values they cannot move.
@@ -625,7 +629,7 @@ function sessionKicker(s, tone = '', doings = '') {
   ].filter(Boolean);
   return `
     <div class="session-line">
-      <div class="kicker ${tone}">${esc(sessionName(s))} · ${esc(longDate(s.startedAt))}</div>
+      <div class="kicker which ${tone}">${esc(sessionName(s))} · ${esc(longDate(s.startedAt))}</div>
       ${bits.length ? `<span class="mono" style="font-size:11.5px;color:var(--dim)">${esc(bits.join(' · '))}</span>` : ''}
       ${doings ? `<div class="doings">${doings}</div>` : ''}
     </div>`;
@@ -689,10 +693,14 @@ function notesPane(s) {
           <button type="button" class="${marking() ? 'on' : ''}" data-mark="correct">Correcting</button>
         </div>` : ''}
       ${cap('transcripts') ? `<button class="btn sm" data-transcript="${s.meetingId}">Transcript</button>` : ''}
-      ${canManage() ? `<button type="button" class="btn sm" data-fix-name>Fix a name</button>` : ''}
-      ${can() ? `<button type="button" class="btn sm" data-act="summary/again" data-meeting="${s.meetingId}"
-           data-confirm="Write the notes for ${esc(sessionName(s))} again?">Re-summarise</button>` : ''}
-      <button class="btn sm ghost" data-copy-notes>Copy for Obsidian</button>
+      <button type="button" class="btn sm ghost more-toggle" data-more-tools
+              aria-expanded="${view.moreTools ? 'true' : 'false'}">${view.moreTools ? 'Less' : 'More'}</button>
+      <span class="more-tools${view.moreTools ? ' open' : ''}">
+        ${canManage() ? `<button type="button" class="btn sm" data-fix-name>Fix a name</button>` : ''}
+        ${can() ? `<button type="button" class="btn sm" data-act="summary/again" data-meeting="${s.meetingId}"
+             data-confirm="Write the notes for ${esc(sessionName(s))} again?">Re-summarise</button>` : ''}
+        <button class="btn sm ghost" data-copy-notes>Copy for Obsidian</button>
+      </span>
     </div>`;
 
   // Who and where, for the margin — see .sidenote.
@@ -791,6 +799,7 @@ function notesPane(s) {
     ${orphanedMarks()}
 
     <div class="recap-extras measure">${recapSections(notes)}</div>
+    ${nightTurn(s)}
     </div>`;
 }
 
@@ -1438,8 +1447,9 @@ async function buildCompendium() {
   const chronological = (map) => {
     for (const entry of map.values()) {
       entry.seen.sort(byNight);
-      entry.said.sort((a, b) => byNight(a.session, b.session));
-      entry.asides.sort((a, b) => byNight(a.session, b.session));
+      // Said once. See sameOnce, in 07-tabs.js.
+      entry.said = sameOnce(entry.said.sort((a, b) => byNight(a.session, b.session)));
+      entry.asides = sameOnce(entry.asides.sort((a, b) => byNight(a.session, b.session)));
     }
   };
   chronological(npcs);
@@ -1464,11 +1474,4 @@ async function buildCompendium() {
   });
   paint();
 }
-
-// The word each kind of entry uses for the night it turned up.
-const FIRST_WORD = {
-  people: 'first met',
-  places: 'first gone to',
-  items:  'found in',
-};
 

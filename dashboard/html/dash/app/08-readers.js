@@ -349,6 +349,22 @@ function createDialog() {
                    ${servers.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
                  </select>`}
           </div>
+          <fieldset class="field picks">
+            <legend>Can players opt out of being recorded?</legend>
+            <label class="pick">
+              <input type="radio" name="optOut" value="yes" ${view.newOptOut === 'no' ? '' : 'checked'}>
+              <span><b>Yes.</b> Each player is asked in a DM, can refuse, and can stop later.</span>
+            </label>
+            <label class="pick">
+              <input type="radio" name="optOut" value="no" ${view.newOptOut === 'no' ? 'checked' : ''}>
+              <span><b>No.</b> Everyone I add to the roster is recorded.</span>
+            </label>
+            ${view.newOptOut === 'no' ? `
+            <div class="warnbox">
+              <b>Quill will not message your players about this.</b> Nobody gets a DM and nobody gets a
+              switch, so telling the table the game is recorded is yours to do. This is set once, here.
+            </div>` : ''}
+          </fieldset>
           <div class="foot">
             <button class="btn go big" type="submit" ${can() ? '' : 'disabled'}>Start it</button>
             <button class="btn big" type="button" data-close-modal>Cancel</button>

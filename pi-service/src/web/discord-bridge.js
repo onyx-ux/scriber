@@ -18,6 +18,8 @@
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 
 import { buildInviteDm, inviteExpiry } from '../campaign/consent.js';
+import { canOptOut, addWithoutAsking, NO_OPT_OUT_DUTY } from '../campaign/opt-out.js';
+import { audioFacts } from '../campaign/audio-facts.js';
 
 // Discord's member search is the one member lookup a bot can do without the
 // privileged GUILD_MEMBERS intent. It matches on username and server nickname,
@@ -232,12 +234,29 @@ export function createDiscordBridge({ client, db, cfg }) {
         return { ok: false, message: `**${user.username}** has already agreed to be recorded here.` };
       }
 
+      // A table set up to record everyone at it: no DM, no question, on the
+      // roster as recorded from now. See campaign/opt-out.js.
+      if (!canOptOut(campaign)) {
+        addWithoutAsking(db, { campaignId, userId });
+        if (characterName) db.setCharacterName(campaignId, userId, characterName);
+        return {
+          ok: true,
+          userId,
+          username: user.username,
+          added: true,
+          message:
+            `🪶 **${user.username}** is at the table${characterName ? `, as **${characterName}**` : ''}, ` +
+            `and will be recorded from the next session. ${NO_OPT_OUT_DUTY}`,
+        };
+      }
+
       const expiresAt = inviteExpiry();
       const dm = buildInviteDm({
         campaignId,
         campaignName: campaign.name || campaign.channel_name || 'this campaign',
         inviterName,
         retentionDays: cfg.audioRetentionDays,
+        audio: audioFacts(cfg),
         expiresAt,
       });
 

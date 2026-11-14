@@ -12,10 +12,15 @@
 // tokens whether or not the question needs any. Thirteen times the spend, for
 // a lookup.
 //
-// So there are two ROLES and a LADDER under each. The ladder is walked only
-// when the provider says it is out of quota — never on an ordinary failure,
-// because a refusal or a timeout is not a reason to pay a second model to do
-// the same work.
+// So there are two ROLES and a LADDER under each. The ladder is walked when a
+// model cannot take the work — out of quota, its daily allowance spent,
+// overloaded, or (since 2026-11-14) simply not answering in time — and never
+// on a refusal or a malformed reply, which say something about the request
+// and would fail again one model cheaper.
+//
+// The order is best first, and every call starts again from the top: the best
+// model that can answer right now writes the session, and a rung is only ever
+// passed over for that one call.
 
 export const ROLES = ['summary', 'ask'];
 
@@ -34,7 +39,10 @@ export const ROLES = ['summary', 'ask'];
 // where an alias quietly changes what you are paying for and how it writes.
 const DEFAULTS = {
   gemini: {
-    summary: ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
+    summary: [
+      'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-4-hydrogen',
+      'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+    ],
     ask: 'gemini-3.1-flash-lite',
   },
   anthropic: {

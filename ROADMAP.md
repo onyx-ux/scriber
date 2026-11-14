@@ -47,9 +47,6 @@ reasoning for each. What already shipped is in [CHANGELOG.md](CHANGELOG.md).
         `first_seen_at` on `dashboard_access`, written once, would settle it.
       - It is remembered as got-through in `localStorage`, so the same person on
         a second machine sees it again. Same fix as above.
-      - There is no way back a step. Every move burns the page, and a burnt
-        page has nowhere to return to — a DM who mistypes the name of their
-        campaign has to finish and rename it from the dashboard.
       - The roster step searches the one server the campaign was just made in,
         which is right, but it says so nowhere. A DM who types the name of
         somebody in a different Discord is told only that nobody matches.
@@ -81,12 +78,9 @@ reasoning for each. What already shipped is in [CHANGELOG.md](CHANGELOG.md).
 
       **To finish it:**
 
-      - The link is only offered on the threshold's roster step, which somebody
-        sees once. A table that gains a player in month four has nowhere to go
-        and ask for it — it belongs on the campaign's own table tab too.
-      - Nothing shows the manager who has come in through the link, or that a
-        live link exists at all. `invite/revoke` is written and tested and has
-        no button anywhere.
+      - Nothing shows the manager who has come in through the link. (That a
+        live link exists, and the button to revoke it, are on the campaign's
+        table tab as of 2026-11-14.)
       - `/app/?join=<token>` is the address because nginx serves the dashboard
         from an exact `location = /app/`, which a query does not disturb. A
         prettier `/join/<token>` needs a location block in
@@ -104,17 +98,12 @@ are argued with, and some of them will collide with a design decision recorded
 on purpose. Whoever picks one up should read the argument before deciding
 against it.
 
-- **The privacy wording is fixed text, and some settings make it false**
-  (found in the 2026-09-27 review, not yet fixed). The consent DM says "Your
-  recording is never sent anywhere else" whatever the config says, and
-  `GEMINI_TRANSCRIBE` or `DRIVE_SYNC_AUDIO` send audio to Google. The
-  dashboard's Settings card says audio is "deleted once transcribed ... not
-  kept, and this cannot be turned off", while `AUDIO_RETENTION_DAYS` keeps it
-  14 days by default and `AUDIO_OFFLOAD_DIR` keeps a copy on the PC. The status
-  payload already carries `cloudTranscribe`; neither the DM nor the card reads
-  it. The fix is to build both from config, and to ask for consent again when
-  the privacy terms change. See `campaign/consent.js` and the Audio card in
-  `dashboard/html/dash/app/07-tabs.js`.
+- **Nobody is asked again when the privacy terms change.** The consent DM, the
+  join screen, `/campaign consent` and the Settings tab's Audio card are built
+  from config as of 2026-11-14 (`campaign/audio-facts.js`), so what they say is
+  true of the install on the day they are read. But a player who agreed while
+  `GEMINI_TRANSCRIBE` was off agreed to different terms from the ones in force
+  after it is turned on, and nothing tells them or asks again.
 
 - **A short transcript can still delete its own clips.** After any transcript
   commits, the archive step replaces the per-speaker clips with one mixed MP3.

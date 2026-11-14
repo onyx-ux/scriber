@@ -1169,3 +1169,57 @@ they were cleared to make room for. That section is empty again.
       speaker for a minute and carries on, three times before giving up,
       instead of failing at once. The gatehouse's Usage tab shows each
       model's limits against this minute's use.
+
+## 2026-11-14
+
+- [x] **The transcriber being away is a mark, not a banner** — the red "cannot
+      reach the transcriber on your PC" banner now shows only while a session
+      is actually held behind it. With nothing waiting, the PC being off is an
+      amber "PC away" mark in the top bar, for the operator alone.
+
+- [x] **A campaign opens on its sessions, and a player with one table opens
+      straight into it** — the shelf chooser is one press away on the header
+      instead of the first thing shown, and somebody with exactly one table and
+      none of the operator's rooms skips the desk on arrival.
+
+- [x] **Finding your way around a campaign** — each session in the list shows
+      what the night was called. The ribbon has earlier / later arrows and the
+      foot of every write-up offers the next night. A Search tab looks through
+      every write-up, and every transcript for whoever may read one
+      (`GET /search`); players get write-ups only. A line the write-ups repeat
+      about an NPC or a place is said once. On a phone the write-up's
+      second-rank buttons fold behind "More", and its duplicate header is gone.
+
+- [x] **The invite link has a home** — the campaign's table tab makes, shows,
+      copies and revokes the link, which was only ever offered on the first-run
+      screen.
+
+- [x] **The first-run book turns back a page** — every question has a way back,
+      and a campaign name mistyped there is corrected from the next page as a
+      rename rather than made twice.
+
+- [x] **Whether players may opt out is asked when a campaign is made** — in the
+      dashboard dialog, the first-run book and `/campaign create opt-out:`.
+      Yes is how every campaign has always worked and is the default. No means
+      whoever runs the table answers for it: inviting somebody puts them on the
+      roster as recorded, Quill sends them nothing, and `/campaign consent`
+      offers no switch. Anybody not on the roster is still skipped. Every
+      surface that turns it off says that telling the table is the DM's to do.
+
+- [x] **What happens to a recording is read from the settings** — the consent
+      DM, `/campaign consent`, the join screen and the Settings tab's Audio
+      card are built from `campaign/audio-facts.js`, so retention, Gemini
+      transcription, the Drive copy and the copy moved to the PC are each said
+      when they are on. "Never sent anywhere else" is only said when it is true.
+
+- [x] **One accent** — the gatehouse uses the dashboard's pen instead of its
+      own verdigris.
+
+- [x] **A model that goes quiet is stepped past** — session 37 waited five
+      minutes, twice, on an overloaded `gemini-3.8-flash` that had accepted the
+      request and said nothing. A model with another below it is now waited on
+      for two minutes, then the next is asked; every call starts again from
+      the top. The key's daily caps ship as defaults (20 a day on the flash
+      models, 500 on the lite ones), the ladder gains `gemini-4-hydrogen` and
+      `gemini-3.5-flash-lite`, and a 503 is logged as overloaded rather than
+      out of quota.

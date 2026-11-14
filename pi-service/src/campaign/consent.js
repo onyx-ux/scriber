@@ -16,6 +16,7 @@
 //     description of what the bot actually does, or it is just a lie with a
 //     nicer font.
 import { ButtonBuilder, ButtonStyle, ActionRowBuilder } from 'discord.js';
+import { audioLines } from './audio-facts.js';
 
 export const CONSENT_PREFIX = 'consent:';
 export const INVITE_HOURS = 24;
@@ -55,25 +56,29 @@ export function parseConsentButton(customId) {
 // text people click past. Four things they need: who is asking, what gets
 // captured and when, how long it is kept, and where it goes.
 //
-// "and nothing else leaves your network" is load-bearing and true: the audio
-// is transcribed on the DM's own hardware, and only the finished text is sent
-// on to be summarised.
-export function buildInviteMessage({ campaignName, inviterName, retentionDays, expiresAt }) {
-  const kept =
-    retentionDays > 0
-      ? `Recordings are deleted after **${retentionDays} day${retentionDays === 1 ? '' : 's'}** — long enough to transcribe them and fix mistakes.`
-      : 'Recordings are kept until the person running the bot deletes them.';
+// What happens to the audio is NOT written here. It used to be — four fixed
+// bullets ending "never sent anywhere else" — and two settings made that
+// false. The bullets come from campaign/audio-facts.js now, which reads the
+// same configuration the behaviour does. `audio` is audioFacts(cfg); a caller
+// that passes only retentionDays gets the lines for an install that does
+// nothing else with a recording, which is what the old text assumed.
+//
+// This message is only ever sent at a table where being recorded is the
+// player's own choice (see campaign/opt-out.js: the other kind sends nothing),
+// and it says so in its first line rather than leaving it to be inferred from
+// the buttons.
+export function buildInviteMessage({ campaignName, inviterName, retentionDays, audio, expiresAt }) {
+  const facts = audio ?? { retentionDays: retentionDays > 0 ? retentionDays : 0 };
 
   return {
     content:
-      `🪶 **${inviterName}** has invited you to **${campaignName}**.\n\n` +
+      `🪶 **${inviterName}** has invited you to **${campaignName}**.\n` +
+      '_At this table, being recorded is your choice — nothing of yours is captured unless you say yes below._\n\n' +
       'Quill writes up your D&D sessions. If you accept, **your voice is recorded whenever Quill is in the voice channel** ' +
       "— it only listens while it's there, and it never speaks.\n\n" +
       '**What happens to it**\n' +
-      `• Your audio is turned into text through a transcription Model.\n` +
-      '• That text — not your audio — is then sent to an AI service to write the session summary.\n' +
-      `• ${kept}\n` +
-      '• Your recording is never sent anywhere else.\n\n' +
+      audioLines(facts).map((line) => `• ${line}\n`).join('') +
+      '\n' +
       "**You don't have to.** Decline and Quill will not record you at all: it skips your audio entirely rather than " +
       'recording and discarding it. You can still play — you just will not be in the transcript.\n\n' +
       // Said here, at the moment of agreeing, because it is the part somebody
@@ -89,8 +94,8 @@ export function buildInviteMessage({ campaignName, inviterName, retentionDays, e
 }
 
 // The full message including the buttons bound to this campaign.
-export function buildInviteDm({ campaignId, campaignName, inviterName, retentionDays, expiresAt }) {
-  const { content } = buildInviteMessage({ campaignName, inviterName, retentionDays, expiresAt });
+export function buildInviteDm({ campaignId, campaignName, inviterName, retentionDays, audio, expiresAt }) {
+  const { content } = buildInviteMessage({ campaignName, inviterName, retentionDays, audio, expiresAt });
   return { content, components: [buildConsentButtons(campaignId)] };
 }
 
@@ -143,7 +148,10 @@ const button = (action, campaignId, label, style) =>
 // sessions has not been told the truth by the interface, and would find out at
 // the worst possible moment — reading a recap that still has them in it.
 export function buildStandingMessage(standing, campaignName) {
-  const { state, lines, sessions, characterName, displayName, decidedAt, retentionDays, hasRecord } = standing;
+  const { state, lines, sessions, characterName, displayName, decidedAt, retentionDays, audio, hasRecord } = standing;
+  // The same sentences the invitation used, minus the two about how audio
+  // becomes text and a summary: this card is about what is kept and where.
+  const kept = audio ? audioLines(audio).slice(2).join(' ') : null;
 
   const headline =
     state === 'granted' ? 'You are being recorded, and you said yes.'
@@ -159,7 +167,7 @@ export function buildStandingMessage(standing, campaignName) {
   const facts = [
     `**On file** — ${onFile}`,
     `**As** — ${characterName || displayName || 'your Discord name'}`,
-    `**Audio** — ${
+    kept ? `**Audio** — ${kept}` : `**Audio** — ${
       retentionDays > 0
         ? `deleted after ${retentionDays} day${retentionDays === 1 ? '' : 's'}, once it has been transcribed`
         : 'kept until the person running the bot deletes it'
@@ -185,6 +193,7 @@ export function buildStandingMessage(standing, campaignName) {
     content:
       `🪶 **${campaignName}** — ${headline}\n` +
       (decidedAt ? `You answered on ${discordTime(decidedAt, 'D')}.\n` : '') +
+      '_At this table, being recorded is your choice._\n' +
       `\n${facts.join('\n')}\n` +
       scope +
       '\n_Only you can see this. `/campaign consent` any time._',
@@ -239,12 +248,24 @@ export function buildManagerNotice({ campaignName, who }) {
 //
 // Accepts a bare array too — it was one for a long time, and a DM's channel
 // message is not worth breaking over a signature.
-export function describeUnrecorded(who) {
+//
+// `optOut: false` is a table set up to record everyone on its roster (see
+// campaign/opt-out.js). Nobody there has been asked anything, so the line says
+// what is actually missing — they are not on the roster — and what fixes it.
+export function describeUnrecorded(who, { optOut = true } = {}) {
   const { unasked = [], declined = [] } = Array.isArray(who) ? { unasked: who } : (who ?? {});
   if (unasked.length === 0 && declined.length === 0) return '';
 
   const list = (names) => names.map((n) => `**${n}**`).join(', ');
   const parts = [];
+
+  if (!optOut) {
+    const off = [...unasked, ...declined];
+    return (
+      `\n\n🔇 Not being recorded: ${list(off)} — not on this campaign's roster. ` +
+      '`/campaign invite` adds them.'
+    );
+  }
 
   if (unasked.length) {
     parts.push(

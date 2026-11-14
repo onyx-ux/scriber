@@ -4,8 +4,20 @@
 // Google reports no remaining quota anywhere — not in a response, not in a
 // header — so the only way to stay under a limit is to know it and count. The
 // numbers below are the key's own, read off AI Studio's rate-limit page on
-// 2026-09-28. RPD was not legible there, so it is left unset (unlimited here)
-// until somebody writes it into GEMINI_RATE_LIMITS.
+// 2026-09-28 and again, with the daily column this time, on 2026-11-14.
+//
+// The daily caps are what make the ladder in model-choice.js honest. A flash
+// model on this key gets twenty requests a day, and a write-up with its note
+// builders behind it is several. Without the number here the bot only learned
+// a model was spent by being refused; with it, a spent model is skipped
+// without a request being made and the next one down is asked instead. Two
+// rows have no daily figure because the page listed none for them — they are
+// asked, and step down on Google's own refusal if it comes.
+//
+// "Today" is this process's local day, counted from when it started. Google's
+// day turns over at midnight Pacific and its count survives our restarts, so
+// the two can disagree at the edges; when they do, Google refuses, and that
+// is the same step down.
 //
 // The limit that actually bit was the live transcriber's: 20,000 tokens a
 // minute, shared by every speaker's socket. Six speakers streamed at the
@@ -16,10 +28,13 @@
 
 // { rpm, tpm, rpd } — any of them null for "no limit known".
 export const DEFAULT_LIMITS = {
-  'gemini-3.8-flash': { rpm: 5, tpm: 250_000, rpd: null },
+  'gemini-3.8-flash': { rpm: 5, tpm: 250_000, rpd: 20 },
   'gemini-3.7-flash': { rpm: 5, tpm: 250_000, rpd: null },
-  'gemini-3.6-flash': { rpm: 5, tpm: 250_000, rpd: null },
+  'gemini-3.6-flash': { rpm: 5, tpm: 250_000, rpd: 20 },
+  'gemini-4-hydrogen': { rpm: 5, tpm: 250_000, rpd: 20 },
   'gemini-3.5-flash': { rpm: 5, tpm: 250_000, rpd: null },
+  'gemini-3.5-flash-lite': { rpm: 15, tpm: 250_000, rpd: 500 },
+  'gemini-3.1-flash-lite': { rpm: 15, tpm: 250_000, rpd: 500 },
   'gemini-3.5-transcribe-live': { rpm: null, tpm: 20_000, rpd: null },
   'gemini-3.8-live-extended-thinking': { rpm: null, tpm: 65_000, rpd: null },
 };

@@ -376,9 +376,15 @@ export const config = validate({
   // top rung is out of quota mid-evening, the write-up that lands is the one
   // this table has been reading lately rather than something two generations
   // older.
+  //
+  // Best first, ending on the two lite models, which have 500 requests a day
+  // on this key against the flash models' 20 — so the bottom of the ladder is
+  // the rung that is practically never spent. See the daily caps in
+  // pipeline/rate-limits.js. (The default stays a bare literal straight after
+  // the name: test/model-choice.test.js reads it out of this source.)
   geminiModelFallbacks: optional(
     'GEMINI_MODEL_FALLBACKS',
-    'gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.1-flash-lite'
+    'gemini-3.7-flash,gemini-3.6-flash,gemini-4-hydrogen,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite'
   ),
   geminiAskModel: optional('GEMINI_ASK_MODEL', 'gemini-3.1-flash-lite'),
 

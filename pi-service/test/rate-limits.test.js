@@ -19,7 +19,13 @@ function clock() {
 }
 
 test('the key\'s own limits ship as the defaults', () => {
-  assert.deepEqual(DEFAULT_LIMITS['gemini-3.8-flash'], { rpm: 5, tpm: 250_000, rpd: null });
+  // The daily column was read off AI Studio on 2026-11-14. Twenty a day on the
+  // flash models, five hundred on the lite ones at the foot of the ladder.
+  assert.deepEqual(DEFAULT_LIMITS['gemini-3.8-flash'], { rpm: 5, tpm: 250_000, rpd: 20 });
+  assert.deepEqual(DEFAULT_LIMITS['gemini-3.6-flash'], { rpm: 5, tpm: 250_000, rpd: 20 });
+  assert.deepEqual(DEFAULT_LIMITS['gemini-4-hydrogen'], { rpm: 5, tpm: 250_000, rpd: 20 });
+  assert.deepEqual(DEFAULT_LIMITS['gemini-3.5-flash-lite'], { rpm: 15, tpm: 250_000, rpd: 500 });
+  assert.deepEqual(DEFAULT_LIMITS['gemini-3.1-flash-lite'], { rpm: 15, tpm: 250_000, rpd: 500 });
   assert.equal(DEFAULT_LIMITS['gemini-3.5-transcribe-live'].tpm, 20_000);
   assert.equal(DEFAULT_LIMITS['gemini-3.8-live-extended-thinking'].tpm, 65_000);
 });

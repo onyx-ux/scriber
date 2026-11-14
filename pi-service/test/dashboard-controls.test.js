@@ -513,6 +513,7 @@ test('every control the dashboard renders does something', async (t) => {
     ['campaign / notes', [CAMPAIGN, nav({ tab: 'notes' }, ['tab'])]],
     ['campaign / the table', [CAMPAIGN, nav({ tab: 'table' }, ['tab'])]],
     ['campaign / corrections', [CAMPAIGN, nav({ tab: 'corrections' }, ['tab'])]],
+    ['campaign / search', [CAMPAIGN, nav({ tab: 'search' }, ['tab'])]],
     ['campaign / settings', [CAMPAIGN, nav({ tab: 'settings' }, ['tab'])]],
     // The channel list is its own stop for the same reason the dialogs are:
     // the dropdown inside it does not exist until the middle destination is
@@ -585,6 +586,13 @@ test('every control the dashboard renders does something', async (t) => {
      [CAMPAIGN, nav({ shelf: 'npcs' }, ['shelf-row'])],
      nav({ shelfBack: '' }, ['shelf-back'])],
 
+    // And the other way round, since 2026-11-14: a campaign opens on its
+    // sessions, so the chooser's Sessions row is asking for the shelf that is
+    // already open. From the chooser it has somewhere to go.
+    ['picking the shelf already open',
+     [CAMPAIGN, nav({ shelfBack: '' }, ['shelf-back'])],
+     nav({ shelf: 'sessions' }, ['shelf-row'])],
+
     // Auto is where the page starts, so the walk clicks it while it is already
     // on. From dark it has somewhere to go.
     ['choosing the theme already chosen',
@@ -603,7 +611,7 @@ test('every control the dashboard renders does something', async (t) => {
   // layout — so it can only be checked where there is one, and it is: see the
   // browser walk in the scratchpad note on job 3, and the anchors it jumps to
   // in dashboard-render.test.js.
-  assert.deepEqual(dead.filter((d) => !/session=|tab=|closeModal|speaker$|shelfBack|themeSet=auto|part=/.test(d)), [],
+  assert.deepEqual(dead.filter((d) => !/session=|tab=|closeModal|speaker$|shelfBack|shelf=sessions|themeSet=auto|part=/.test(d)), [],
     `controls wired to nothing:\n${dead.join('\n')}`);
 });
 

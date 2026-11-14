@@ -6,6 +6,8 @@ import {
   contextTokens,
   fallbackProvider,
   isProviderUnreachable,
+  isTooSlow,
+  RUNG_PATIENCE_MS,
   isQuotaError,
   isSummariserReachable,
   summariserLabel,
@@ -212,6 +214,71 @@ test('the fallback leg is billed to the provider that ran it', async () => {
   assert.equal(ok[0].provider, 'anthropic');
   assert.equal(ok[0].model, 'claude-opus-5');
   assert.ok(rows.some((row) => row.provider === 'gemini' && row.outcome === 'rate_limited'));
+});
+
+// Session 37, 14 Nov 2026. gemini-3.8-flash was overloaded and, rather than
+// refusing, took the request and went silent. Node gave up after five minutes
+// with "fetch failed", that read as "Google is unreachable", and the ladder
+// was never walked — twice — while a model two rungs down was answering in
+// twenty seconds.
+const silent = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_HEADERS_TIMEOUT' } });
+
+test('a model that goes quiet is stepped past, not treated as the provider being down', async () => {
+  const geminiOnly = { summaryProvider: 'gemini', geminiApiKey: 'gm', geminiModel: 'gemini-3.8-flash' };
+  const waits = [];
+  const r = recorder((provider, model) => {
+    if (model === 'gemini-3.8-flash') throw silent();
+    if (model === 'gemini-3.7-flash') throw new Error('Gemini request timed out after 120s');
+    return said(`${model} wrote it.`);
+  });
+  const ask = (provider, sys, user, cfg, timeoutMs, model) => {
+    waits.push([model, timeoutMs]);
+    return r.ask(provider, sys, user, cfg, timeoutMs, model);
+  };
+
+  const out = await callModel('sys', 'user', geminiOnly, 1_200_000, { ask });
+
+  assert.equal(out, 'gemini-3.6-flash wrote it.', 'the best model that would answer wrote the session');
+  assert.deepEqual(waits.map(([m]) => m), ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash'],
+    'best first, one rung at a time');
+  assert.ok(waits.every(([, ms]) => ms === RUNG_PATIENCE_MS),
+    'and none of them was waited on for the whole twenty minutes while there was somewhere else to go');
+});
+
+test('the last model on the ladder still gets the whole wait', async () => {
+  const one = {
+    summaryProvider: 'gemini', geminiApiKey: 'gm',
+    geminiModel: 'gemini-3.1-flash-lite', geminiModelFallbacks: 'gemini-3.1-flash-lite',
+  };
+  let waited = null;
+  const ask = async (provider, sys, user, cfg, timeoutMs) => { waited = timeoutMs; return said('ok'); };
+
+  await callModel('sys', 'user', one, 1_200_000, { ask });
+  assert.equal(waited, 1_200_000, 'with nothing below it, waiting is all there is');
+});
+
+test('every call starts again from the top of the ladder', async () => {
+  const geminiOnly = { summaryProvider: 'gemini', geminiApiKey: 'gm', geminiModel: 'gemini-3.8-flash' };
+  let busy = true;
+  const r = recorder((provider, model) => {
+    if (model === 'gemini-3.8-flash' && busy) throw Object.assign(new Error('high demand'), { status: 503 });
+    return said(`${model} wrote it.`);
+  });
+
+  assert.equal(await callModel('s', 'u', geminiOnly, 1000, { ask: r.ask }), 'gemini-3.7-flash wrote it.');
+  busy = false;
+  assert.equal(await callModel('s', 'u', geminiOnly, 1000, { ask: r.ask }), 'gemini-3.8-flash wrote it.',
+    'a rung is passed over for one call, never remembered as down');
+});
+
+test('slow and unreachable are told apart', () => {
+  assert.equal(isTooSlow(silent()), true);
+  assert.equal(isTooSlow(new Error('Gemini request timed out after 120s')), true);
+  // No reason given: it could be DNS, so it is not assumed to be a slow model.
+  assert.equal(isTooSlow(new TypeError('fetch failed')), false);
+  assert.equal(isTooSlow(offline()), false);
+  assert.equal(isTooSlow(quota()), false);
+  assert.equal(isTooSlow(refusal()), false);
 });
 
 test('unreachable and out-of-quota are told apart', () => {

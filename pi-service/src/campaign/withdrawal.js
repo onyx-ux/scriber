@@ -20,8 +20,10 @@
 // because it cannot do that at all, and the standing screen says so plainly
 // rather than leaving somebody to discover it.
 
+import { canOptOut, noSwitchMessage } from './opt-out.js';
+
 // Where this person stands right now, in facts rather than adjectives.
-export function standing(db, { campaignId, userId, retentionDays = null } = {}) {
+export function standing(db, { campaignId, userId, retentionDays = null, audio = null } = {}) {
   const campaign = db.getCampaign(campaignId);
   if (!campaign) return null;
 
@@ -41,6 +43,8 @@ export function standing(db, { campaignId, userId, retentionDays = null } = {}) 
     // pressing "stop" most needs to understand about what stop does not do.
     hasRecord: lines > 0,
     retentionDays,
+    // What this install does with a recording — see campaign/audio-facts.js.
+    audio,
   };
 }
 
@@ -48,6 +52,14 @@ export function standing(db, { campaignId, userId, retentionDays = null } = {}) 
 export function stopRecording(db, { campaignId, userId } = {}) {
   const campaign = db.getCampaign(campaignId);
   if (!campaign) return { ok: false, message: '⚠️ That campaign no longer exists.' };
+
+  // A table set up to record everyone has no switch — see campaign/opt-out.js.
+  // Refused here as well as on the screen that would have offered it, because
+  // a Stop button sent before the campaign was made this way is still sitting
+  // in somebody's DMs.
+  if (!canOptOut(campaign)) {
+    return { ok: false, message: noSwitchMessage(campaign.name || campaign.channel_name || 'This campaign') };
+  }
 
   const before = db.getConsent(campaignId, userId);
   if (before?.state === 'declined') {

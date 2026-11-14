@@ -14,6 +14,8 @@
 import { sessionRef } from '../campaign/session-ref.js';
 import { campaignLabel } from '../campaign/resolve.js';
 import { DEFAULT_EDITION } from './rules.js';
+import { applyCorrections } from '../campaign/corrections.js';
+import { canOptOut } from '../campaign/opt-out.js';
 
 // Consent, per person, in the words the operator needs.
 //
@@ -57,17 +59,28 @@ function consentFor(row, lines = 0) {
 // and tolerant in the same way notes-view.js is — the blob is model output
 // that has been through several prompt revisions, so a session summarised a
 // year ago must still produce a row.
-function facetsOf(summaryJson) {
-  if (!summaryJson) return { tldr: '', npcs: 0, locations: 0, threads: 0 };
+//
+// `title` is the first scene's own heading, which is the same thing the
+// write-up's page uses as its headline (see notesPane in the dashboard): the
+// schema has never had a title for a whole night, so both borrow the one the
+// summariser wrote for where it opens. The list said only "Session 3" until
+// 2026-11-14, and a column of numbers is not something anybody can scan for
+// "the night at the notary". `fix` applies the campaign's name corrections, so
+// the list spells a name the way the page it opens does.
+function facetsOf(summaryJson, fix = (s) => s) {
+  if (!summaryJson) return { tldr: '', title: '', npcs: 0, locations: 0, threads: 0 };
   let notes;
   try {
     notes = JSON.parse(summaryJson);
   } catch {
-    return { tldr: '', npcs: 0, locations: 0, threads: 0, unreadable: true };
+    return { tldr: '', title: '', npcs: 0, locations: 0, threads: 0, unreadable: true };
   }
   const count = (v) => (Array.isArray(v) ? v.length : v ? 1 : 0);
+  const opening = Array.isArray(notes?.scenes) ? notes.scenes[0]?.title : null;
+  const title = typeof opening === 'string' && opening.trim() !== 'Untitled scene' ? opening.trim() : '';
   return {
-    tldr: typeof notes?.tldr === 'string' ? notes.tldr.trim() : '',
+    title: fix(title),
+    tldr: typeof notes?.tldr === 'string' ? fix(notes.tldr.trim()) : '',
     npcs: count(notes?.npcsIntroduced),
     locations: count(notes?.locationsVisited),
     threads: count(notes?.unresolvedThreads),
@@ -103,6 +116,10 @@ export function buildCampaignView({ db, campaignId }) {
   // about the two that are actually moving.
   const jobs = new Map(db.listPendingJobs().map((j) => [j.meeting_id, j]));
 
+  // Read once, for the one line of each session the list shows.
+  const rules = db.listCorrections(campaignId);
+  const fix = rules.length ? (s) => (s ? applyCorrections(s, rules) : s) : (s) => s;
+
   return {
     id: campaign.id,
     name: campaign.name,
@@ -115,6 +132,9 @@ export function buildCampaignView({ db, campaignId }) {
     // the current manager out of its own list.
     managerUserId: campaign.manager_user_id ?? null,
     output: campaign.output_mode ?? 'default',
+    // Whether a player here may choose not to be recorded, as whoever made
+    // the campaign answered it. See campaign/opt-out.js.
+    optOut: canOptOut(campaign),
     // Null in the row means nobody has said, which reads as the current
     // edition rather than as nothing — a table that has never been asked is
     // far more likely to be playing this year’s rules than none.
@@ -201,7 +221,7 @@ export function buildCampaignView({ db, campaignId }) {
         // Empty and failed is the one state with no way forward, so the list
         // can offer to throw it away — see discardSession.
         discardable: lines === 0 && m.status !== 'recording',
-        ...facetsOf(m.summary_json),
+        ...facetsOf(m.summary_json, fix),
       };
     }),
   };

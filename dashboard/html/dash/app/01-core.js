@@ -42,7 +42,7 @@ const view = {
   campaignId: null,
   tab: 'notes',         // notes | table | corrections | compendium | settings
   shelf: 'sessions',    // what the middle column lists: sessions | npcs | places | items
-  shelfPicking: true,   // the column showing the four rather than one of them
+  shelfPicking: false,  // the column showing the five shelves rather than one of them
   entry: null,          // the name last landed on in the list, as "<shelf>:<key>"
   meetingId: null,
   editing: null,        // the user id whose character name is being typed
@@ -60,6 +60,8 @@ const view = {
   picking: null,        // whose colour the picker is open for, a user id
   marking: false,       // the write-up is open for correcting, not reading
   markAt: null,         // which line the box is open on, as `<part> <index>`
+  newOptOut: 'yes',     // the new-campaign dialog's answer to whether players may opt out
+  moreTools: false,     // the write-up's second-rank buttons are out, on a phone
 };
 
 // Only one dialog is ever open. Kept in one place because every opener has to

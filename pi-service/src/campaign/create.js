@@ -23,7 +23,9 @@ export const MAX_CAMPAIGNS_PER_GUILD = 10;
 export const MAX_CAMPAIGNS_PER_MANAGER = 20;
 
 
-export function createCampaign({ db, cfg, guildId, userId, name }) {
+// `optOut` is whether a player may choose not to be recorded — see
+// campaign/opt-out.js. True unless the person making the campaign said no.
+export function createCampaign({ db, cfg, guildId, userId, name, optOut = true }) {
   const wanted = String(name ?? '').trim();
 
   if (!guildId) {
@@ -101,11 +103,19 @@ export function createCampaign({ db, cfg, guildId, userId, name }) {
   }
 
   const id = db.createCampaign(guildId, wanted, userId);
+  if (optOut === false) {
+    db.setCampaignOptOut(id, false);
+    // Whoever made it is at the table and has just answered for it, so their
+    // own row is written now rather than leaving the DM as the one person the
+    // DM's own campaign does not record.
+    if (userId) db.setConsent(id, userId, true);
+  }
 
   return {
     ok: true,
     id,
     name: wanted,
+    optOut: optOut !== false,
     guildId,
     folder: campaignFolder({ channel_name: wanted }, wanted),
   };

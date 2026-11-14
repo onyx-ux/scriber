@@ -674,6 +674,17 @@ function migrate(db) {
     console.log('[db] migrated: added campaigns.rules_edition');
   }
 
+  // Whether a player at this table may choose not to be recorded. Asked once,
+  // of whoever makes the campaign (2026-11-14). 1 is how every campaign worked
+  // until then and still the default: each player is asked, and may refuse or
+  // take it back. 0 means the person running the table answers for it —
+  // inviting somebody puts them on the roster as recorded, with no DM and no
+  // switch of their own. See campaign/opt-out.js for everything that reads it.
+  if (!campaignColumns.includes('opt_out')) {
+    db.exec(`ALTER TABLE campaigns ADD COLUMN opt_out INTEGER NOT NULL DEFAULT 1`);
+    console.log('[db] migrated: added campaigns.opt_out');
+  }
+
   // Who is at the table. Membership is what /join checks, so that a stranger
   // in a public server cannot start a recording of somebody else's game.
   //
@@ -1109,6 +1120,13 @@ function wrap(db) {
       return db
         .prepare(`UPDATE campaigns SET rules_edition = ?, updated_at = datetime('now') WHERE id = ?`)
         .run(edition ? String(edition) : null, campaignId).changes;
+    },
+
+    // See the note on campaigns.opt_out in the migrations.
+    setCampaignOptOut(campaignId, allowed) {
+      return db
+        .prepare(`UPDATE campaigns SET opt_out = ?, updated_at = datetime('now') WHERE id = ?`)
+        .run(allowed ? 1 : 0, campaignId).changes;
     },
 
     setCampaignOutput(campaignId, mode, channelId = null) {
@@ -2963,7 +2981,7 @@ function wrap(db) {
       const escaped = String(term).replace(/[\\%_]/g, (c) => `\\${c}`);
       return db
         .prepare(
-          `SELECT u.text, u.display_name, u.start_ms,
+          `SELECT u.text, u.display_name, u.user_id, u.start_ms,
                   m.id AS meeting_id, m.session_number, m.channel_name, m.started_at
              FROM utterances u
              JOIN meetings m ON m.id = u.meeting_id

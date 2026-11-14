@@ -1,4 +1,4 @@
-// dashboard/html/dash/app/07-tabs.js: The table, Corrections and Settings tabs, and the voice colours.
+// dashboard/html/dash/app/07-tabs.js: The table, Search, Corrections and Settings tabs, stepping between nights, and the voice colours.
 //
 // One of ten classic scripts that together are the dashboard, loaded in
 // order by index.html and sharing one global scope. Split out of a single
@@ -34,15 +34,29 @@ function rosterTab() {
   const waiting = roster.filter((p) => !p.consent.mayRecord);
   const total = roster.reduce((sum, p) => sum + p.lines, 0) || 1;
 
-  const heading = waiting.length
-    ? `${waiting.length === 1 ? 'One person' : `${waiting.length} people`} still to hear from`
-    : 'Everyone at this table has agreed';
+  // A table set up to record everyone on its roster — see campaign/opt-out.js
+  // on the bot. Nobody here was asked anything, so none of the words about
+  // agreeing, answering or DMs are true of it, and it gets its own.
+  const asks = detail.optOut !== false;
+
+  const heading = asks
+    ? (waiting.length
+      ? `${waiting.length === 1 ? 'One person' : `${waiting.length} people`} still to hear from`
+      : 'Everyone at this table has agreed')
+    : (waiting.length
+      ? `${waiting.length === 1 ? 'One person here is' : `${waiting.length} people here are`} not being recorded`
+      : 'Everyone at this table is recorded');
 
   return `
     <div class="pane-wide" style="padding-top:30px">
       <h1 class="display sm">${esc(heading)}</h1>
       <div class="say-2" style="font-size:15px;max-width:64ch">
-        ${waiting.length
+        ${!asks
+          ? `This campaign was set up to record everyone on its roster, without asking each of them. ${waiting.length
+              ? `${esc(listNames(waiting))} ${waiting.length === 1 ? 'has' : 'have'} been heard in the channel but ${waiting.length === 1 ? 'is' : 'are'} not on it, so ${waiting.length === 1 ? 'their microphone is' : 'their microphones are'} skipped until you add them.`
+              : 'Quill has not messaged any of them about it; telling the table the game is recorded is yours to do.'}
+             Taking somebody off with <code>/campaign remove</code> stops their microphone from that moment.`
+          : waiting.length
           ? `Quill records nobody who has not agreed. Until ${esc(listNames(waiting))} ${waiting.length === 1 ? 'answers' : 'answer'}, their microphones are skipped and the rest of the table is recorded as normal.`
           : 'Everyone here has said yes in a DM. Anyone who changes their mind can be removed with <code>/campaign remove</code>, and nothing of theirs is captured from that moment on.'}
       </div>
@@ -51,7 +65,7 @@ function rosterTab() {
         <div class="hd">
           <div>Player</div><div>Character</div>
           <div class="r">Lines</div><div class="r">Share</div>
-          ${waiting.length ? '<div class="r">Consent</div>' : ''}
+          ${waiting.length ? `<div class="r">${asks ? 'Consent' : 'Recorded'}</div>` : ''}
         </div>
         ${roster.map((p) => {
           const pct = Math.round((p.lines / total) * 100);
@@ -66,16 +80,16 @@ function rosterTab() {
             </span></div>
             ${waiting.length ? `
             <div class="r" style="display:flex;justify-content:flex-end;align-items:center;gap:10px">
-              ${consentCell(p)}
-              ${askable(p) ? `<button type="button" class="btn sm" data-act="roster/invite" data-campaign="${detail.id}"
-                data-user="${esc(p.userId)}">${p.consent.state === 'pending' ? 'Ask again' : 'Invite'}</button>` : ''}
+              ${asks ? consentCell(p) : `<span class="as-val ${p.consent.mayRecord ? 'agreed' : 'never'}">${p.consent.mayRecord ? 'recorded' : 'not on the roster'}</span>`}
+              ${(asks ? askable(p) : canManage() && !p.consent.mayRecord) ? `<button type="button" class="btn sm" data-act="roster/invite" data-campaign="${detail.id}"
+                data-user="${esc(p.userId)}">${!asks ? 'Add' : p.consent.state === 'pending' ? 'Ask again' : 'Invite'}</button>` : ''}
             </div>` : ''}
           </div>`;
         }).join('')}
       </div>
       ${roster.length ? '' : '<div class="quiet" style="padding:20px 0">Nobody at this table yet.</div>'}
-      ${canManage() ? invitePanel() : ''}
-      ${roster.some((p) => p.consent.withdrawn) ? `
+      ${canManage() ? invitePanel() + inviteLinkPanel() : ''}
+      ${asks && roster.some((p) => p.consent.withdrawn) ? `
         <div style="border-left:2px solid var(--edge);padding-left:16px;margin-top:26px;max-width:70ch">
           <div class="quiet">
             There is no control here to put someone back. If they want to be recorded again they run
@@ -108,10 +122,11 @@ const listNames = (people) => {
 // to save. A pasted id still works, for a nickname the search cannot match.
 function invitePanel() {
   const found = people.results;
+  const asks = detail.optOut !== false;
 
   return `
     <div style="margin-top:34px;max-width:760px">
-      <div class="cap" style="margin-bottom:12px">Ask someone new</div>
+      <div class="cap" style="margin-bottom:12px">${asks ? 'Ask someone new' : 'Add someone new'}</div>
       <form class="row-btns" data-people-search>
         <input class="in" id="people-q" name="query" style="flex:0 0 280px"
                placeholder="a Discord name, or a pasted user id" value="${esc(people.query)}"
@@ -136,15 +151,16 @@ function invitePanel() {
                 <div class="mono" style="font-size:11px;color:var(--dim);margin-top:2px">@${esc(m.username)}</div>
               </div>
               <div class="quiet">${already
-                ? (already.consent.mayRecord ? 'already agreed'
+                ? (already.consent.mayRecord ? (asks ? 'already agreed' : 'already on the roster')
+                   : !asks ? 'heard here, not on the roster'
                    : already.consent.withdrawn ? 'turned recording off themselves'
                    : already.consent.state === 'pending' ? 'asked, waiting'
                    : 'on the roster, not asked')
                 : 'not at this table yet'}</div>
-              <div class="r">${already?.consent.mayRecord || already?.consent.withdrawn
+              <div class="r">${already?.consent.mayRecord || (asks && already?.consent.withdrawn)
                 ? ''
                 : `<button type="button" class="btn sm go" data-act="roster/invite" data-campaign="${detail.id}"
-                     data-user="${esc(m.userId)}">Ask them</button>`}</div>
+                     data-user="${esc(m.userId)}">${asks ? 'Ask them' : 'Add them'}</button>`}</div>
             </div>`;
           }).join('')}
         </div>` : `<div class="quiet" style="margin-top:14px">
@@ -153,8 +169,11 @@ function invitePanel() {
         </div>`) : ''}
 
       <div class="quiet" style="margin-top:16px;max-width:70ch">
-        They get a DM explaining what is recorded, where it goes and how long it is kept, with the buttons to
-        agree or refuse. Nothing of theirs is captured until they say yes.
+        ${asks
+          ? `They get a DM explaining what is recorded, where it goes and how long it is kept, with the buttons to
+             agree or refuse. Nothing of theirs is captured until they say yes.`
+          : `They go straight onto the roster and are recorded from the next session. Quill sends them
+             nothing, so letting them know is yours to do.`}
       </div>
     </div>`;
 }
@@ -195,6 +214,311 @@ function characterCell(p, who) {
 // one setting on this bot purely about how a person is depicted, and the
 // only opinion worth having about it belongs to the person it depicts. The
 // picker is in the transcript legend now, on your own name and no other.
+
+// The other way onto a roster: one address for the whole table.
+//
+// It was only ever offered on the first-run screen, which a manager sees once.
+// A table that gained a player in month four had nowhere to ask for it, and
+// nothing anywhere said that a link was live or let anybody pull one — the
+// revoke action was written and tested and had no button. This is the button.
+//
+// `detail.inviteLink` is null when none is out and absent when the bot is too
+// old to say, and those are different panels: against an old bot there is
+// nothing true this could draw, so it draws nothing.
+function inviteLinkPanel() {
+  if (!detail || detail.inviteLink === undefined) return '';
+  const link = detail.inviteLink;
+  const table = detail.name || detail.label || 'this table';
+  const until = link?.expiresAt
+    ? new Date(link.expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long' })
+    : '';
+  const pull = `<button type="button" class="btn sm" data-act="invite/revoke" data-campaign="${detail.id}"
+    data-confirm="Revoke the invite link for ${esc(table)}? Anyone still holding it gets nothing.">Revoke</button>`;
+
+  return `
+    <div style="margin-top:34px;max-width:760px">
+      <div class="cap" style="margin-bottom:12px">Or hand out a link</div>
+      ${!link ? `
+        <button type="button" class="btn" data-act="invite/link" data-campaign="${detail.id}">Make an invite link</button>
+        <div class="quiet" style="margin-top:12px;max-width:70ch">
+          One address for the whole table, to paste wherever you already talk to each other. ${detail.optOut !== false
+            ? 'Each person who opens it is asked, for themselves, whether Quill may record them.'
+            : 'Each person who opens it is told this table records everyone, and joins on those terms or not at all.'}
+          It stops working after two weeks, or when you revoke it.
+        </div>` : link.url ? `
+        <div class="invite-live">
+          <code class="invite-link" data-key="invite-link">${esc(link.url)}</code>
+          <button type="button" class="btn sm go" data-copy-invite>Copy link</button>
+          ${pull}
+        </div>
+        <div class="quiet" style="margin-top:12px;max-width:70ch">
+          <span class="dot ok"></span> Live${until ? ` until ${esc(until)}` : ''}. Anyone holding it can join
+          ${esc(table)}${detail.optOut !== false
+            ? ', and each of them is asked for themselves whether Quill may record them.'
+            : '. They are told it records everyone at the table before they do.'}
+        </div>` : `
+        <div class="quiet" style="max-width:70ch;color:var(--amber)">
+          A link is live, but this bot has no web address set (<code>DASHBOARD_URL</code> in
+          <code>pi-service/.env</code>), so there is no address to show you.
+        </div>
+        <div class="row-btns" style="margin-top:12px">${pull}</div>`}
+    </div>`;
+}
+
+// ==========================================================================
+// From one night to the next
+// ==========================================================================
+//
+// The phone's ribbon said "3 of 4" and offered no way to reach 2 or 4 short of
+// opening the drawer and finding the night in a list. Two places now: a pair of
+// arrows on the ribbon, for wherever the column is not on screen, and a line at
+// the foot of the write-up, because the end of one night is exactly where
+// somebody reading back through a campaign wants the next.
+//
+// The list is newest first, so the EARLIER night is the one after this in it.
+// Earlier is on the left and later on the right, the way a book turns.
+
+const STEP_BACK = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <path d="M10 3 5 8l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const STEP_ON = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <path d="m6 3 5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+function nightSteps(list, at) {
+  const one = (to, word, glyph) => `
+    <button type="button" class="menu-btn step" ${to ? `data-step-session="${to.meetingId}"` : 'disabled'}
+            aria-label="${to ? `${word} night: ${esc(sessionName(to))}` : `No ${word.toLowerCase()} night`}"
+            title="${to ? `${esc(sessionName(to))}${to.title ? ` · ${esc(to.title)}` : ''}` : `No ${word.toLowerCase()} night`}">${glyph}</button>`;
+  return `<div class="ribbon-steps">${one(list[at + 1], 'Earlier', STEP_BACK)}${one(list[at - 1], 'Later', STEP_ON)}</div>`;
+}
+
+function nightTurn(s) {
+  const list = sessions();
+  const at = list.findIndex((x) => x.meetingId === s.meetingId);
+  if (at < 0 || list.length < 2) return '';
+  const one = (to, word, side) => (to ? `
+    <button type="button" class="turn ${side}" data-step-session="${to.meetingId}">
+      <span class="k">${word}</span>
+      <span class="t">${esc(sessionName(to))}${to.title ? ` · ${esc(to.title)}` : ''}</span>
+    </button>` : '<span></span>');
+  return `<nav class="night-turn measure" aria-label="Other sessions">
+    ${one(list[at + 1], '← Earlier', 'back')}${one(list[at - 1], 'Later →', 'on')}
+  </nav>`;
+}
+
+// A name the campaign met three times was written up three times, and the
+// summariser is told to describe who somebody is — so "The notary's clerk" came
+// back word for word under every night she appeared, and the shelf read as a
+// stutter. The first telling is kept, in the place it was first told; the run
+// of nights beside the name already says she came back.
+//
+// Folded the way names are, so a full stop or a capital the summariser dropped
+// on the second night does not make it a different sentence.
+function sameOnce(list) {
+  const seen = new Set();
+  return list.filter((x) => {
+    const key = foldName(String(x?.text ?? ''));
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ==========================================================================
+// Search
+// ==========================================================================
+//
+// One word, looked for in everything this campaign has. The transcript reader
+// could always search the transcript it had open, which is only useful once
+// you know which night it was — and "which night was it" is the question.
+//
+// Two halves, and who gets which is the same line the rest of the page draws.
+// The write-ups are searched here, in the browser, out of the notes already
+// read back for the shelves: anybody who can open the campaign can read all of
+// them, so searching them asks the bot for nothing. The transcripts are
+// searched by the bot (/search) and only for somebody who may open one.
+
+const hunt = {
+  query: '',        // what is in the box
+  asked: '',        // what the results on screen are for
+  busy: false,      // the transcripts are being searched
+  error: '',
+  lines: null,      // transcript lines; null is "not searched", [] is "nobody said it"
+  truncated: false,
+};
+
+function huntReset() {
+  hunt.query = ''; hunt.asked = ''; hunt.busy = false;
+  hunt.error = ''; hunt.lines = null; hunt.truncated = false;
+}
+
+const FIND_GLYPH = `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+  <circle cx="7" cy="7" r="4.6" stroke="currentColor" stroke-width="1.5"/>
+  <path d="m10.6 10.6 3.4 3.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+
+// The tab. A glyph with its word beside it, and on a phone the glyph alone:
+// a fifth word would put the strip on two rows for whoever runs the campaign.
+const findTab = () => `
+    <button class="tab find${view.tab === 'search' ? ' on' : ''}" data-tab="search"
+            aria-label="Search this campaign" title="Search this campaign">${FIND_GLYPH}<span class="lbl">Search</span>
+    </button>`;
+
+// The lists of a write-up, and what a line found in each is called.
+const HUNT_PARTS = [
+  ['partyDecisions', 'Decision'], ['unresolvedThreads', 'Thread'], ['followUps', 'Follow-up'],
+  ['npcsIntroduced', 'NPC'], ['locationsVisited', 'Place'], ['lootAndRewards', 'Loot'],
+  ['funnyMoments', 'Worth remembering'],
+];
+
+// Every line of every write-up that has the word in it, newest night first.
+function notesMatching(q) {
+  const needle = q.toLowerCase();
+  const nights = [];
+  for (const { session, notes: n } of [...(compendium?.story ?? [])].reverse()) {
+    const hits = [];
+    const look = (where, text) => {
+      const s = String(text ?? '');
+      if (s.toLowerCase().includes(needle)) hits.push({ where, text: s });
+    };
+    look('How it opens', n.tldr);
+    for (const scene of n.scenes ?? []) {
+      look('Scene', scene.title);
+      for (const point of scene.points ?? []) look(scene.title || 'Scene', point);
+    }
+    for (const [part, word] of HUNT_PARTS) for (const line of n[part] ?? []) look(word, line);
+    if (hits.length) nights.push({ session, hits });
+  }
+  return nights;
+}
+
+// The words either side of the one that was found. A summary can run to a
+// paragraph, and the whole of it with one word lit is a paragraph to read
+// again; this is the sentence it was in.
+function snippet(text, needle, span = 110) {
+  const s = String(text ?? '');
+  const at = s.toLowerCase().indexOf(needle);
+  if (at < 0) return esc(s);
+  const end = at + needle.length;
+  let from = Math.max(0, at - span);
+  let to = Math.min(s.length, end + span);
+  // Cut at a space, so the edges are whole words.
+  if (from > 0) { const gap = s.indexOf(' ', from); if (gap > -1 && gap < at) from = gap + 1; }
+  if (to < s.length) { const gap = s.lastIndexOf(' ', to); if (gap > end) to = gap; }
+  return `${from > 0 ? '…' : ''}${esc(s.slice(from, at))}<mark>${esc(s.slice(at, end))}</mark>${esc(s.slice(end, to))}${to < s.length ? '…' : ''}`;
+}
+
+const HUNT_SHOWN = 6;   // lines of one write-up before "and N more"
+
+function searchTab() {
+  const q = hunt.asked;
+  const needle = q.toLowerCase();
+  const scripts = cap('transcripts');
+  const reading = !compendium || compendium.campaignId !== view.campaignId || compendium.loading;
+  const nights = q && !reading && !compendium.error ? notesMatching(q) : [];
+  const written = nights.reduce((sum, x) => sum + x.hits.length, 0);
+
+  // Transcript lines arrive newest night first and in the order they were
+  // said, so consecutive runs are the nights.
+  const heard = [];
+  for (const line of hunt.lines ?? []) {
+    const last = heard[heard.length - 1];
+    if (last && last.meetingId === line.meetingId) last.lines.push(line);
+    else heard.push({ meetingId: line.meetingId, sessionNumber: line.sessionNumber, startedAt: line.startedAt, lines: [line] });
+  }
+
+  const row = (where, html) => `
+    <div class="ledger-row found"><span class="where">${esc(where)}</span><span class="thing">${html}</span></div>`;
+
+  const inNotes = !q ? '' : `
+    <div class="cap" style="margin-top:36px">In the write-ups${reading || !written ? '' : ` · ${plural(written, 'line')}`}</div>
+    ${reading ? '<div class="quiet" style="margin-top:12px">Reading back through the campaign…</div>'
+      : compendium.error ? `<div class="quiet" style="margin-top:12px">The write-ups did not read back — ${esc(compendium.error)}</div>`
+      : nights.length ? `<div class="ledger hunt">${nights.map(({ session, hits }) => `
+          ${nightRule(session)}
+          ${hits.slice(0, HUNT_SHOWN).map((h) => row(h.where, snippet(h.text, needle))).join('')}
+          ${hits.length > HUNT_SHOWN ? `<div class="quiet" style="padding:10px 0 2px 2px">and ${
+            n(hits.length - HUNT_SHOWN)} more in this write-up</div>` : ''}`).join('')}</div>`
+      : `<div class="quiet" style="margin-top:12px">No write-up mentions “${esc(q)}”.</div>`}`;
+
+  const inScripts = !q || !scripts ? '' : `
+    <div class="cap" style="margin-top:36px">In the transcripts${hunt.lines?.length
+      ? ` · ${hunt.truncated ? `the first ${n(hunt.lines.length)} lines` : plural(hunt.lines.length, 'line')}` : ''}</div>
+    ${hunt.busy ? '<div class="quiet" style="margin-top:12px">Looking through every transcript…</div>'
+      : hunt.error ? `<div class="quiet" style="margin-top:12px;color:var(--amber)">${esc(hunt.error)}</div>`
+      : heard.length ? `<div class="ledger hunt">${heard.map((g) => `
+          <div class="ledger-night" data-key="heard-${g.meetingId}">
+            <span class="n">${esc(sessionName(g))}</span>
+            <span class="d">${esc(longDate(g.startedAt))}</span>
+            <button type="button" class="btn sm ghost" data-transcript="${g.meetingId}"
+                    data-find="${esc(q)}">Open transcript</button>
+          </div>
+          ${g.lines.map((l) => row(`${clock(l.ms)} · ${l.speaker}`, snippet(l.text, needle, 150))).join('')}`).join('')}</div>
+          ${hunt.truncated ? `<div class="quiet" style="margin-top:14px">
+            There are more than these. Add a word to narrow it down.</div>` : ''}`
+      : hunt.lines ? `<div class="quiet" style="margin-top:12px">Nobody said “${esc(q)}” on the record.</div>`
+      : ''}`;
+
+  return `
+    <div class="pane-wide" style="padding-top:30px">
+      <h1 class="display sm">Find it in ${esc(detail.name || detail.label || 'this campaign')}</h1>
+      <div class="say-2" style="font-size:15px;max-width:64ch">
+        A name, a place, something somebody said. Quill looks through every write-up
+        ${scripts ? 'and every transcript ' : ''}this campaign has.
+      </div>
+      <form class="row-btns hunt-form" data-campaign-search style="margin-top:22px" role="search">
+        <input class="in" id="hunt-q" name="q" type="search" autocomplete="off" maxlength="80"
+               placeholder="what are you looking for?" value="${esc(hunt.query)}"
+               aria-label="Search this campaign">
+        <button class="btn go" type="submit" ${hunt.busy ? 'disabled' : ''}>${hunt.busy ? 'Looking…' : 'Search'}</button>
+        ${q ? '<button class="btn ghost" type="button" data-hunt-clear>Clear</button>' : ''}
+      </form>
+      ${!q && hunt.error ? `<div class="quiet" style="margin-top:12px;color:var(--brass-lit)">${esc(hunt.error)}</div>` : ''}
+      ${inNotes}
+      ${inScripts}
+    </div>`;
+}
+
+async function runHunt(raw) {
+  const q = String(raw ?? '').trim();
+  hunt.query = q;
+  hunt.error = '';
+  hunt.lines = null;
+  hunt.truncated = false;
+
+  if (q.length < 2) {
+    hunt.asked = '';
+    // Said even for an empty box: a Search button that does nothing at all
+    // when pressed reads as a broken one.
+    hunt.error = 'Type two letters or more.';
+    return paint();
+  }
+  hunt.asked = q;
+
+  // The write-ups come out of the same read the shelves use. Normally it has
+  // already happened, on opening the campaign; started here if it has not.
+  if (!compendium || compendium.campaignId !== view.campaignId) buildCompendium();
+  if (!cap('transcripts')) return paint();
+
+  const id = view.campaignId;
+  hunt.busy = true;
+  paint();
+  try {
+    const got = await get(`/search?campaign=${id}&q=${encodeURIComponent(q)}`);
+    // They searched again, or left, while this one was out.
+    if (view.campaignId !== id || hunt.asked !== q) return;
+    hunt.lines = got.lines ?? [];
+    hunt.truncated = Boolean(got.truncated);
+  } catch (err) {
+    if (view.campaignId !== id || hunt.asked !== q) return;
+    // A bot older than this page has no such route. The write-ups above are
+    // still a real answer, so say what is missing rather than calling it broken.
+    hunt.error = err.message === 'HTTP 404'
+      ? 'This bot is a version behind the page and cannot search transcripts yet. The write-ups above are everything it could look through.'
+      : `The transcripts could not be searched — ${err.message}.`;
+  }
+  hunt.busy = false;
+  paint();
+}
 
 // "brass-deep" as somebody would say it out loud.
 function voiceName(slug) {
@@ -469,6 +793,11 @@ function settingsTab() {
         ` : ''}
 
         <div class="cap" style="margin:32px 0 6px">Recording</div>
+        ${row('Players can opt out',
+          detail.optOut !== false
+            ? 'Each player is asked in a DM, and can refuse or stop later'
+            : 'Everyone on the roster is recorded, and Quill sends them nothing about it',
+          `<span class="val">${detail.optOut !== false ? 'yes' : 'no'}</span>`)}
         ${row('Ask me before summarising', 'Nothing is posted until you release it',
           `<span class="val">${s.requireApproval ? 'on' : 'off'}</span>`)}
         ${row('Transcribe automatically', 'Only inside the window, so the PC is free while you work',
@@ -490,25 +819,20 @@ function settingsTab() {
       </div>
 
       <div class="aside">
-        <div class="card good">
-          <div class="cap" style="color:var(--sage-lit)">Audio</div>
-          <h4>Deleted once transcribed</h4>
-          <div class="quiet" style="color:var(--text-2)">
-            Quill keeps the transcript and the notes. The recording itself never leaves your network and is
-            not kept, and this cannot be turned off.
-          </div>
-        </div>
+        ${audioCard()}
+        ${detail.optOut !== false ? '' : `
         <div class="card">
-          <div class="cap">Consent</div>
-          <div style="display:flex;flex-direction:column;gap:9px;margin-top:12px">
-            <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Agreed</span><span class="mono agreed">${agreed}</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Asked, waiting</span><span class="mono waiting">${asked}</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Never asked</span><span class="mono never">${never}</span></div>
+          <div class="cap" style="color:var(--amber)">Recording · no opt-out</div>
+          <h4>Everyone on the roster</h4>
+          <div class="quiet" style="margin-top:8px;color:var(--text-2)">
+            This campaign was made without an opt-out. Adding somebody records them from the next session;
+            Quill sends them no DM and gives them no switch, so telling the table is yours to do.
+            ${n(agreed)} ${agreed === 1 ? 'person' : 'people'} on the roster${roster.length - agreed
+              ? `, and ${n(roster.length - agreed)} heard in the channel who ${roster.length - agreed === 1 ? 'is' : 'are'} not` : ''}.
           </div>
-          ${asked + never ? `<button class="btn wide" style="margin-top:16px" data-tab="table">
-            Ask the ${asked + never === 1 ? 'one who has not answered' : `${asked + never} who have not answered`}
-          </button>` : ''}
-        </div>
+          ${roster.length - agreed ? `<button class="btn wide" style="margin-top:16px" data-tab="table">Go to the table</button>` : ''}
+        </div>`}
+        ${detail.optOut !== false ? consentCard(agreed, asked, never) : ''}
         <div class="card">
           <div class="cap">Reading it elsewhere</div>
           <div class="quiet" style="margin-top:10px">
@@ -527,6 +851,61 @@ function settingsTab() {
             Delete ${esc(detail.name || detail.label || 'this campaign')}
           </button>
         </div>` : ''}
+      </div>
+    </div>`;
+}
+
+// Who has answered, at a table where each player is asked. Not drawn at all
+// where nobody is: a tally of agreements nobody was asked for is three zeroes
+// under a heading that is not true of that table.
+function consentCard(agreed, asked, never) {
+  return `
+        <div class="card">
+          <div class="cap">Consent · players choose</div>
+          <div style="display:flex;flex-direction:column;gap:9px;margin-top:12px">
+            <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Agreed</span><span class="mono agreed">${agreed}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Asked, waiting</span><span class="mono waiting">${asked}</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:13.5px"><span>Never asked</span><span class="mono never">${never}</span></div>
+          </div>
+          ${asked + never ? `<button class="btn wide" style="margin-top:16px" data-tab="table">
+            Ask the ${asked + never === 1 ? 'one who has not answered' : `${asked + never} who have not answered`}
+          </button>` : ''}
+        </div>`;
+}
+
+// What this install does with a recording.
+//
+// It used to be a fixed green card reading "Deleted once transcribed … never
+// leaves your network and is not kept, and this cannot be turned off", which
+// several settings on the Pi make untrue. The sentences come from the bot now
+// (campaign/audio-facts.js), built from the same configuration the behaviour
+// is, and they are the ones the invitation DM and the join screen show a
+// player — so what a manager reads here is what their table was told.
+//
+// Green only when nothing leaves the bot's own machine. A card that is the
+// colour of "all is well" while describing an upload to Google would be the
+// old card's mistake made again in a different font.
+function audioCard() {
+  const a = detail?.audio;
+  // A bot older than this page does not say. Nothing true can be drawn, so
+  // nothing is — rather than the old promise.
+  if (!a) return '';
+  const local = !a.cloudTranscribe && !a.driveAudio;
+  const head = a.retentionDays > 0
+    ? `Deleted from the bot after ${plural(a.retentionDays, 'day')}`
+    : 'Kept until you delete it';
+  return `
+    <div class="card${local ? ' good' : ''}">
+      <div class="cap"${local ? ' style="color:var(--sage-lit)"' : ''}>Audio</div>
+      <h4>${head}</h4>
+      <ul class="facts-list">
+        ${(a.lines ?? []).map((line) => `<li>${esc(line)}</li>`).join('')}
+      </ul>
+      <div class="quiet" style="margin-top:12px">
+        ${detail.optOut !== false
+          ? 'Each player is shown these same lines before they agree.'
+          : 'Nobody at this table is sent these lines. They are here so you can tell them.'}
+        Set in <code>pi-service/.env</code> on the Pi.
       </div>
     </div>`;
 }

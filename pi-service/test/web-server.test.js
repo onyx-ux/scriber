@@ -240,6 +240,64 @@ test('notes are readable over HTTP, and an unknown session is a 404', async (t) 
   assert.equal((await fetch(`${base}/notes?meeting=9999&token=sesame`)).status, 404);
 });
 
+// --- what the session list and the search were given, 2026-11-14 ---
+
+test('a session in the list carries what the night was called', async (t) => {
+  const { db, base, campaignId } = await serving(t, { statusToken: 'sesame' });
+  const { meetingId } = parked(db, campaignId);
+  db.addCorrection(campaignId, 'Vecks', 'Vex');
+  db.setSummary(meetingId, {
+    tldr: 'Vecks opened the door.',
+    scenes: [{ title: 'Vecks at the door', points: ['It opened.'] }],
+  });
+
+  const view = await (await fetch(`${base}/campaign?id=${campaignId}&token=sesame`)).json();
+  // Spelled the way the write-up it opens will spell it.
+  assert.equal(view.sessions[0].title, 'Vex at the door');
+  assert.equal(view.sessions[0].tldr, 'Vex opened the door.');
+
+  // A scene the summariser could not name is not a name for the night.
+  db.setSummary(meetingId, { tldr: 'x', scenes: [{ title: 'Untitled scene', points: ['It opened.'] }] });
+  const again = await (await fetch(`${base}/campaign?id=${campaignId}&token=sesame`)).json();
+  assert.equal(again.sessions[0].title, '');
+});
+
+test('a word is searched for across a campaign, and only that campaign', async (t) => {
+  const { db, base, campaignId } = await serving(t, { statusToken: 'sesame' });
+  const { meetingId } = parked(db, campaignId);
+  const elsewhere = db.createCampaign('guild-2', 'Other', 'dm-2');
+  parked(db, elsewhere);
+
+  const res = await fetch(`${base}/search?campaign=${campaignId}&q=DOOR&token=sesame`);
+  assert.equal(res.status, 200);
+  const found = await res.json();
+  assert.equal(found.truncated, false);
+  assert.deepEqual(found.lines.map((l) => [l.meetingId, l.speaker, l.text]),
+    [[meetingId, 'Matt', 'we open the door']], 'one line, from this table and not the other');
+
+  assert.deepEqual((await (await fetch(`${base}/search?campaign=${campaignId}&q=dragon&token=sesame`)).json()).lines, []);
+  assert.equal((await fetch(`${base}/search?campaign=${campaignId}&q=d&token=sesame`)).status, 400, 'one letter is most of a campaign');
+  assert.equal((await fetch(`${base}/search?campaign=9999&q=door&token=sesame`)).status, 404);
+  assert.equal((await fetch(`${base}/search?campaign=${campaignId}&q=door`)).status, 401,
+    'and it is behind the same token as the transcripts it reads');
+});
+
+test('a live invite link rides on the campaign for whoever could have made it', async (t) => {
+  const { base, campaignId } = await serving(t, { statusToken: 'sesame', dashboardUrl: 'https://quill.example' });
+  const read = async () => (await (await fetch(`${base}/campaign?id=${campaignId}&token=sesame`)).json()).inviteLink;
+
+  assert.equal(await read(), null, 'none is out');
+
+  const made = await (await post(base, '/actions/invite/link?token=sesame', { campaignId })).json();
+  assert.equal(made.ok, true);
+  assert.match(made.url, /^https:\/\/quill\.example\/app\/\?join=/);
+  assert.match(made.message, /ready to copy/);
+  assert.equal((await read()).url, made.url, 'and the page is told the same address the press was');
+
+  await post(base, '/actions/invite/revoke?token=sesame', { campaignId });
+  assert.equal(await read(), null);
+});
+
 // --- the sweep ---
 
 // store/db.js has always said the model usage log was "swept with the auth

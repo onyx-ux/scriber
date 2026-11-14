@@ -173,6 +173,9 @@ export function scopeCampaign(view, viewer) {
     guildId: view.guildId,
     channel: view.channel,
     claimed: view.claimed,
+    // To everybody at the table, because it is a fact about them: whether
+    // being here means being recorded.
+    optOut: view.optOut !== false,
     // Only to somebody who could act on it. To everybody else "who runs this"
     // is a name, which the roster already gives them, and an id, which it does
     // not — see the roster cut below.

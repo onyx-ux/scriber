@@ -19,11 +19,9 @@
 // signed in a year and three hundred events ago would be greeted as new. See
 // countSignIns() in store/db.js.
 //
-// TODO: the invite link is only offered here, on a screen somebody sees once.
-// A table that gains a player in month four has nowhere to go and ask for one,
-// and nothing anywhere shows the manager that a live link exists or lets them
-// pull it — invite/revoke is written and tested and has no button. Both belong
-// on the campaign's own table tab.
+// The invite link is also on the campaign's own table tab now (2026-11-14),
+// with the button that pulls it — see inviteLinkPanel() in 07-tabs.js. It used
+// to be offered only here, on a screen somebody sees once.
 //
 // Why a screen at all, when the dashboard already has firstRun(): firstRun is
 // about the INSTALL — no campaigns exist yet, said to whoever is looking. This
@@ -64,6 +62,9 @@ const welcome = {
   name: '',
   guildId: null,
   campaignId: null,  // it exists once this is set, and nothing here can unmake it
+  optOut: true,      // whether a player at the new table may choose not to be recorded
+  left: false,       // turned a table down because it records everyone at it
+  madeAs: '',        // the name it was made under, so a corrected one can be told from the same one
   busy: false,       // a create, a search or an ask is in flight
   query: '',
   found: null,       // roster/search results; null is "not searched", [] is "nobody"
@@ -214,13 +215,28 @@ function welcomeNamed(form) {
   const servers = status?.canCreateIn ?? [];
   const go = form.querySelector('button[type=submit]');
 
+  // Back here from the roster, which means the table already exists and this
+  // is a correction to its name rather than a second table. See welcomeBack.
+  if (welcome.campaignId) return welcomeRename();
+
+  // One thing is settled before the table exists, because it cannot sensibly
+  // be settled after: whether a player there may choose not to be recorded.
+  welcomeGo(go, () => { welcome.step = 'optout'; });
+}
+
+// The answer to that, and then on to making the table.
+function welcomeOptOut(value, fromEl) {
+  if (welcome.busy || welcome.burning) return;
+  welcome.optOut = value !== 'no';
+
+  const servers = status?.canCreateIn ?? [];
   // Which Discord is only a question when there is more than one answer.
   if (servers.length > 1 && !welcome.guildId) {
-    welcomeGo(go, () => { welcome.step = 'where'; });
+    welcomeGo(fromEl, () => { welcome.step = 'where'; });
     return;
   }
   welcome.guildId = welcome.guildId || servers[0]?.id || null;
-  welcomeCreate(go);
+  welcomeCreate(fromEl);
 }
 
 // The table gets made while the page burns.
@@ -239,7 +255,9 @@ async function welcomeCreate(fromEl) {
   welcome.busy = true;
   welcomeRedraw();
 
-  const pending = send('campaign/create', { name: welcome.name, guildId: welcome.guildId });
+  const pending = send('campaign/create', {
+    name: welcome.name, guildId: welcome.guildId, optOut: welcome.optOut ? 'yes' : 'no',
+  });
 
   await new Promise((done) => {
     const block = document.querySelector('.thr-block');
@@ -253,6 +271,7 @@ async function welcomeCreate(fromEl) {
 
   if (payload?.campaignId) {
     welcome.campaignId = payload.campaignId;
+    welcome.madeAs = welcome.name;
     welcome.query = '';
     welcome.found = null;
     welcome.note = '';
@@ -270,6 +289,99 @@ async function welcomeCreate(fromEl) {
   welcomeKey = null;
   renderScreen();
 }
+
+// --- going back a step -----------------------------------------------------
+//
+// There was no way back for the first two months of this screen: every move
+// burns the page, and a burnt page has nowhere to return to. The cost of that
+// landed on the one person least able to shrug it off — a DM who mistyped the
+// name of their campaign on the first screen they ever saw, and had to finish
+// the book and go and find Rename in a dashboard they had not met yet.
+//
+// So the page is written again rather than un-burnt. Going back is not a
+// fire, because nothing was chosen; the pen simply asks the earlier question
+// a second time.
+//
+// Where each step goes back to, and what the way back is called. Nothing from
+// the first question, which has nothing before it, and nothing from an ending,
+// which is the far side of something that has already been done.
+function thrBack() {
+  switch (welcome.step) {
+    case 'q2': return { to: 'q1', say: 'Back a step' };
+    // Reached from the roster to fix the name; the way out of that is forward.
+    case 'name': return welcome.campaignId ? { to: 'roster', say: 'Leave the name as it is' } : { to: 'q2', say: 'Back a step' };
+    case 'optout': return { to: 'name', say: 'Back a step' };
+    case 'where': return { to: 'optout', say: 'Back a step' };
+    // The table exists by now, and nothing here unmakes it. What can still be
+    // put right is the thing most likely to be wrong, which is what it is called.
+    case 'roster': return { to: 'name', say: 'Change the name' };
+    case 'join': return { to: 'q1', say: 'Back a step' };
+    case 'agree': return { to: 'join', say: 'Back a step' };
+    // Somebody already at this table was never asked the question, so there is
+    // no question to go back to.
+    case 'seat': return { to: welcome.invite?.alreadyIn ? 'join' : 'agree', say: 'Back a step' };
+    default: return null;
+  }
+}
+
+function welcomeBack() {
+  if (welcome.busy || welcome.burning) return;
+  const to = thrBack()?.to;
+  if (!to) return;
+  if (welcome.writing) welcomeFinish();
+
+  welcome.note = '';
+  // Each answer is forgotten on the way back past its question, so the step
+  // being returned to is asked fresh rather than drawn already answered.
+  if (to === 'q1') { welcome.role = null; welcome.here = null; }
+  if (to === 'q2') welcome.here = null;
+  if (to === 'name' && !welcome.campaignId) welcome.guildId = null;
+  if (to === 'optout') { welcome.guildId = null; welcome.optOut = true; }
+  if (to === 'roster') welcome.name = welcome.madeAs || welcome.name;
+  if (to === 'join') { welcome.invite = null; welcome.recorded = null; }
+  // A decline has already been written down by this point — see welcomeAgree —
+  // and it stays written down until they answer again. Going back to change a
+  // no into a yes sends the yes; going back and closing the tab leaves the no.
+  if (to === 'agree') welcome.recorded = null;
+
+  welcome.step = to;
+  welcomeKey = null;
+  renderScreen();
+}
+
+// The name, corrected. The same action the Settings tab's Rename uses, which
+// also moves the folder the notes are filed in — so there is nothing left
+// over from the first spelling.
+async function welcomeRename() {
+  if (welcome.name === welcome.madeAs) {
+    welcome.step = 'roster';
+    welcomeKey = null;
+    renderScreen();
+    return;
+  }
+
+  welcome.busy = true;
+  welcomeRedraw();
+  const payload = await thrPost('campaign/rename', { campaignId: welcome.campaignId, name: welcome.name });
+  welcome.busy = false;
+
+  if (!payload || payload.ok === false) {
+    welcome.note = thrPlain(payload?.message) || 'That did not go through. Try it again.';
+    welcomeRedraw();
+    return;
+  }
+
+  welcome.name = payload.name || welcome.name;
+  welcome.madeAs = welcome.name;
+  status = await getStatus().catch(() => status);
+  welcome.step = 'roster';
+  welcomeKey = null;
+  renderScreen();
+}
+
+// A refusal written for Discord, read on a page that is not Discord: the
+// warning sign and the asterisks are markup there and litter here.
+const thrPlain = (message) => String(message ?? '').replace(/^⚠️\s*/, '').replace(/\*\*/g, '').trim();
 
 // --- asking the rest of the table ------------------------------------------
 
@@ -420,6 +532,17 @@ function thrToken(raw) {
 // being written down.
 function welcomeAgree(value, fromEl) {
   if (welcome.burning) return;
+
+  // Not joining a table that records everyone. Nothing is sent: there is no
+  // decline to put on file for a table they are not at, and the person who
+  // made the link is not told who opened it and walked away.
+  if (value === 'leave') {
+    welcome.left = true;
+    welcome.recorded = null;
+    thrForgetToken();
+    welcome.token = '';
+    return welcomeGo(fromEl, () => { welcome.step = 'close'; });
+  }
   welcome.recorded = value === 'yes';
 
   // A decline is written down HERE, before the page burns and before the name
@@ -655,12 +778,19 @@ function thrLines() {
       'Let me be the Lorekeeper’s assistant, then.',
       'Has Quill joined you in your Discord?',
     ];
-    case 'name': return [
+    case 'name': return welcome.campaignId ? [
+      'A slip of the pen, then.',
+      'What should the story be called?',
+    ] : [
       'Then we begin a new one.',
       'What is the story called?',
     ];
-    case 'where': return [
+    case 'optout': return [
       `${welcome.name}, then.`,
+      'May a player choose not to be recorded?',
+    ];
+    case 'where': return [
+      'So noted.',
       'Which Discord is it told in?',
     ];
     case 'roster': return [
@@ -674,7 +804,10 @@ function thrLines() {
       'Then a story is already being told without you.',
       'Show me the invitation you were sent.',
     ];
-    case 'agree': return [
+    case 'agree': return welcome.invite?.optOut === false ? [
+      `${thrJoining()} is expecting you.`,
+      'Every voice at that table is written down. Will you sit at it?',
+    ] : [
       `${thrJoining()} is expecting you.`,
       'Quill writes down every voice at that table. Yours as well?',
     ];
@@ -702,6 +835,13 @@ function thrEndLines() {
   // person cannot see anywhere else, and a screen that swallowed it would leave
   // them unsure whether it landed. Stated as the fact it is, with no second ask
   // and nothing to press that changes it.
+  // Turned down a table that records everyone at it. Nothing was sent, and
+  // the ending says so, because "did that do anything" is the whole question.
+  if (welcome.left) return [
+    'Then that table goes on without you.',
+    'Nothing of yours was kept, and nobody was told.',
+  ];
+
   if (welcome.recorded === false) return [
     'Then you are at the table, and not in the book.',
     'Play on — nothing of yours is kept.',
@@ -750,6 +890,7 @@ function thrAfter() {
     ]);
     case 'q2': return thrChoices([{ v: 'yes', t: 'It has.' }, { v: 'no', t: 'Not yet.' }]);
     case 'name': return thrNameField();
+    case 'optout': return thrOptOut();
     case 'where': return thrChoices(
       (status?.canCreateIn ?? []).map((g) => ({ v: g.id, t: g.name })), 'data-thr-where'
     );
@@ -821,11 +962,52 @@ function thrTokenField() {
 // than written as a promise — the retention line comes from the same config the
 // deleting is driven by. A sentence here that is merely aspirational is a lie
 // told at the exact moment somebody is deciding whether to trust the thing.
+// Whether players at the new table may opt out. Two answers and what each one
+// sets in motion, in the same small print the joining road uses for its terms
+// — and for the same reason: this is the one question on the making road with
+// a consequence for people who are not in the room to hear it asked.
+function thrOptOut() {
+  return `
+    ${thrChoices([
+      { v: 'yes', t: 'They may. Ask each of them.' },
+      { v: 'no', t: 'No. Everyone at the table is recorded.' },
+    ], 'data-thr-optout')}
+    <ul class="thr-terms">
+      <li><b>Ask each of them</b> — Quill sends every player you invite a DM, records nobody who has not said yes, and lets anyone stop later.</li>
+      <li><b>Everyone is recorded</b> — whoever you add is on the roster and recorded. Quill sends them nothing and gives them no switch, so telling them is yours to do.</li>
+      <li>This is decided once, here.</li>
+    </ul>`;
+}
+
 function thrTerms() {
+  // The bot's own sentences about what happens to a recording, when it sends
+  // them — see campaign/audio-facts.js. The two fixed lines below them are
+  // what an older bot is described by, and describe an install that does
+  // nothing else with audio.
+  const told = welcome.invite?.audio?.lines;
+  const audioTerms = told?.length
+    ? told.map((line) => `<li>${esc(line)}</li>`).join('')
+    : null;
   const days = welcome.invite?.retentionDays ?? 0;
   const kept = days > 0
     ? `Your recording is deleted after <b>${days} day${days === 1 ? '' : 's'}</b> — long enough to transcribe it and fix mistakes.`
     : 'Your recording is kept until the person running the bot deletes it.';
+
+  // A table set up to record everyone at it. There is no "join, but leave me
+  // out" here, so the second answer is not joining — and the terms say what is
+  // different about this table rather than promising a switch it does not have.
+  if (welcome.invite?.optOut === false) return `
+    ${thrChoices([
+      { v: 'yes', t: 'Write me down.' },
+      { v: 'leave', t: 'Then I will not join.' },
+    ], 'data-thr-agree')}
+    <ul class="thr-terms">
+      <li>This table records <b>everyone who sits at it</b>. Whoever runs it set it up that way, so there is no joining it unrecorded.</li>
+      <li>Quill records you <b>only while it is in the voice channel</b>. It never speaks.</li>
+      ${audioTerms ?? `<li>Your audio becomes text on the machine running this bot. <b>That text — not your voice</b> — is what goes to an AI service to be written up.</li>
+      <li>${kept}</li>`}
+      <li>There is <b>no switch to turn it off later</b>. Whoever runs the table can take you off it, and that stops it.</li>
+    </ul>`;
 
   return `
     ${thrChoices([
@@ -834,8 +1016,8 @@ function thrTerms() {
     ], 'data-thr-agree')}
     <ul class="thr-terms">
       <li>Quill records you <b>only while it is in the voice channel</b>. It never speaks.</li>
-      <li>Your audio becomes text on the machine running this bot. <b>That text — not your voice</b> — is what goes to an AI service to be written up.</li>
-      <li>${kept}</li>
+      ${audioTerms ?? `<li>Your audio becomes text on the machine running this bot. <b>That text — not your voice</b> — is what goes to an AI service to be written up.</li>
+      <li>${kept}</li>`}
       <li>You can change your mind any time with <b>/campaign consent</b>, without asking anyone. That stops future recording; sessions already written up stay as they are.</li>
     </ul>`;
 }
@@ -944,7 +1126,7 @@ function thrEnd() {
   // recorded, and has been told in the line above that they are not in the
   // book. Stamping them into it on the next line would be the screen
   // contradicting itself in the space of two sentences.
-  const stamp = welcome.recorded === false ? '' : `
+  const stamp = welcome.recorded === false || welcome.left ? '' : `
     <div class="thr-entry">
       <p class="thr-entry-name" data-w>${esc(me?.username || 'you')}</p>
       <p class="thr-entry-cap">first entry &middot; ${esc(today)}</p>
@@ -982,7 +1164,9 @@ function welcomeScreen() {
           </svg>
         </span>
       </div>
-      <p class="thr-skip"><button type="button" data-thr-skip>Skip this and go to the dashboard</button></p>
+      <p class="thr-skip">${thrBack() ? `<button type="button" data-thr-back>${esc(thrBack().say)}</button>
+        <span class="sep" aria-hidden="true">·</span>` : ''}
+        <button type="button" data-thr-skip>Skip this and go to the dashboard</button></p>
     </div>`;
 }
 
@@ -1201,164 +1385,3 @@ function welcomeFinish() {
   // it left open would be a strange way to wait for an answer.
   sheet?.querySelector('.thr-in')?.focus({ preventScroll: true });
 }
-
-function renderScreen() {
-  const el = $('screen');
-
-  const arriving = Date.now() < entersUntil ? 'arriving' : '';
-
-  // The threshold comes before everything, including the gate: somebody who
-  // has just signed in for the first time gets this screen and no dashboard
-  // behind it. Drawn once per step rather than on every poll — the writing is
-  // in the DOM and a five-second repaint would start it over.
-  if (welcome.open) {
-    document.body.classList.remove('gate-open');
-    document.body.classList.add('thr-open');
-    const key = `thr-${welcome.step}`;
-    if (welcomeKey !== key) {
-      welcomeKey = key;
-      el.className = '';
-      morph(el, welcomeScreen());
-      // After the markup has actually landed, and through whichever of the two
-      // exists — the render harness has no frames to wait for.
-      if (window.requestAnimationFrame) window.requestAnimationFrame(welcomeWrite);
-      else setTimeout(welcomeWrite, 0);
-    }
-    return;
-  }
-  document.body.classList.remove('thr-open');
-
-  // Nobody home. Shown instead of the app rather than over it: a dashboard
-  // that renders its chrome and then refuses every request is a worse way to
-  // learn you are signed out than being asked to sign in.
-  // Sign-in is shown when this install demands it, and also when somebody
-  // asks for it. Without the second case there was no way to sign in at all
-  // while DASHBOARD_REQUIRE_LOGIN was off — which made the one safe order
-  // for turning it on (sign in first, so you cannot lock yourself out)
-  // impossible to follow.
-  // Toggled here rather than in paint() so the class and the screen can never
-  // disagree: whatever this function decides to draw is what the body is
-  // dressed for. body.gate-open folds away the top bar and turns the page to
-  // paper, because the gate is a full-page takeover in the landing
-  // page's world rather than a card floating in the dark tool.
-  const gateOpen = Boolean(me && !me.signedIn && (me.loginRequired || view.signingIn));
-  document.body.classList.toggle('gate-open', gateOpen);
-
-  if (gateOpen) {
-    el.className = '';
-    // Turned away is its own screen, not a red line under the sign-in button.
-    // Offering Continue with Discord again to somebody Discord has already
-    // vouched for is a loop, and the loop is what makes it read as a fault.
-    morph(el, view.notInvited ? notInvitedScreen() : signInScreen());
-    return;
-  }
-
-  // The desk. Answered before everything else because it is where the page
-  // starts and where the quill goes back to.
-  if (view.screen === 'desk' && status?.campaigns?.length) {
-    el.className = arriving;
-    morph(el, deskScreen());
-    return;
-  }
-
-  // The ledger of tables, one step in from the desk.
-  if (view.screen === 'campaigns' && status?.campaigns?.length) {
-    el.className = arriving;
-    morph(el, campaignsScreen());
-    return;
-  }
-
-  if (view.screen === 'transcript') { el.className = 'split'; morph(el, transcriptScreen()); return; }
-  if (view.screen === 'servers')    { el.className = arriving; morph(el, serversScreen()); return; }
-  if (view.screen === 'usage')      { el.className = arriving; morph(el, usageScreen()); return; }
-
-  if (status && !status.campaigns?.length) { el.className = ''; morph(el, firstRun()); return; }
-
-  // The campaign column is a column on a wide window, folded away when its
-  // reader asks, and a drawer over the page on a narrow one. Whichever way it
-  // is not showing, the ribbon over the pane is the way back to it.
-  const wide = railWide();
-  const folded = wide && railFolded();
-  const drawer = !wide && view.drawer;
-  document.body.classList?.toggle?.('drawer-lock', drawer);
-  el.className = `split ${arriving}${folded ? ' rail-folded' : ''}${drawer ? ' drawer-open' : ''}`.trim();
-  morph(el, `
-    <div class="sessions" id="campaign-column"${wide ? '' : ` role="dialog" aria-label="This campaign"${drawer ? ' aria-modal="true"' : ' inert'}`}>
-      ${columnBar(wide)}
-      <div class="shelf-slider ${view.shelfPicking ? 'picking' : 'picked'}">
-        <div class="shelf-page chooser" ${view.shelfPicking ? '' : 'aria-hidden="true"'}>
-          ${shelfChooser()}
-        </div>
-        <div class="shelf-page list" ${view.shelfPicking ? 'aria-hidden="true"' : ''}>
-          ${shelfHeader()}
-          ${columnList()}
-          ${view.shelf === 'sessions' && cap('machinery') ? `
-            <div class="foot">
-              <button class="btn wide" data-import>${detail?.sessions?.length ? 'Import a recording' : 'Import a recording instead'}</button>
-            </div>` : ''}
-        </div>
-      </div>
-    </div>
-    ${wide ? '' : '<div class="drawer-scrim" data-rail-close aria-hidden="true"></div>'}
-    <div class="pane">
-      ${ribbon(wide, folded, drawer)}
-      <div class="pane-main${view.tab === 'notes' && view.shelf === 'sessions' && marking() ? ' marking' : ''}">
-        ${tabsBar()}
-        ${paneBody()}
-      </div>
-      ${view.tab === 'notes' && view.shelf === 'sessions' ? factsRail() : ''}
-    </div>`);
-}
-
-// --- the first run ---------------------------------------------------------
-
-function firstRun() {
-  const h = status?.health ?? {};
-  return `
-    <div class="center">
-      <div class="kicker">Nothing has been recorded yet</div>
-      <h1 class="display" style="font-size:44px;margin-top:18px">Quill is on your server and listening for a table.</h1>
-      <div class="say-2" style="font-size:16px">Four things to do once, then it runs on its own.</div>
-      <div class="steps" style="margin-top:36px">
-        <div>
-          <span class="mark done">✓</span>
-          <div style="flex:1">
-            <div class="what">Quill is signed in${status?.servers?.length ? ` on ${plural(status.servers.length, 'server')}` : ''}</div>
-            <div class="sub">${esc(status?.bot?.user || 'connecting…')}${status?.bot?.uptimeMs ? ` · ${uptime(status.bot.uptimeMs)}` : ''}</div>
-          </div>
-        </div>
-        <div class="now">
-          <span class="mark" style="border-color:var(--brass);color:var(--brass)">2</span>
-          <div style="flex:1">
-            <div class="what" style="font-weight:500">Make a campaign</div>
-            <div class="sub" style="font-family:var(--sans);font-size:13px">One per game. It holds the roster, the corrections and every session.</div>
-          </div>
-          ${canCreate()
-            ? `<button type="button" class="btn sm go" data-new-campaign>New campaign</button>`
-            : `<code>/campaign create</code>`}
-        </div>
-        <div>
-          <span class="mark">3</span>
-          <div style="flex:1">
-            <div class="what" style="color:var(--dim)">Point it at a voice channel</div>
-            <div class="sub" style="font-family:var(--sans);font-size:13px">Run it from the channel you are playing in. Quill records until somebody ends the session with <code>/campaign leave</code>.</div>
-          </div>
-          <code>/campaign join</code>
-        </div>
-        <div>
-          <span class="mark">4</span>
-          <div style="flex:1">
-            <div class="what" style="color:var(--dim)">Ask the table</div>
-            <div class="sub" style="font-family:var(--sans);font-size:13px">Nobody is recorded until they say yes in a DM.</div>
-          </div>
-          <code>/campaign invite</code>
-        </div>
-      </div>
-      <div class="quiet" style="margin-top:26px">
-        The transcriber runs on your own machine —
-        ${h.whisperServer === false ? 'Quill cannot reach it right now.' : h.whisperServer ? 'Quill can reach it.' : 'Quill has not checked yet.'}
-        Audio never leaves your network.
-      </div>
-    </div>`;
-}
-

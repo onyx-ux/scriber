@@ -109,6 +109,10 @@ function notesAsMarkdown() {
 document.addEventListener('click', async (event) => {
   const t = event.target;
 
+  // The write-up's second-rank buttons, folded behind one on a phone. The
+  // button itself is hidden on a wide window, where they all fit on the line.
+  if (t.closest('[data-more-tools]')) { view.moreTools = !view.moreTools; return paint(); }
+
   // --- correcting a write-up ---
 
   // The switch, and the way out of the band, which is the same act.
@@ -162,6 +166,9 @@ document.addEventListener('click', async (event) => {
     // Agreeing to be recorded, or not. Its own attribute rather than another
     // data-thr-answer, so no future edit to the question ladder can route a
     // press meant for one of those into a consent row.
+    const optOut = t.closest('[data-thr-optout]');
+    if (optOut) return welcomeOptOut(optOut.dataset.thrOptout, optOut);
+
     const agreed = t.closest('[data-thr-agree]');
     if (agreed) return welcomeAgree(agreed.dataset.thrAgree, agreed);
 
@@ -179,6 +186,7 @@ document.addEventListener('click', async (event) => {
     if (done) return welcomeGo(done, () => { welcome.step = 'close'; });
 
     if (t.closest('[data-thr-skip]')) return closeWelcome();
+    if (t.closest('[data-thr-back]')) return welcomeBack();
 
     const door = t.closest('[data-thr-door]');
     if (door) {
@@ -206,7 +214,7 @@ document.addEventListener('click', async (event) => {
   // One dialog at a time. Opening any has to close the others, or a page left
   // with two flags set shows the first one forever and every later click on
   // the second looks like a dead button.
-  if (t.closest('[data-new-campaign]')) { closeDialogs(); view.creating = true; return paint(); }
+  if (t.closest('[data-new-campaign]')) { closeDialogs(); view.creating = true; view.newOptOut = 'yes'; return paint(); }
   if (t.closest('[data-import]')) { closeDialogs(); view.importing = true; return paint(); }
   if (t.closest('[data-delete-campaign]')) { closeDialogs(); view.deleting = true; return paint(); }
   if (t.closest('[data-rename]')) { closeDialogs(); view.renaming = true; return paint(); }
@@ -243,6 +251,10 @@ document.addEventListener('click', async (event) => {
   if (t.closest('[data-copy-notes]')) {
     return copy(notesAsMarkdown(), 'Notes copied as markdown.');
   }
+  if (t.closest('[data-copy-invite]')) {
+    return copy(detail?.inviteLink?.url ?? '', 'Invite link copied.');
+  }
+  if (t.closest('[data-hunt-clear]')) { huntReset(); paint(); $('hunt-q')?.focus?.(); return; }
   if (t.closest('[data-copy-transcript]')) {
     return copy(script.lines.map((l) => `[${clock(l.ms)}] ${l.speaker}: ${l.text}`).join('\n'),
                 `${n(script.total)} lines copied.`);
@@ -337,7 +349,25 @@ document.addEventListener('click', async (event) => {
   if (camp) return loadCampaign(Number(camp.dataset.campaign));
 
   const tab = t.closest('[data-tab]');
-  if (tab) { view.tab = tab.dataset.tab; view.editing = null; return paint(); }
+  if (tab) {
+    view.tab = tab.dataset.tab;
+    view.editing = null;
+    paint();
+    // Searching is typing, so the caret goes where the typing happens.
+    if (view.tab === 'search') $('hunt-q')?.focus?.();
+    return;
+  }
+
+  // The night before this one, or the night after — from the ribbon's arrows
+  // or the foot of the write-up. Back to the top either way: the foot of one
+  // night is half way down the next.
+  const step = t.closest('[data-step-session]');
+  if (step) {
+    if (step.disabled) return;
+    await openSession(Number(step.dataset.stepSession));
+    window.scrollTo?.({ top: 0 });
+    return;
+  }
 
   const jump = t.closest('button.btn[data-session]');
   if (jump) {
@@ -351,7 +381,13 @@ document.addEventListener('click', async (event) => {
   if (sess) return openSession(Number(sess.dataset.session));
 
   const script_ = t.closest('[data-transcript]');
-  if (script_) return openTranscript(Number(script_.dataset.transcript));
+  if (script_) {
+    await openTranscript(Number(script_.dataset.transcript));
+    // Opened from a search result: the transcript arrives already narrowed to
+    // the word that was being looked for, rather than at its first line.
+    if (script_.dataset.find && view.screen === 'transcript') { view.search = script_.dataset.find; paint(); }
+    return;
+  }
 
   const speaker = t.closest('[data-speaker]');
   if (speaker) { view.speaker = speaker.dataset.speaker || null; return paint(); }
@@ -487,6 +523,16 @@ document.addEventListener('change', async (event) => {
   await send('campaign/output', { campaignId: detail?.id, mode: 'channel', channelId: sel.value });
 });
 
+// Whether players may opt out, in the new-campaign dialog. Held in `view`
+// rather than left in the radio, because the dialog is redrawn by the poll
+// and a choice kept only in the DOM is a choice the next paint may undo.
+document.addEventListener('change', (event) => {
+  const pick = event.target.closest?.('input[name=optOut]');
+  if (!pick) return;
+  view.newOptOut = pick.value === 'no' ? 'no' : 'yes';
+  paint();
+});
+
 // Choosing who a campaign would go to.
 //
 // Unlike the channel picker above, this one only ARMS the button beside it. The
@@ -567,6 +613,15 @@ document.addEventListener('submit', (event) => {
 
   const seating = event.target.closest('form[data-thr-seat]');
   if (seating) { event.preventDefault(); return welcomeSeat(seating); }
+});
+
+// Searching the campaign. Like the member search below, its answer is a list
+// to read rather than a toast.
+document.addEventListener('submit', (event) => {
+  const form = event.target.closest('form[data-campaign-search]');
+  if (!form) return;
+  event.preventDefault();
+  return runHunt($('hunt-q')?.value ?? '');
 });
 
 document.addEventListener('submit', async (event) => {

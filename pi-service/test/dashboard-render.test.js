@@ -630,10 +630,70 @@ test('one session in a Discord with two tables is one session', async (t) => {
 
 // Every door is one somebody may walk through, so a viewer must not be drawn
 // one that would refuse them.
-test('a player is offered no machinery on the desk', async (t) => {
+// A player with one table is taken straight to it, so the desk is somewhere
+// they go rather than somewhere they start. See `landed` in 09-paint.js.
+const toTheDesk = (page) =>
+  page.click(['[data-screen]'], { screen: 'desk' }, (m) => /class="desk-say"/.test(m));
+
+test('a player with one table opens straight into it', async (t) => {
   const { db, cfg, base } = await world(t);
   const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
   const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.doesNotMatch(markup, /class="desk-say"/, 'not left on a desk with one door on it');
+  assert.match(markup, /class="shelf-slider picked"/, 'and the sessions are listed, not the chooser');
+
+  // The way back to the desk is still a way back to the desk: the shortcut is
+  // spent on arrival and must not bounce them into the campaign again.
+  await toTheDesk(page);
+  assert.match(page.body(), /class="desk-say"/);
+});
+
+test('the operator still starts on the desk, one table or not', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  assert.match(page.body(), /class="desk-say"/);
+});
+
+// The transcriber being away is the ordinary state of a PC that is off, and it
+// is only a banner while a session is actually stopped behind it.
+test('an unreachable transcriber with nothing held is a mark, not a banner', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const markup = page.body();
+
+  assert.doesNotMatch(markup, /class="banner"/);
+  assert.match(markup, /class="navmark away"/);
+
+  const player = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  assert.doesNotMatch(player.body(), /navmark away/, 'and it is nobody else\'s business');
+});
+
+test('an unreachable transcriber with a session held is still a banner', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const meeting = db.createMeeting({
+    guildId: 'guild-1', campaignId, channelId: 'v', channelName: 'The Cellar',
+    startedAt: '2026-08-09T19:00:00Z', audioDir: '/tmp',
+  });
+  db.endMeeting(meeting, '2026-08-09T22:00:00Z');
+  db.setMeetingStatus(meeting, 'awaiting_transcription');
+  db.enqueueTranscribeJob(meeting, { requireApproval: false });
+
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  const markup = page.body();
+  assert.match(markup, /class="banner"/);
+  assert.match(markup, /held until the machine comes back/);
+  assert.doesNotMatch(markup, /navmark away/, 'one of the two speaks, never both');
+});
+
+test('a player is offered no machinery on the desk', async (t) => {
+  const { db, cfg, base } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  await toTheDesk(page);
+  const markup = page.body();
+
+  assert.doesNotMatch(markup, /data-screen="usage"/, 'nor the usage page while its figures are examples');
 
   assert.ok(balanced(markup).ok);
   assert.match(markup, /class="door/);
@@ -661,6 +721,7 @@ test('the quiet night says the same thing to the operator and to a player', asyn
 
   const dev = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
   const player = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  await toTheDesk(player);
 
   const said = saidOnTheDesk(dev.body());
   assert.equal(said, saidOnTheDesk(player.body()));
@@ -1132,7 +1193,8 @@ test('the recording question is asked with the facts it cannot be asked without'
   const markup = page.body();
 
   assert.match(markup, /only while it is in the voice channel/i);
-  assert.match(markup, /That text — not your voice/, 'what leaves the machine is stated, not glossed');
+  assert.match(markup, /That text — not your audio — is then sent to an AI service/, 'what leaves the machine is stated, not glossed');
+  assert.match(markup, /not uploaded anywhere to be transcribed/, 'in the bot’s own words about this install');
   assert.match(markup, /campaign consent/, 'and how to take it back');
 });
 
@@ -1410,4 +1472,272 @@ test('the card that opens over a name has somewhere to be drawn', async (t) => {
   // reads. If that attribute ever moves, the card goes blank rather than
   // loudly wrong.
   assert.match(page.body(), /class="wiki" data-entry="npcs:wren halloway"/);
+});
+
+// --- finding your way around a campaign (2026-11-14) -----------------------
+
+test('the session list says what each night was called', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /class="ttl"/.test(m));
+
+  // The first scene's own heading, which is also the write-up's headline. A
+  // column that says only "Session 2" cannot be scanned for a night.
+  assert.match(page.body(), /<span class="ttl">The queue at the notary<\/span>/);
+});
+
+test('one night leads to the next without going back to the list', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const [newest, oldest] = db.listRecentMeetings(campaignId, 5).map((m) => m.id);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId, (m) => /class="night-turn/.test(m));
+  let markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /class="ribbon-name">Session 2</, 'it opens on the latest night');
+  assert.match(markup, /aria-label="No later night"/, 'which has nothing after it');
+  assert.match(markup, new RegExp(`class="menu-btn step" data-step-session="${oldest}"`), 'and one before');
+  assert.match(markup, new RegExp(`class="turn back" data-step-session="${oldest}"`),
+    'offered again at the foot of the write-up, where the reading ends');
+
+  await page.click(['[data-step-session]'], { stepSession: String(oldest) },
+    (m) => /class="ribbon-name">Session 1</.test(m));
+  markup = page.body();
+  assert.match(markup, /class="ribbon-name">Session 1</);
+  assert.match(markup, /aria-label="No earlier night"/);
+  assert.match(markup, new RegExp(`class="turn on" data-step-session="${newest}"`));
+});
+
+// Both nights in this campaign introduce Wren Halloway in the same five words,
+// which is what a summariser told to say who somebody is will do.
+test('a line the write-ups repeat about somebody is said once', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-shelf]'], { shelf: 'npcs' }, (m) => /notary clerk/.test(m));
+  const said = page.body().match(/<div class="cast-said">[\s\S]*?<\/div>/)?.[0] ?? '';
+
+  assert.equal((said.match(/The notary clerk/g) ?? []).length, 1);
+  assert.match(page.body(), /class="again">back in <b>2<\/b>/, 'and the return is still on the row');
+});
+
+test('a word is found in every write-up and every transcript', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'search' }, (m) => /id="hunt-q"/.test(m));
+  assert.doesNotMatch(page.body(), /In the write-ups/, 'nothing is listed before anything is asked');
+
+  // Said aloud on both nights, and in neither write-up.
+  await page.submit('data-campaign-search', { 'hunt-q': 'ledger' }, (m) => /In the transcripts · /.test(m));
+  let markup = page.body();
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /In the transcripts · 2 lines/);
+  assert.match(markup, /Kaelen opens the <mark>ledger<\/mark>\./);
+  assert.match(markup, /00:00:00 · saf/, 'with when it was said and by whom');
+  assert.match(markup, /data-transcript="\d+"\s+data-find="ledger"/, 'and a way into the transcript it came from');
+  assert.match(markup, /No write-up mentions “ledger”/);
+
+  // Written up on both nights, and never said on the record.
+  await page.submit('data-campaign-search', { 'hunt-q': 'WRIT' }, (m) => /Nobody said “WRIT”/.test(m));
+  markup = page.body();
+  assert.match(markup, /In the write-ups · 4 lines/, 'the summary and the scene, on each of two nights');
+  assert.match(markup, /signed the <mark>writ<\/mark>\./, 'found whatever the case it was typed in');
+  assert.match(markup, /Nobody said “WRIT” on the record/);
+});
+
+test('a player searches the write-ups and is never handed a transcript line', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const cookie = cookieFor(db, cfg, PLAYER, 'saf');
+  const page = await render({ base, cookie });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'search' }, (m) => /id="hunt-q"/.test(m));
+  await page.submit('data-campaign-search', { 'hunt-q': 'ledger' }, (m) => /No write-up mentions/.test(m));
+  const markup = page.body();
+
+  assert.match(markup, /No write-up mentions “ledger”/);
+  assert.doesNotMatch(markup, /In the transcripts/);
+  assert.doesNotMatch(markup, /opens the/, 'the line that would have matched is not on the page');
+
+  // And the page not asking is a courtesy. This is the rule.
+  const asked = await fetch(`${base}/search?campaign=${campaignId}&q=ledger&token=sesame`, { headers: { Cookie: cookie } });
+  assert.equal(asked.status, 403);
+});
+
+test('the table tab hands out the invite link, and can pull it', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'table' }, (m) => /Or hand out a link/.test(m));
+  assert.match(page.body(), /data-act="invite\/link"/);
+  assert.doesNotMatch(page.body(), /data-act="invite\/revoke"/, 'nothing to pull until one is out');
+
+  await page.click(['button[data-act]'], { act: 'invite/link', campaign: String(campaignId) },
+    (m) => /data-act="invite\/revoke"/.test(m));
+  assert.ok(db.liveInviteLinkFor(campaignId), 'the press made one');
+  // This install has no DASHBOARD_URL, so there is a link and no address for
+  // it. Said, rather than half an address somebody would paste.
+  assert.match(page.body(), /no web address set/);
+  assert.doesNotMatch(page.body(), /data-act="invite\/link"/);
+
+  await page.click(['button[data-act]'], { act: 'invite/revoke', campaign: String(campaignId) },
+    (m) => /data-act="invite\/link"/.test(m));
+  assert.equal(db.liveInviteLinkFor(campaignId) ?? null, null, 'and the second press pulled it');
+
+  const player = await render({ base, cookie: cookieFor(db, cfg, PLAYER, 'saf') });
+  await enter(player, campaignId);
+  await player.click(['[data-tab]'], { tab: 'table' }, (m) => /class="grid roster/.test(m));
+  assert.doesNotMatch(player.body(), /hand out a link/, 'the link is the manager’s to give');
+});
+
+test('the book can be turned back a page', async (t) => {
+  const { db, cfg, base } = await world(t, { memberOf: true });
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, RHI, 'rhi') });
+  await page.settle((m) => /thr-sheet/.test(m));
+  assert.doesNotMatch(page.body(), /data-thr-back/, 'there is nothing before the first question');
+
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'dm' }, (m) => /Has Quill joined/.test(m));
+  assert.match(page.body(), /data-thr-back/);
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'yes' }, (m) => /data-thr-name/.test(m));
+
+  await page.click(['[data-thr-back]'], {}, (m) => /Has Quill joined/.test(m));
+  assert.match(page.body(), /Has Quill joined/);
+  await page.click(['[data-thr-back]'], {}, (m) => /Do you…/.test(m));
+  assert.match(page.body(), /data-thr-answer="player"/, 'and the first question is asked again, unanswered');
+  assert.doesNotMatch(page.body(), /data-thr-back/);
+});
+
+// The case the way back was built for: the name is the first thing a new DM
+// types, the table is made the moment they press, and until now a slip there
+// could only be put right from a Settings tab they had not seen yet.
+test('a mistyped campaign name is corrected from the next page, not made twice', async (t) => {
+  const { db, cfg, base } = await world(t, { memberOf: true });
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, RHI, 'rhi') });
+  await page.settle((m) => /thr-sheet/.test(m));
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'dm' }, (m) => /Has Quill joined/.test(m));
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'yes' }, (m) => /data-thr-name/.test(m));
+
+  await page.submit('data-thr-name', { 'thr-name': 'Emberfal' }, (m) => /data-thr-optout/.test(m));
+  await page.click(['[data-thr-optout]'], { thrOptout: 'yes' }, (m) => /Who else is at the table/.test(m));
+  assert.match(page.body(), /Change the name/);
+  const made = db.listCampaigns('guild-1').find((c) => c.name === 'Emberfal');
+  assert.ok(made, 'the table exists by now');
+
+  await page.click(['[data-thr-back]'], {}, (m) => /A slip of the pen/.test(m));
+  await page.submit('data-thr-name', { 'thr-name': 'Emberfall' }, (m) => /Emberfall has its first page/.test(m));
+
+  assert.equal(db.getCampaign(made.id).name, 'Emberfall', 'the same table, under the right name');
+  assert.equal(db.listCampaigns('guild-1').filter((c) => /^Emberfal/.test(c.name)).length, 1,
+    'and not a second one beside it');
+  assert.equal(db.getCampaign(made.id).opt_out, 1, 'and "they may" left the opt-out on');
+});
+
+// --- a table with no opt-out (2026-11-14) ----------------------------------
+//
+// Whoever makes a campaign is asked once whether its players may choose not to
+// be recorded. Yes is how every campaign worked before the question existed.
+// No means the DM answers for the table: adding somebody records them, and the
+// bot sends nobody anything. See pi-service/src/campaign/opt-out.js.
+
+test('the book asks whether players may opt out before it makes the table', async (t) => {
+  const { db, cfg, base } = await world(t, { memberOf: true });
+  const page = await render({ base, cookie: firstCookieFor(db, cfg, RHI, 'rhi') });
+  await page.settle((m) => /thr-sheet/.test(m));
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'dm' }, (m) => /Has Quill joined/.test(m));
+  await page.click(['[data-thr-answer]'], { thrAnswer: 'yes' }, (m) => /data-thr-name/.test(m));
+  await page.submit('data-thr-name', { 'thr-name': 'Greyhollow' }, (m) => /data-thr-optout/.test(m));
+
+  const asked = page.body();
+  assert.match(asked, /May a player choose not to be recorded\?/);
+  assert.match(asked, /Quill sends them nothing/, 'and what the second answer means is said before it is pressed');
+  assert.equal(db.listCampaigns('guild-1').some((c) => c.name === 'Greyhollow'), false, 'nothing is made yet');
+
+  await page.click(['[data-thr-optout]'], { thrOptout: 'no' }, (m) => /Who else is at the table/.test(m));
+  const made = db.listCampaigns('guild-1').find((c) => c.name === 'Greyhollow');
+  assert.equal(made.opt_out, 0);
+  assert.equal(db.mayRecord(made.id, RHI), true, 'and whoever answered for the table is at it');
+});
+
+test('a table with no opt-out says so, and adds rather than asks', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  db.setCampaignOptOut(campaignId, false);
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'table' }, (m) => /class="grid roster/.test(m));
+  const markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  // kez has spoken and is not on the roster as recorded; saf agreed long ago.
+  assert.match(markup, /One person here is not being recorded/);
+  assert.match(markup, /set up to record everyone on its roster/);
+  assert.match(markup, />Add<\/button>/);
+  assert.match(markup, /Add someone new/);
+  assert.match(markup, /Quill sends them\s+nothing/);
+  assert.doesNotMatch(markup, /said yes in a DM|They get a DM|still to hear from/,
+    'none of the words about asking are true of this table');
+
+  await page.click(['[data-tab]'], { tab: 'settings' }, (m) => /Players can opt out/.test(m));
+  const settings = page.body();
+  assert.match(settings, /Players can opt out[\s\S]{0,400}<span class="val">no<\/span>/);
+  assert.match(settings, /Recording · no opt-out/);
+  assert.match(settings, /Nobody at this table is sent these lines/);
+  assert.doesNotMatch(settings, /Consent · players choose[\s\S]{0,40}<div style="display:flex/, 'no consent tally where nobody was asked');
+});
+
+// The card read "never leaves your network and is not kept, and this cannot be
+// turned off" on every install, whatever the install did.
+test('the Audio card says what this install does, and which kind of table it is', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  cfg.audioRetentionDays = 14;
+  const page = await render({ base, cookie: cookieFor(db, cfg, DEV, 'matt') });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'settings' }, (m) => /class="facts-list"/.test(m));
+  let markup = page.body();
+
+  assert.ok(balanced(markup).ok);
+  assert.match(markup, /Deleted from the bot after 14 days/);
+  assert.match(markup, /class="card good"/, 'green, because nothing here leaves the machine');
+  assert.match(markup, /Your recording is never sent anywhere else/);
+  assert.match(markup, /Consent · players choose/);
+  assert.match(markup, /Each player is shown these same lines before they agree/);
+  assert.doesNotMatch(markup, /cannot be turned off|Deleted once transcribed/);
+
+  // The same campaign on an install that can send a session to Google and
+  // keeps the clips. Read again from the bot, not remembered by the page.
+  Object.assign(cfg, { geminiTranscribe: true, audioRetentionDays: 0 });
+  await enter(page, campaignId);
+  await page.click(['[data-tab]'], { tab: 'settings' }, (m) => /Kept until you delete it/.test(m));
+  markup = page.body();
+  assert.match(markup, /Kept until you delete it/);
+  assert.match(markup, /Google \(Gemini\)/);
+  assert.doesNotMatch(markup, /class="card good"/, 'and it is not the colour of all-is-well');
+  assert.doesNotMatch(markup, /never sent anywhere else/);
+});
+
+test('an invitation to a table with no opt-out offers joining or not, never joining unrecorded', async (t) => {
+  const { db, cfg, base, campaignId } = await world(t);
+  db.setCampaignOptOut(campaignId, false);
+  const token = invitedTo(db, campaignId);
+  const cookie = cookieFor(db, cfg, RHI, 'rhi');
+  const page = await render({ base, cookie, search: `?join=${token}` });
+  await page.settle((m) => /data-thr-agree/.test(m));
+  const markup = page.body();
+
+  assert.match(markup, /Every voice at that table is written down/);
+  assert.match(markup, /data-thr-agree="leave"/);
+  assert.doesNotMatch(markup, /data-thr-agree="no"/);
+  assert.match(markup, /no switch to turn it off later/);
+
+  // The page not offering it is a courtesy. This is the rule.
+  const sneaked = await fetch(`${base}/actions/invite/accept?token=sesame`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ token, consent: false, name: 'Orrin' }),
+  });
+  assert.equal((await sneaked.json()).ok, false);
+  assert.equal(db.getConsent(campaignId, RHI), null, 'and nothing was written down about them');
+
+  await page.click(['[data-thr-agree]'], { thrAgree: 'leave' }, (m) => /goes on without you/.test(m));
+  assert.equal(db.getConsent(campaignId, RHI), null, 'walking away sends nothing either');
+  assert.doesNotMatch(page.body(), /first entry/);
 });

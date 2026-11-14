@@ -47,10 +47,15 @@
      middle of the day, to change who can get in. Making it a different room
      is the point, and the ground is how a room announces itself.
 
-     Two accents, and they mean one thing each. Verdigris is admission -- the
-     colour of the bronze on a door that has been there a while. Seal red is
-     the exception: somebody held below their level, or the door standing open
-     when it should not be. Nothing else here is coloured at all. */
+     Two accents, and they mean one thing each. The pen is admission, and it
+     is the dashboard's pen: the same ultramarine on a light ground and the
+     same lifted tint on a dark one (see --pen in dash/app.css). It was
+     verdigris until 2026-11-14 -- the bronze on a door that has been there a
+     while -- which was a good idea about this page and a poor one about the
+     product: a green button here and an indigo one a click away read as two
+     tools. The room still differs in its ground; the ink is now one ink.
+     Seal red is the exception: somebody held below their level, or the door
+     standing open when it should not be. Nothing else here is coloured. */
 
   :root {
     color-scheme: light;
@@ -64,8 +69,8 @@
     --edge:    #B3B1A4;  /* borders that have a job */
     --hover:   #E2E0D7;  /* the wash under a hovered row */
 
-    --bronze:    #276056;
-    --bronze-bg: #CFDCD5;
+    --pen:    #2434A8;
+    --pen-bg: #CDD2EA;
     --seal:      #9A2E1D;
     --seal-bg:   #E7D2CB;
 
@@ -102,8 +107,8 @@
       --edge:    #3A4046;
       --hover:   #1E2226;
 
-      --bronze:    #6FBFAE;
-      --bronze-bg: #16302C;
+      --pen:    #8497F2;
+      --pen-bg: #1B2040;
       --seal:      #DD7A66;
       --seal-bg:   #331A16;
 
@@ -124,8 +129,8 @@
     --edge:    #3A4046;
     --hover:   #1E2226;
 
-    --bronze:    #6FBFAE;
-    --bronze-bg: #16302C;
+    --pen:    #8497F2;
+    --pen-bg: #1B2040;
     --seal:      #DD7A66;
     --seal-bg:   #331A16;
 
@@ -153,7 +158,7 @@
   a { color: inherit; }
 
   :focus-visible {
-    outline: 2px solid var(--bronze);
+    outline: 2px solid var(--pen);
     outline-offset: 2px;
     border-radius: 3px;
   }
@@ -191,7 +196,7 @@
   .eyebrow {
     font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
     font-size: 11px; font-weight: 600; letter-spacing: .19em; text-transform: uppercase;
-    color: var(--bronze);
+    color: var(--pen);
     display: flex; align-items: center; gap: 10px;
   }
   .eyebrow.alarm { color: var(--seal); }
@@ -229,9 +234,9 @@
     transition: background .12s, border-color .12s, color .12s;
   }
   .gate-btn:hover { background: var(--sunk); }
-  .gate-btn.discord { border-color: var(--bronze); color: var(--bronze); }
-  .gate-btn.discord:hover { background: var(--bronze-bg); }
-  .gate-btn:focus-visible { outline: 2px solid var(--bronze); outline-offset: 3px; }
+  .gate-btn.discord { border-color: var(--pen); color: var(--pen); }
+  .gate-btn.discord:hover { background: var(--pen-bg); }
+  .gate-btn:focus-visible { outline: 2px solid var(--pen); outline-offset: 3px; }
 
   /* An install that cannot sign anybody in says so here rather than sending
      them to Discord to meet an error page that mentions none of this. */
@@ -365,7 +370,7 @@
   .log-row:first-child { border-top: 0; }
   .log-when { color: var(--faint); flex: 0 0 auto; }
   .log-verb { text-transform: uppercase; flex: 0 0 auto; color: var(--faint); font-weight: 600; }
-  .log-row.in .log-verb { color: var(--bronze); }
+  .log-row.in .log-verb { color: var(--pen); }
   .log-who { color: var(--iron); }
   .log-id { color: var(--faint); }
   .log-note { color: var(--faint); }
@@ -403,7 +408,7 @@
     cursor: pointer; white-space: nowrap;
   }
   .chip:hover { background: var(--sunk); color: var(--iron); }
-  .chip.on { border-color: var(--bronze); color: var(--bronze); background: var(--bronze-bg); }
+  .chip.on { border-color: var(--pen); color: var(--pen); background: var(--pen-bg); }
   .chip .n { opacity: .65; margin-left: 5px; }
 
   /* -- The table --------------------------------------------------------
@@ -447,7 +452,7 @@
   .row::before {
     content: '';
     position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
-    background: var(--bronze); border-radius: 2px;
+    background: var(--pen); border-radius: 2px;
     transform-origin: top center;
   }
   .row.out::before {
@@ -459,7 +464,7 @@
     content: '';
     position: absolute; left: -2.5px; top: 5px;
     width: 8px; height: 8px; border-radius: 50%;
-    background: var(--bronze);
+    background: var(--pen);
     box-shadow: 0 0 0 3px var(--stock);
   }
   .row.live:hover::after { box-shadow: 0 0 0 3px var(--hover); }
@@ -479,14 +484,14 @@
     padding: 2px 6px; border-radius: 4px;
     background: var(--sunk); color: var(--faint);
   }
-  .tag.you { background: var(--bronze-bg); color: var(--bronze); }
+  .tag.you { background: var(--pen-bg); color: var(--pen); }
 
   .reaches { font-size: 14px; color: var(--faint); }
   .seen {
     font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
     font-size: 11.5px; color: var(--faint);
   }
-  .seen b { font-weight: 500; color: var(--bronze); }
+  .seen b { font-weight: 500; color: var(--pen); }
 
   /* -- The level control ------------------------------------------------
      A select and not a row of buttons, because the options are ordered, they
@@ -514,7 +519,7 @@
     background-position: right 10px center;
     background-size: 11px;
   }
-  .lvl:hover:not(:disabled) { border-color: var(--bronze); }
+  .lvl:hover:not(:disabled) { border-color: var(--pen); }
   .lvl:disabled { cursor: default; opacity: .6; background-image: none; }
   .lvl.held { border-color: var(--seal); color: var(--seal); background: var(--seal-bg); }
   .why {
@@ -545,14 +550,14 @@
   .tier .t:last-child { border-right-width: 1px; border-radius: 0 6px 6px 0; }
   .tier .t:hover { color: var(--iron); background: var(--hover); }
   .tier .t.on {
-    color: var(--bronze); background: var(--bronze-bg);
-    border-color: var(--bronze); font-weight: 600;
+    color: var(--pen); background: var(--pen-bg);
+    border-color: var(--pen); font-weight: 600;
   }
   /* The neighbour's left border would sit on top of the selected one's right. */
-  .tier .t.on + .t { border-left-color: var(--bronze); }
+  .tier .t.on + .t { border-left-color: var(--pen); }
   .tier[aria-disabled="true"] .t { cursor: default; opacity: .6; }
   .tier[aria-disabled="true"] .t:hover { color: var(--faint); background: var(--sunk); }
-  .tier[aria-disabled="true"] .t.on:hover { color: var(--bronze); background: var(--bronze-bg); }
+  .tier[aria-disabled="true"] .t.on:hover { color: var(--pen); background: var(--pen-bg); }
 
   .spent {
     font-family: 'Spline Sans Mono', ui-monospace, Consolas, monospace;
@@ -575,8 +580,8 @@
   .btn:hover { background: var(--sunk); }
   .btn:disabled { opacity: .45; cursor: default; }
   .btn:disabled:hover { background: transparent; }
-  .btn.go { border-color: var(--bronze); color: var(--bronze); }
-  .btn.go:hover { background: var(--bronze-bg); }
+  .btn.go { border-color: var(--pen); color: var(--pen); }
+  .btn.go:hover { background: var(--pen-bg); }
 
   /* Armed is the second half of a two-step. No modal: the button says what
      the next click does, which is the shortest honest way to ask. */
@@ -634,7 +639,7 @@
   }
   .foot-more[open] > summary::before { content: '−'; }
   .foot-more > summary:hover { color: var(--iron); }
-  .foot-more > summary:hover::before { border-color: var(--bronze); color: var(--bronze); }
+  .foot-more > summary:hover::before { border-color: var(--pen); color: var(--pen); }
   .foot-more[open] > summary { margin-bottom: 14px; }
 
   .empty { padding: 30px 2px; color: var(--faint); font-size: 15px; }
@@ -654,7 +659,7 @@
     z-index: 40;
   }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
-  .toast.good { border-left-color: var(--bronze); }
+  .toast.good { border-left-color: var(--pen); }
   .toast.bad  { border-left-color: var(--seal); }
 
   /* -- The one animation ------------------------------------------------
@@ -700,23 +705,23 @@
      you, so it gets the verdigris the admission accent already means, and sits
      above the hero rather than in the table. */
   .asks {
-    border: 1px solid var(--bronze); border-radius: 8px;
+    border: 1px solid var(--pen); border-radius: 8px;
     padding: 16px 18px 14px; margin: 0 0 26px;
-    background: color-mix(in srgb, var(--bronze) 5%, var(--card));
+    background: color-mix(in srgb, var(--pen) 5%, var(--card));
   }
   .asks-head {
     display: flex; align-items: center; gap: 9px;
     font-family: var(--mono); font-size: 12px; letter-spacing: .06em;
-    text-transform: uppercase; color: var(--bronze); margin-bottom: 12px;
+    text-transform: uppercase; color: var(--pen); margin-bottom: 12px;
   }
   .asks-mark {
     width: 8px; height: 8px; border-radius: 50%;
-    background: var(--bronze); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bronze) 18%, transparent);
+    background: var(--pen); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pen) 18%, transparent);
   }
   .ask-row {
     display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 14px; align-items: center;
-    padding: 9px 0; border-top: 1px solid color-mix(in srgb, var(--bronze) 22%, transparent);
+    padding: 9px 0; border-top: 1px solid color-mix(in srgb, var(--pen) 22%, transparent);
   }
   .ask-who { min-width: 0; }
   .ask-who b { font-size: 16px; }
@@ -744,7 +749,7 @@
     background: transparent; color: var(--faint); cursor: pointer;
   }
   .gh-nav button:hover { color: var(--iron); background: var(--hover); }
-  .gh-nav button[aria-current="page"] { color: var(--bronze); border-color: var(--bronze); background: var(--bronze-bg); }
+  .gh-nav button[aria-current="page"] { color: var(--pen); border-color: var(--pen); background: var(--pen-bg); }
   .gh-nav .n { margin-left: 6px; opacity: .8; }
 
   .arch-row {
@@ -763,9 +768,9 @@
   .use-figure { font-family: 'Libre Caslon Display', Georgia, serif; font-size: 40px; line-height: 1.1; margin: 8px 0 0; }
   .use-sub { color: var(--faint); font-size: 15px; margin-top: 8px; max-width: 62ch; }
   .use-bar { height: 8px; border-radius: 4px; background: var(--sunk); overflow: hidden; margin-top: 16px; max-width: 520px; }
-  .use-bar i { display: block; height: 100%; background: var(--bronze); }
+  .use-bar i { display: block; height: 100%; background: var(--pen); }
   .use-days { display: flex; align-items: flex-end; gap: 3px; height: 64px; margin-top: 14px; max-width: 520px; }
-  .use-days i { flex: 1; min-width: 4px; max-width: 34px; background: var(--bronze); opacity: .7; border-radius: 1px; }
+  .use-days i { flex: 1; min-width: 4px; max-width: 34px; background: var(--pen); opacity: .7; border-radius: 1px; }
   .use-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14.5px; }
   .use-table th, .use-table td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--rule); }
   .use-table th { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
@@ -793,7 +798,7 @@
   }
   .st-row:last-child { border-bottom: 0; }
   .st-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--faint); transform: translateY(-1px); }
-  .st-dot.ok { background: var(--bronze); border-color: var(--bronze); }
+  .st-dot.ok { background: var(--pen); border-color: var(--pen); }
   .st-dot.bad { background: var(--seal); border-color: var(--seal); }
   .st-dot.held { border-color: var(--seal); }
   .st-row .nm { font-size: 17px; color: var(--iron); }
