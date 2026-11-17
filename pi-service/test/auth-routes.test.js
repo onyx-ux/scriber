@@ -270,6 +270,55 @@ test('somebody on the guest list is let through as normal', async (t) => {
 
 // --- signing out ---
 
+// --- Request an invite, from the front page (2026-11-17) ---
+
+// The whole round trip, from a press on /request/ to whatever the callback says.
+async function askingAs(t, user, over = {}) {
+  const { db, cfg } = await world(t, { dashboardAllowedUsers: '11111111111111111', ...over });
+  const api = discordApi({ codes: { c1: 'tok' }, users: { tok: user } });
+  const out = await go({ db, cfg, query: '?ask=1' });
+  const state = cookieState(out);
+  const back = await go({
+    db, cfg, fetchImpl: api.fetchImpl, path: '/auth/callback',
+    query: `?code=c1&state=${state}`, cookie: `quill_signin=${state}`,
+  });
+  return { db, cfg, back };
+}
+
+test('a stranger who asks from the front page is filed, and sent back to say so', async (t) => {
+  const { db, back } = await askingAs(t, { id: 'new-1', username: 'marn' });
+
+  assert.equal(back.redirect, 'http://pihouse.local:8095/request/#asked');
+  assert.doesNotMatch([back.cookie].flat().join(' '), /quill_session=[^;]/, 'no session for somebody not let in');
+  const asked = db.listRequests();
+  assert.ok(JSON.stringify(asked).includes('new-1'), 'the request is in front of the operator');
+});
+
+test('somebody already on the list who presses Request an invite is simply let in', async (t) => {
+  const { back } = await askingAs(t, { id: '11111111111111111', username: 'matt' });
+  assert.equal(back.redirect, 'http://pihouse.local:8095/app/');
+  assert.match([back.cookie].flat().join(' '), /quill_session=[^;]/);
+});
+
+test('signing in the ordinary way files nothing', async (t) => {
+  const { db, cfg } = await world(t, { dashboardAllowedUsers: '11111111111111111' });
+  const api = discordApi({ codes: { c1: 'tok' }, users: { tok: { id: 'new-2', username: 'bex' } } });
+  const out = await go({ db, cfg });
+  const state = cookieState(out);
+  const back = await go({ db, cfg, fetchImpl: api.fetchImpl, path: '/auth/callback', query: `?code=c1&state=${state}`, cookie: `quill_signin=${state}` });
+
+  assert.match(back.redirect, /\/app\/#signin-error=notinvited$/, 'the turned-away screen, as before');
+  assert.equal(JSON.stringify(db.listRequests()).includes('new-2'), false);
+});
+
+test('a refusal on the way back from asking returns to the request page', async (t) => {
+  const { db, cfg } = await world(t);
+  const out = await go({ db, cfg, query: '?ask=1' });
+  const state = cookieState(out);
+  const back = await go({ db, cfg, path: '/auth/callback', query: `?error=access_denied&state=${state}`, cookie: `quill_signin=${state}` });
+  assert.equal(back.redirect, 'http://pihouse.local:8095/request/#signin-error=denied');
+});
+
 test('signing out clears the cookie and the row behind it', async (t) => {
   const { db, cfg } = await world(t);
   const api = discordApi({ codes: { c: 'tok-1' }, users: { 'tok-1': { id: '1', username: 'saf' } } });

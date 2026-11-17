@@ -22,6 +22,7 @@ import {
   closeSession,
   newState,
   askedForConsent,
+  askingToJoin,
   stateMatches,
   sessionCookie,
   stateCookie,
@@ -40,7 +41,10 @@ import { maySignIn } from './authority.js';
 import { dashboardHome } from '../delivery/dashboard-link.js';
 
 export async function handleAuthRoute({ pathname, method = 'POST', url, body, req, db, cfg, secure, fetchImpl }) {
-  if (method === 'GET' && pathname === '/auth/discord') return start({ cfg, secure });
+  // ?ask=1 is the front page's Request an invite. See askingToJoin.
+  if (method === 'GET' && pathname === '/auth/discord') {
+    return start({ cfg, secure, ask: url?.searchParams?.get('ask') === '1' });
+  }
   if (method === 'GET' && pathname === '/auth/callback') return callback({ url, req, db, cfg, secure, fetchImpl });
   if (method === 'POST' && pathname === '/auth/logout') return logout({ body, req, db, cfg, secure });
   if (method === 'POST' && pathname === '/auth/ask') return askForInvite({ req, db, cfg, secure });
@@ -52,11 +56,11 @@ export async function handleAuthRoute({ pathname, method = 'POST', url, body, re
 // The state goes out twice at once: on the URL, where Discord will hand it
 // back, and into a cookie, where only this browser has it. A callback that
 // carries both, matching, is one this browser actually started.
-function start({ cfg, secure, consent = false }) {
+function start({ cfg, secure, consent = false, ask = false }) {
   const ready = oauthReady(cfg);
-  if (!ready.ok) return refuse(cfg, 'config', { secure });
+  if (!ready.ok) return refuse(cfg, 'config', { secure, ask });
 
-  const state = newState({ consent });
+  const state = newState({ consent, ask });
   return {
     redirect: authorizeUrl(cfg, { state, consent }),
     cookie: stateCookie(state, { secure }),
@@ -77,20 +81,23 @@ async function callback({ url, req, db, cfg, secure, fetchImpl }) {
   // correct amount of work to do on it is none.
   if (!stateMatches(held, given)) return refuse(cfg, 'state', { secure });
 
+  // Read off the state this browser held, not anything on the URL.
+  const ask = askingToJoin(held);
+
   // "They have not authorised this app before", which is not a failure — it is
   // Discord answering prompt=none honestly. Asked properly this time, with a
   // fresh state that says so, so a Discord that keeps saying it cannot bounce
   // the browser round this loop for ever.
   if (error === 'consent_required' && !askedForConsent(held)) {
-    return start({ cfg, secure, consent: true });
+    return start({ cfg, secure, consent: true, ask });
   }
 
   // Anything else Discord sends back with an `error` is the person having said
   // no, or the app being misconfigured at Discord's end. Both are final.
-  if (error || !code) return refuse(cfg, error === 'access_denied' ? 'denied' : 'discord', { secure });
+  if (error || !code) return refuse(cfg, error === 'access_denied' ? 'denied' : 'discord', { secure, ask });
 
   const who = await identifyByCode({ cfg, code, fetchImpl });
-  if (!who.ok) return refuse(cfg, who.reason === 'config' ? 'config' : 'discord', { secure });
+  if (!who.ok) return refuse(cfg, who.reason === 'config' ? 'config' : 'discord', { secure, ask });
 
   // Discord has said who they are. Whether this bot wants them is a separate
   // question, and it is asked BEFORE a session exists rather than after — a
@@ -99,6 +106,18 @@ async function callback({ url, req, db, cfg, secure, fetchImpl }) {
     // The only trace a turned-away sign-in leaves. No session row is written,
     // so without this line somebody being refused over and over is invisible.
     console.log(`[auth] refused ${who.username} (${who.userId}) — not on the guest list`);
+
+    // From the front page's Request an invite, where they ticked the box that
+    // says their username may be passed on. That tick is the asking, so the
+    // request is filed now rather than behind a second button. Nothing else is
+    // done — no session, and no message from the bot (2026-11-17: Quill can
+    // only DM somebody it shares a server with, which a stranger usually is
+    // not, so the page is the receipt).
+    if (ask) {
+      db.recordRequest(who.userId, { username: who.username });
+      console.log(`[auth] ${who.username} (${who.userId}) asked for an invite from the front page`);
+      return { redirect: requestPage(cfg, '#asked'), cookie: clearedStateCookie({ secure }) };
+    }
 
     // Still nothing written. They leave with a signed note saying who Discord
     // says they are, which the Request an invite button spends and nothing
@@ -204,9 +223,15 @@ function dashboard(cfg, hash = '') {
   return `${dashboardHome(cfg)}${hash}`;
 }
 
-function refuse(cfg, reason, { secure = false } = {}) {
+// The front page's request page, a sibling of /app/.
+function requestPage(cfg, hash = '') {
+  return `${dashboardHome(cfg).replace(/app\/$/, '')}request/${hash}`;
+}
+
+function refuse(cfg, reason, { secure = false, ask = false } = {}) {
   return {
-    redirect: dashboard(cfg, `#signin-error=${reason}`),
+    // Back to whichever page the button was on.
+    redirect: ask ? requestPage(cfg, `#signin-error=${reason}`) : dashboard(cfg, `#signin-error=${reason}`),
     cookie: clearedStateCookie({ secure }),
   };
 }

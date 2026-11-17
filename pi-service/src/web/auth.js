@@ -69,11 +69,20 @@ export const STATE_TTL_MS = 10 * 60 * 1000;
 // compared whole, so the flag cannot be edited without breaking the match, and
 // the callback needs to know whether it has already retried or it can bounce
 // off `consent_required` for ever. See web/auth-routes.js.
-export function newState({ consent = false } = {}) {
-  return `${randomBytes(32).toString('hex')}.${consent ? 'c' : 'n'}`;
+// The tail after the dot carries two flags the callback needs and Discord does
+// not: whether this is already the second, consent-asking trip (c / n), and
+// whether it started on the front page's Request an invite (a trailing a).
+// Both are covered by stateMatches like the rest of the state, so neither can
+// be added to somebody else's callback.
+export function newState({ consent = false, ask = false } = {}) {
+  return `${randomBytes(32).toString('hex')}.${consent ? 'c' : 'n'}${ask ? 'a' : ''}`;
 }
 
-export const askedForConsent = (state) => String(state ?? '').endsWith('.c');
+export const askedForConsent = (state) => /\.ca?$/.test(String(state ?? ''));
+
+// Started from the request page, whose tick box is the person agreeing to
+// their username being passed to whoever runs this Quill.
+export const askingToJoin = (state) => /\.[cn]a$/.test(String(state ?? ''));
 
 // Whether this callback belongs to the browser that started it.
 export function stateMatches(fromCookie, fromQuery) {

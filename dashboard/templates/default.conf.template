@@ -296,6 +296,19 @@ server {
         root /usr/share/nginx/html;
     }
 
+    # Request an invite, from the front page (2026-11-17). Open like the
+    # landing page, for the same reason: the people who need it are by
+    # definition not on any list yet. All it does is send them to
+    # /api/auth/discord?ask=1; see request.html.
+    location = /request  { return 301 /request/; }
+    location = /request/ {
+        limit_req zone=quill_page burst=20 nodelay;
+        limit_conn quill_conn 24;
+
+        root /usr/share/nginx/html;
+        try_files /request.html =404;
+    }
+
     # Everything else under the root, /index.html included, stays gated.
     location / {
         limit_req zone=quill_gate burst=10 nodelay;
