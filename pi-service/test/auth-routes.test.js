@@ -288,7 +288,7 @@ async function askingAs(t, user, over = {}) {
 test('a stranger who asks from the front page is filed, and sent back to say so', async (t) => {
   const { db, back } = await askingAs(t, { id: 'new-1', username: 'marn' });
 
-  assert.equal(back.redirect, 'http://pihouse.local:8095/request/#asked');
+  assert.equal(back.redirect, 'http://pihouse.local:8095/#asked');
   assert.doesNotMatch([back.cookie].flat().join(' '), /quill_session=[^;]/, 'no session for somebody not let in');
   const asked = db.listRequests();
   assert.ok(JSON.stringify(asked).includes('new-1'), 'the request is in front of the operator');
@@ -311,12 +311,12 @@ test('signing in the ordinary way files nothing', async (t) => {
   assert.equal(JSON.stringify(db.listRequests()).includes('new-2'), false);
 });
 
-test('a refusal on the way back from asking returns to the request page', async (t) => {
+test('a refusal on the way back from asking returns to the front page', async (t) => {
   const { db, cfg } = await world(t);
   const out = await go({ db, cfg, query: '?ask=1' });
   const state = cookieState(out);
   const back = await go({ db, cfg, path: '/auth/callback', query: `?error=access_denied&state=${state}`, cookie: `quill_signin=${state}` });
-  assert.equal(back.redirect, 'http://pihouse.local:8095/request/#signin-error=denied');
+  assert.equal(back.redirect, 'http://pihouse.local:8095/#request-error=denied');
 });
 
 test('signing out clears the cookie and the row behind it', async (t) => {

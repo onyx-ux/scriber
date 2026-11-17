@@ -116,7 +116,7 @@ async function callback({ url, req, db, cfg, secure, fetchImpl }) {
     if (ask) {
       db.recordRequest(who.userId, { username: who.username });
       console.log(`[auth] ${who.username} (${who.userId}) asked for an invite from the front page`);
-      return { redirect: requestPage(cfg, '#asked'), cookie: clearedStateCookie({ secure }) };
+      return { redirect: frontPage(cfg, '#asked'), cookie: clearedStateCookie({ secure }) };
     }
 
     // Still nothing written. They leave with a signed note saying who Discord
@@ -223,15 +223,16 @@ function dashboard(cfg, hash = '') {
   return `${dashboardHome(cfg)}${hash}`;
 }
 
-// The front page's request page, a sibling of /app/.
-function requestPage(cfg, hash = '') {
-  return `${dashboardHome(cfg).replace(/app\/$/, '')}request/${hash}`;
+// The front page, a sibling of /app/, where Request an invite is a pop-up
+// that reopens itself on #asked or #request-error=<reason>.
+function frontPage(cfg, hash = '') {
+  return `${dashboardHome(cfg).replace(/app\/$/, '')}${hash}`;
 }
 
 function refuse(cfg, reason, { secure = false, ask = false } = {}) {
   return {
     // Back to whichever page the button was on.
-    redirect: ask ? requestPage(cfg, `#signin-error=${reason}`) : dashboard(cfg, `#signin-error=${reason}`),
+    redirect: ask ? frontPage(cfg, `#request-error=${reason}`) : dashboard(cfg, `#signin-error=${reason}`),
     cookie: clearedStateCookie({ secure }),
   };
 }

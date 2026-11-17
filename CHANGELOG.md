@@ -1243,3 +1243,7 @@ they were cleared to make room for. That section is empty again.
       Somebody already on the guest list is simply signed in. Quill sends no
       message: it can only DM somebody it shares a server with.
 
+- [x] **Request an invite is a pop-up** — over the front page instead of a page
+      of its own. The sign-in callback returns to `/#asked` or
+      `/#request-error=<reason>`, which reopen it in that state, and the
+      day-old `/request/` address forwards to `/#request`.
