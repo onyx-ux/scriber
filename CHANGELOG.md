@@ -1247,3 +1247,22 @@ they were cleared to make room for. That section is empty again.
       of its own. The sign-in callback returns to `/#asked` or
       `/#request-error=<reason>`, which reopen it in that state, and the
       day-old `/request/` address forwards to `/#request`.
+
+- [x] **The front page comes alive** — the recap in the hero is written in
+      word by word, each name's underline arriving with its last word; the
+      transcript corrects "Yusdrail" to "Yusdrayl" when you scroll to it; and
+      the line worth keeping changes every few seconds, shuffled on each
+      visit, through the invented examples and nine moments from The Curse of
+      Straad. Each line is set at the size that fills one shared box, so a
+      short one is large and a long one smaller, never floating in empty
+      space. With reduced motion asked for, or no script, all of it is simply
+      there.
+
+- [x] **Paper and ink** — a fine paper grain; a 3D line drawing of a dice tray
+      slid under a desk behind the kept lines, with six dice where they fell
+      (`design/tray3d.cjs`); a 3D d4 with its 4 towards the "Four things"
+      heading, standing on a hatched shadow (`design/d4corner.cjs`), and
+      small d4 faces numbering the four columns; and the three page breaks
+      ruled in ink, freehand, each with a blot where the pen came down and a
+      trail of drops leading in (`design/breaks.cjs`). The generators write
+      plain SVG into the page; none of their code ships.

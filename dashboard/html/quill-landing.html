@@ -313,6 +313,96 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
 .ask.sent .done{display:block}
 @media (prefers-reduced-motion:reduce){dialog.ask[open],dialog.ask[open]::backdrop{animation:none}}
 
+/* ═══ Life: things that move, and paper and ink ════════════════════════
+   Everything under .motion is put on by the script at the foot of the page,
+   so with no script, or with reduced motion asked for, the page is simply
+   there. The line drawings are generated, not drawn: see design/tray3d.cjs,
+   design/d4corner.cjs and design/breaks.cjs. */
+
+/* 1 ── the recap is written in, not shown ─────────────────────────────── */
+.recap{position:relative}
+.motion .recap .w{opacity:0;transition:opacity .22s ease}
+.motion .recap .w.on{opacity:1}
+/* A name's underline belongs to the name. It used to be on the page from the
+   start, a row of dotted rules under words that had not been written yet. */
+.motion .recap [data-write] u{border-bottom-color:transparent;transition:border-color .5s ease .1s}
+.motion .recap [data-write] u.on{border-bottom-color:var(--pen)}
+.motion .recap .blk{opacity:0;transform:translateY(6px);transition:opacity .5s ease, transform .5s ease}
+.motion .recap .blk.on{opacity:1;transform:none}
+.recap-head .when i{font-style:normal;display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--pen);margin-right:7px;vertical-align:1px}
+.motion .recap.writing .recap-head .when i{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+
+/* 2 ── the transcript corrects itself when you reach it ───────────────── */
+.motion .tx.live .tx-x:not(.fixed) .now{display:none}
+.motion .tx.live .tx-x:not(.fixed) .was{text-decoration:none;color:var(--ink);margin-right:0}
+.motion .tx.live .tx-x.fixed .was{animation:strike .4s ease both}
+.motion .tx.live .tx-x.fixed .now{animation:written .7s ease both}
+@keyframes strike{from{color:var(--ink)}to{color:var(--ink-soft)}}
+@keyframes written{from{opacity:0;border-bottom-color:transparent}60%{opacity:1}to{opacity:1;border-bottom-color:var(--pen)}}
+.motion .tx.live .tx-fix{opacity:0;transition:opacity .6s ease}
+.motion .tx.live.done .tx-fix{opacity:1}
+
+/* 3 ── the kept line changes ──────────────────────────────────────────── */
+/* Every line is set at the size that fills the same box: a short one large,
+   a long one smaller. See fitKept. A fixed measure rather than one in ch, so
+   the wrap does not move as the size does. */
+.kept{max-width:min(100%, 720px);transition:opacity .5s ease, transform .5s ease}
+.kept.out{opacity:0;transform:translateY(8px)}
+.kept-dots{display:flex;gap:6px;margin-top:26px;flex-wrap:wrap}
+.kept-dots i{width:16px;height:2px;background:var(--night-rule);transition:background .3s}
+.kept-dots i.on{background:var(--pen-night)}
+
+/* 4 ── paper and ink ──────────────────────────────────────────────────── */
+.texture body, body.texture{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .09  0 0 0 0 .11  0 0 0 0 .13  0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23g)'/%3E%3C/svg%3E")}
+.inkmark{display:none}
+body.texture .inkmark{display:block}
+.night{position:relative;overflow:hidden}
+.night .wrap{position:relative;z-index:1}
+.inkmark.desk{position:absolute;right:-20px;top:50%;transform:translateY(-50%);width:min(640px,52vw);height:auto;opacity:.16;pointer-events:none}
+.inkmark.desk *{vector-effect:non-scaling-stroke}
+.inkmark.rule{width:100%;height:14px;margin:26px 0 0;color:var(--pen);opacity:.55}
+/* The rule above the four columns is the edge of the table, and the die sits
+   on it: its near corner touches the line, its shadow falls along the top. */
+.outs{position:relative;counter-reset:thing}
+.inkmark.die{position:absolute;right:5%;bottom:calc(100% + 41px);width:176px;height:auto;margin:0;color:#AEB5A8;pointer-events:none}
+
+/* ink breaks */
+/* A page break is a line ruled in ink, freehand, with a blot where the pen
+   rested. Drawn once (design/breaks.cjs) and shipped as plain SVG.
+   --line-l and --line-w are the content column, so the blot can be put a
+   fraction of the way along the line and so sit on it at any width. */
+.band{--line-l:max(var(--pad), calc((100% - var(--shell)) / 2 + var(--pad)));--line-w:min(calc(100% - 2 * var(--pad)), calc(var(--shell) - 2 * var(--pad)))}
+.inkmark.inkline{position:absolute;top:-15px;height:30px;left:var(--line-l);width:var(--line-w);color:var(--pen);pointer-events:none}
+/* It stands in for the hairline, so that goes where there is one of these. */
+.texture .band:has(> .inkline)::before{display:none}
+.motion .inkmark.inkline{clip-path:inset(0 100% 0 0);transition:clip-path 1.2s cubic-bezier(.3,.6,.2,1) .1s}
+.motion .inkmark.inkline.rtl{clip-path:inset(0 0 0 100%)}
+.motion .band.in .inkmark.inkline{clip-path:inset(0)}
+.inkmark.blot{--k:1;position:absolute;width:calc(300px * var(--k));height:calc(70px * var(--k));color:var(--pen);pointer-events:none;z-index:1;
+  left:calc(var(--line-l) + var(--u) * var(--line-w) - var(--cx) * var(--k) * 1px);top:calc(var(--dy) * 1px - var(--cy) * var(--k) * 1px)}
+.motion .inkmark.blot{opacity:0;transform:scale(.96);transition:opacity .5s ease .55s, transform .7s cubic-bezier(.2,.7,.2,1) .55s}
+.motion .band.in .inkmark.blot{opacity:1;transform:none}
+@media (max-width:900px){.inkmark.blot{--k:.7}}
+/* A blot near the end of a line hangs past the column, and on a phone past
+   the screen; clipped here so it cannot widen the page and make it pan. */
+.band{overflow-x:clip}
+/* end ink breaks */
+
+/* Each of the four carries its number on a d4 face. */
+.out{counter-increment:thing}
+.texture .out-key{display:flex;align-items:center;gap:10px}
+.texture .out-key::before{content:counter(thing);flex:none;display:grid;place-items:end center;width:24px;height:21px;padding-bottom:1px;
+  font-size:10px;letter-spacing:0;color:var(--ink-soft);
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 21' fill='none' stroke='%23AEB5A8' stroke-width='1.2' stroke-linejoin='round'%3E%3Cpath d='M12 1.2 23 20H1Z'/%3E%3C/svg%3E") center/contain no-repeat}
+
+
+@media (max-width:900px){.inkmark.die{display:none !important}.inkmark.desk{width:420px;right:-150px;opacity:.1}}
+
+@media (prefers-reduced-motion:reduce){
+  .recap .w,.recap .blk{opacity:1 !important;transform:none !important}
+}
+
 @media (max-width:980px){
   .hero .wrap, .names .wrap{grid-template-columns:minmax(0,1fr);gap:36px}
   .hero-left{padding-top:8px}
@@ -337,8 +427,11 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
   .tx-line .tx-x{grid-column:1 / -1}
 }
 </style>
+<!-- Everything that fades in as you reach it is put there by the script. With
+     no script, nothing would ever arrive, so it is simply shown. -->
+<noscript><style>.rv,.recap.rv{opacity:1;transform:none}.band::before{transform:none}</style></noscript>
 </head>
-<body>
+<body class="texture">
 
 <div class="masthead-wrap" id="mast"><header class="masthead">
   <a class="brand" href="#top">
@@ -371,6 +464,9 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
         <a class="btn btn-quiet" href="#writes">See what it writes</a>
       </div>
       <p class="hero-note">/campaign join — then close the tab and play</p>
+      <svg class="inkmark rule" viewBox="0 0 400 14" preserveAspectRatio="none" fill="none" aria-hidden="true">
+        <path d="M2 8c38-5 61 4 98 1s58-6 96-2 63 5 99 0 64-3 103 1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
     </div>
 
     <div>
@@ -378,14 +474,15 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
         <div class="recap-head">
           <span class="chan">#tomb-of-annihilation</span>
           <span>posted by Quill</span>
-          <span class="when">the morning after</span>
+          <span class="when"><i></i><span id="when-say">writing</span></span>
         </div>
+        
         <div class="recap-body">
-          <div class="recap-kick">Tomb of Annihilation · Session 14 · 4 hours 6 minutes</div>
-          <h2 class="recap-title">The queue at the notary</h2>
-          <p class="recap-lede">The party talked their way into the lower registry. <u>Wren Halloway</u> signed the writ on the second reading, <u>Kaelen</u> bribed the porter with a brass key, and something followed them back up the stair from the <u>Ashen Vaults</u>.</p>
+          <div class="recap-kick blk">Tomb of Annihilation · Session 14 · 4 hours 6 minutes</div>
+          <h2 class="recap-title" data-write>The queue at the notary</h2>
+          <p class="recap-lede" data-write>The party talked their way into the lower registry. <u>Wren Halloway</u> signed the writ on the second reading, <u>Kaelen</u> bribed the porter with a brass key, and something followed them back up the stair from the <u>Ashen Vaults</u>.</p>
 
-          <div class="recap-cols">
+          <div class="recap-cols blk">
             <div>
               <div class="cap">What the party decided</div>
               <ul>
@@ -401,9 +498,9 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
             </div>
           </div>
 
-          <p class="recap-keep">&ldquo;The door is not warded. It is not trapped. <span class="ul">It is pull.</span>&rdquo;<span>DM · 1:04:38 · worth remembering</span></p>
+          <p class="recap-keep blk">&ldquo;The door is not warded. It is not trapped. <span class="ul">It is pull.</span>&rdquo;<span>DM · 1:04:38 · worth remembering</span></p>
         </div>
-        <div class="recap-foot">
+        <div class="recap-foot blk">
           <span>1 thread left open</span><span>2 places</span><span>full transcript kept</span>
         </div>
       </article>
@@ -413,10 +510,18 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
 
 <!-- ── THE LINES WORTH KEEPING ─────────────────────────────────────── -->
 <section class="band night">
+  <svg class="inkmark desk" viewBox="-146.2 -390.2 491.6 404.1" fill="none" stroke="#F1EFE8" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+    <!-- A dice tray pulled out from under a desk. Generated by a small 3D model
+         (design/tray3d.cjs) so the dice sit on real faces at real angles. -->
+    <g font-family="Spline Sans Mono, monospace" text-anchor="middle">
+    <path d="M4.7 -18.3L313.3 -184.5L194.6 -336.1L-114 -169.9Z" fill="#171C22"/><path d="M-114 -169.9L194.6 -336.1L194.6 -361.8L-114 -195.6Z" fill="#171C22"/><path d="M313.3 -184.5L194.6 -336.1L194.6 -361.8L313.3 -210.2Z" fill="#171C22"/><path d="M96.4 -212.1L80.1 -205.1L82.3 -204.1L100 -210.5L108.7 -215.4Z" fill="#171C22"/><path d="M102.2 -242.7L92.4 -228.9L96.4 -212.1L108.7 -215.4L112.2 -234.3Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.637 -0.173 0.013 0.977 102.379 -226.689)" y="5" font-size="13.9">1</text><path d="M66 -217.7L80.1 -205.1L96.4 -212.1L92.4 -228.9L73.6 -232.4Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.21 -0.875 0.958 -0.096 81.691 -219.23)" y="5" font-size="13.9">7</text><path d="M89.4 -254.7L102.2 -242.7L112.2 -234.3L105.7 -241.1L91.6 -253.7Z" fill="#171C22"/><path d="M71.7 -248.3L63 -243.4L59.4 -224.5L66 -217.7L73.6 -232.4Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.339 0.353 -0.304 0.918 66.741 -233.237)" y="5" font-size="13.9">5</text><path d="M89.4 -254.7L71.7 -248.3L73.6 -232.4L92.4 -228.9L102.2 -242.7Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.976 0.179 -0.216 0.809 85.843 -241.395)" y="5" font-size="13.9">3</text><path d="M123.1 -183.6L143.1 -193.3L121.1 -219.2Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.575 -0.679 0.273 -0.686 129.078 -198.691)" y="4" font-size="11">2</text><path d="M121.1 -219.2L143.1 -193.3L159.1 -222Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.422 -0.752 0.907 0.349 141.106 -211.503)" y="4" font-size="11">6</text><path d="M161.1 -186.4L143.1 -193.3L123.1 -183.6Z" fill="#171C22"/><path d="M159.1 -222L143.1 -193.3L161.1 -186.4Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.473 0.182 -0.214 0.973 154.434 -200.556)" y="4" font-size="11">1</text><path d="M19 -159.2L19 -178.6L2.6 -203.9L2.6 -184.5Z" fill="#171C22"/><path d="M49.5 -192.2L19 -178.6L19 -159.2L49.5 -172.8Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.623 0.118 -0.623 0.673 34.252 -175.706)" y="7.2" font-size="19.9">1</text><path d="M2.6 -203.9L19 -178.6L49.5 -192.2L33.1 -217.5Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.289 -0.794 0.957 0.239 26.061 -198.044)" y="7.2" font-size="19.9">6</text><path d="M80.3 -117.4L80.5 -139.3L60.3 -144.7L67.9 -129.1Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.49 -0.072 -0.445 -0.837 72.248 -132.588)" y="5.1" font-size="14.2">4</text><path d="M66.7 -162.4L60.3 -144.7L80.5 -139.3L78.3 -171.2Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.533 -0.783 0.323 0.539 71.437 -154.375)" y="5.1" font-size="14.2">8</text><path d="M97.1 -172L78.3 -171.2L80.5 -139.3L109.6 -160.3Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.922 0.322 -0.388 0.764 91.389 -160.702)" y="5.1" font-size="14.2">5</text><path d="M109.6 -160.3L80.5 -139.3L110.8 -127L117.2 -144.7Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.811 0.239 -0.278 0.961 104.53 -142.825)" y="5.1" font-size="14.2">0</text><path d="M99.1 -118.2L110.8 -127L80.5 -139.3L80.3 -117.4Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.899 0.285 -0.435 -0.492 92.701 -125.45)" y="5.1" font-size="14.2">2</text><path d="M-51.1 -122.6L-33.2 -125.7L-25.8 -134.8Z" fill="#171C22"/><path d="M-57.3 -168.1L-48.9 -145.6L-29.6 -162.9Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.679 -0.609 0.734 0.563 -45.269 -158.89)" y="2.4" font-size="6.6">20</text><path d="M-70.6 -143.2L-48.9 -145.6L-57.3 -168.1Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.296 -0.792 0.712 -0.556 -58.931 -152.323)" y="3" font-size="8.2">7</text><path d="M-29.6 -162.9L-48.9 -145.6L-25.8 -134.8Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.813 0.382 -0.315 0.923 -34.769 -147.783)" y="3" font-size="8.2">8</text><path d="M-51.1 -122.6L-48.9 -145.6L-70.6 -143.2Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.765 0.085 -0.35 -0.887 -56.874 -137.156)" y="3" font-size="8.2">9</text><path d="M-25.8 -134.8L-48.9 -145.6L-51.1 -122.6Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.079 0.811 -0.985 0.027 -41.941 -134.35)" y="2.4" font-size="6.6">10</text><path d="M-39.4 -171.2L-57.3 -168.1L-29.6 -162.9Z" fill="#171C22"/><path d="M-70.6 -143.2L-57.3 -168.1L-64.7 -159Z" fill="#171C22"/><path d="M-25.8 -134.8L-19.9 -150.6L-29.6 -162.9Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.341 -0.435 0.042 -0.893 -25.117 -149.427)" y="2.4" font-size="6.6">17</text><path d="M-70.6 -143.2L-60.9 -130.9L-51.1 -122.6Z" fill="#171C22"/><path d="M-1 -95.3L-21 -89.6L-8.4 -50.3Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(0.257 0.801 -0.322 0.598 -10.111 -78.427)" y="5.1" font-size="14.1">3</text><path d="M-8.4 -50.3L26.3 -79L-1 -95.3Z" fill="#171C22"/><text fill="#F1EFE8" stroke="none" transform="matrix(-0.558 -0.334 0.496 -0.868 5.653 -74.894)" y="5.1" font-size="14.1">1</text><path d="M0 -25.7L335.5 -206.3L199.3 -380.2L-136.2 -199.5ZM4.7 -44.1L313.3 -210.2L194.6 -361.8L-114 -195.6Z" fill="#171C22" fill-rule="evenodd"/><path d="M0 3.9L335.5 -176.7L335.5 -206.3L0 -25.7Z" fill="#171C22"/><path d="M0 3.9L-136.2 -169.9L-136.2 -199.5L0 -25.7Z" fill="#171C22"/><path d="M-70.2 -68.8L-50.1 -79.6L-86.1 -125.5L-106.2 -114.7Z" fill="#171C22"/><path d="M-70.2 -59.8L-50.1 -70.7L-50.1 -79.6L-70.2 -68.8Z" fill="#171C22"/><path d="M-70.2 -59.8L-106.2 -105.7L-106.2 -114.7L-70.2 -68.8Z" fill="#171C22"/><path d="M-269.4 -558.6L527.4 89.8L1017.8 -324.3L221 -972.8Z" fill="#171C22"/><path d="M-269.4 -544.1L527.4 104.4L527.4 89.8L-269.4 -558.6Z" fill="#171C22"/><path d="M108.3 -298.8L237.8 -172.5L250.8 -181.7L121.2 -308Z" fill="#171C22"/><path d="M108.3 -297.7L237.8 -171.4L237.8 -172.5L108.3 -298.8Z" fill="#171C22"/><path d="M121.3 -286.2L125.8 -289.4"/><path d="M134.2 -273.6L141.1 -278.4"/><path d="M147.2 -260.9L151.7 -264.2"/><path d="M160.1 -248.3L167 -253.2"/><path d="M173.1 -235.7L177.6 -238.9"/><path d="M186 -223.1L192.9 -227.9"/><path d="M199 -210.4L203.6 -213.6"/><path d="M211.9 -197.8L218.8 -202.6"/><path d="M224.9 -185.2L229.5 -188.4"/>
+    </g>
+  </svg>
   <div class="wrap">
     <p class="sec">Lines worth keeping <i>in every recap</i></p>
-    <p class="kept rv">&ldquo;A natural one. <span class="ul draw">On an unlocked door.</span>&rdquo;</p>
-    <p class="kept-by rv" style="--i:2">DM · session 21 · 0:08:21</p>
+    <p class="kept rv" id="kept">&ldquo;A natural one. <span class="ul draw">On an unlocked door.</span>&rdquo;</p>
+    <div class="kept-dots" id="kept-dots" aria-hidden="true"></div>
+    <p class="kept-by rv" id="kept-by" style="--i:2">DM · session 21 · 0:08:21</p>
     <p class="lead rv" style="--i:1">Every recap picks out the moments the table will want to read back. Nobody has to remember to write them down.</p>
     <div class="more-kept rv" style="--i:3">
       <p>&ldquo;I roll to seduce the ledger.&rdquo;<span>Bex · session 14 · 0:41:02</span></p>
@@ -434,6 +539,12 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
     <p class="lead rv" style="--i:1">Set a campaign up once, in Discord or on the web. Start and stop recording with one command each, and Quill writes up the rest.</p>
 
     <div class="outs">
+      <svg class="inkmark die" viewBox="-44.6 -56.3 117.8 81.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+      <!-- A d4 sitting on its base, its 4 turned towards the heading.
+           Generated by a small 3D model (design/d4corner.cjs). -->
+      <g font-family="Spline Sans Mono, monospace" text-anchor="middle" fill="currentColor" stroke="none"><text transform="matrix(0.669 0.372 -0.248 0.928 -10.583 -12.677)" y="13.4" font-size="26.7" font-weight="500">4</text><text transform="matrix(0.309 -0.476 0.317 0.868 13.544 -15.242)" y="10.1" font-size="20.3">1</text></g>
+      <path d="M-40.6 -6.6L8.9 20.9L0 -52.3Z"/><path d="M8.9 20.9L31.8 -14.3L0 -52.3Z"/><path d="M68.2 9.3L69.1 9M20.4 18.6L65.1 6.4M11.1 17.5L60.7 3.9M14.1 12.9L56.7 1.3M17.2 8.4L52.7 -1.3M20.2 3.9L48.3 -3.8M23.2 -0.6L44.3 -6.4M25.8 -5.1L39.9 -8.9M28.8 -9.6L35.9 -11.5M31.9 -14.1L31.9 -14.1" stroke-width="1"/>
+    </svg>
       <article class="out rv">
         <div class="out-key">#tomb-of-annihilation</div>
         <h3 class="out-h">The recap</h3>
@@ -460,6 +571,8 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
 
 <!-- ── NAMES ───────────────────────────────────────────────────────── -->
 <section class="band names" id="names">
+  <svg class="inkmark inkline" viewBox="0 0 1000 30" preserveAspectRatio="none" fill="currentColor" aria-hidden="true"><path d="M0 10.82L7.7 10.31L15.5 10.02L23.2 9.67L30.9 9.67L38.6 9.58L46.4 9.42L54.1 9.33L61.8 9.22L69.5 9.37L77.3 9.36L85 9.33L92.7 9.36L100.5 9.33L108.2 9.42L115.9 9.5L123.6 9.74L131.4 9.29L139.1 9.46L146.8 9.58L154.5 9.85L162.3 10.02L170 10.1L177.7 10.17L185.5 10.29L193.2 10.45L200.9 10.54L208.6 10.53L216.4 10.68L224.1 10.71L231.8 10.75L239.5 10.77L247.3 10.81L255 10.87L262.7 10.71L270.5 10.58L278.2 10.59L285.9 10.64L293.6 10.76L301.4 10.81L309.1 10.12L316.8 10.23L324.5 10.3L332.3 10.33L340 10.42L347.7 10.48L355.5 10.1L363.2 10.39L370.9 10.74L378.6 11.07L386.4 10.98L394.1 11.33L401.8 11.67L409.5 11.93L417.3 12.28L425 12.59L432.7 12.94L440.5 13.34L448.2 13.72L455.9 14.04L463.6 14.38L471.4 14.68L479.1 15.05L486.8 15.44L494.5 15.79L502.3 16.23L510 16.67L510 16.67L502.3 16.54L494.5 16.48L486.8 16.1L479.1 15.87L471.4 15.74L463.6 15.56L455.9 15.4L448.2 15.24L440.5 15.04L432.7 14.84L425 14.6L417.3 14.35L409.5 14.16L401.8 14.03L394.1 13.83L386.4 13.64L378.6 13.24L370.9 13.13L363.2 13.05L355.5 12.9L347.7 12.39L340 12.3L332.3 12.43L324.5 12.45L316.8 12.42L309.1 12.57L301.4 12.06L293.6 12.03L285.9 11.99L278.2 12.02L270.5 12.14L262.7 12.18L255 12.24L247.3 12.25L239.5 12.36L231.8 12.47L224.1 12.36L216.4 12.29L208.6 12.23L200.9 12.22L193.2 12.3L185.5 12.26L177.7 12.26L170 12.18L162.3 12.07L154.5 12.06L146.8 12.05L139.1 12.07L131.4 12.2L123.6 11.62L115.9 11.45L108.2 11.46L100.5 11.42L92.7 11.41L85 11.36L77.3 11.34L69.5 11.23L61.8 11.16L54.1 11.12L46.4 11.1L38.6 11.1L30.9 11.26L23.2 11.29L15.5 11.05L7.7 10.85L0 10.82ZM620 18.21L627.8 17.98L635.5 17.93L643.3 18.06L651 17.96L658.8 17.78L666.5 17.78L674.3 17.81L682 17.79L689.8 17.37L697.6 17.32L705.3 17.34L713.1 17.37L720.8 17.31L728.6 17.18L736.3 17.31L744.1 17.28L751.8 16.87L759.6 17.11L767.3 17.17L775.1 17.29L782.9 17.48L790.6 17.59L798.4 17.74L806.1 17.86L813.9 17.92L821.6 18.09L829.4 18.12L837.1 18.28L844.9 18.36L852.7 18.43L860.4 18.44L868.2 18.52L875.9 18.59L883.7 18.2L891.4 18.25L899.2 18.25L906.9 18.23L914.7 18.27L922.4 18.23L930.2 18.11L938 18.01L945.7 17.84L953.5 17.74L961.2 17.58L969 17.31L976.7 17.09L984.5 16.83L992.2 16.52L1000 16.33L1000 16.33L992.2 16.59L984.5 16.97L976.7 17.3L969 17.59L961.2 17.92L953.5 18.21L945.7 18.43L938 18.51L930.2 18.76L922.4 19.03L914.7 19.22L906.9 19.35L899.2 19.59L891.4 19.78L883.7 20.03L875.9 19.67L868.2 19.7L860.4 19.84L852.7 19.92L844.9 19.95L837.1 19.91L829.4 19.79L821.6 19.7L813.9 19.66L806.1 19.58L798.4 19.62L790.6 19.67L782.9 19.62L775.1 19.65L767.3 19.63L759.6 19.61L751.8 19.74L744.1 19.14L736.3 19.1L728.6 19.07L720.8 19.12L713.1 19.29L705.3 19.37L697.6 19.62L689.8 19.67L682 19.34L674.3 19.49L666.5 19.57L658.8 19.66L651 19.79L643.3 19.98L635.5 20.07L627.8 20.18L620 19.79Z"/></svg>
+  <svg class="inkmark blot" style="--u:0.62;--cx:98.2;--cy:35.8;--dy:4" viewBox="0 0 300 70" fill="currentColor" aria-hidden="true"><path d="M105.6 35.2C105.7 36.4 104.5 38.9 103.7 39.9C102.9 40.9 102 41 100.9 41.3C99.9 41.7 98.6 42.3 97.5 41.9C96.3 41.6 95.1 39.9 94.1 39.3C93.2 38.6 92.1 39 91.8 38.1C91.6 37.2 92.5 35.1 92.8 33.8C93 32.5 92.9 31.1 93.5 30.4C94.1 29.6 95 29.4 96.4 29.3C97.8 29.2 100.6 29.2 101.8 29.8C102.9 30.4 102.7 31.8 103.3 32.7C103.9 33.6 105.5 34 105.6 35.2ZM96.5 35.7C96.7 36.1 96.5 36.7 96.2 37.1C95.9 37.6 95.5 38.2 94.9 38.4C94.3 38.6 93.2 38.4 92.6 38.2C92.1 38.1 92.1 37.7 91.7 37.5C91.3 37.3 90.3 37.3 90.2 36.9C90.1 36.4 90.8 35.4 91.1 34.8C91.3 34.3 91.4 33.9 91.7 33.6C92 33.3 92.3 33.2 92.8 33.2C93.3 33.1 94 33.1 94.4 33.3C94.8 33.5 94.7 33.9 95 34.3C95.4 34.7 96.3 35.2 96.5 35.7ZM87.8 39.5C87.8 39.8 87.5 40.3 87.2 40.4C86.8 40.6 86.1 40.5 85.8 40.4C85.6 40.2 85.5 39.8 85.5 39.5C85.5 39.2 85.7 38.6 85.9 38.5C86.2 38.3 86.8 38.3 87.1 38.4C87.4 38.6 87.7 39.2 87.8 39.5ZM105.1 41.8C105.2 42 105 42.2 104.9 42.3C104.7 42.4 104.3 42.5 104.1 42.4C104 42.3 103.8 42.1 103.8 41.9C103.8 41.7 104 41.5 104.2 41.4C104.4 41.3 104.7 41.3 104.9 41.3C105 41.4 105.1 41.7 105.1 41.8ZM77.1 34.1C77.1 34.5 76.8 35.1 76.4 35.4C76.1 35.6 75.1 35.7 74.7 35.5C74.3 35.4 74.2 34.8 74.2 34.4C74.3 34 74.7 33.4 75.1 33.2C75.5 33 76.1 32.9 76.4 33.1C76.7 33.2 77.1 33.8 77.1 34.1ZM84.4 42.5C84.4 42.8 84.2 43.3 83.9 43.5C83.6 43.7 82.8 43.8 82.5 43.7C82.2 43.5 82.2 42.8 82.2 42.4C82.2 42.1 82.5 41.8 82.8 41.6C83.1 41.4 83.7 41.1 84 41.3C84.3 41.4 84.4 42.1 84.4 42.5ZM110.7 35C110.7 35.1 110.6 35.3 110.4 35.3C110.3 35.4 110 35.5 109.9 35.5C109.8 35.4 109.7 35.1 109.7 34.9C109.7 34.8 109.8 34.5 109.9 34.5C110.1 34.4 110.4 34.5 110.5 34.6C110.6 34.6 110.7 34.8 110.7 35ZM100 23.9C99.9 24.3 99.1 24.9 98.6 25.2C98.1 25.4 97.3 25.4 96.9 25.2C96.4 25 95.8 24.4 95.9 24C95.9 23.6 96.6 22.8 97.1 22.5C97.6 22.3 98.5 22.3 99 22.5C99.5 22.7 100.1 23.4 100 23.9ZM106.3 40.2C106.3 40.3 106.1 40.4 105.9 40.5C105.8 40.5 105.6 40.6 105.4 40.6C105.3 40.5 105.1 40.3 105.1 40.1C105.1 40 105.3 39.8 105.4 39.8C105.5 39.7 105.8 39.7 105.9 39.8C106.1 39.8 106.3 40.1 106.3 40.2ZM87.9 35.7C87.9 35.9 87.3 36.3 87 36.5C86.8 36.8 86.6 37 86.3 37.2C86 37.3 85.5 37.3 85.2 37.2C84.9 37.2 84.7 37.1 84.4 37C84.1 36.8 83.7 36.6 83.6 36.3C83.5 35.9 83.7 35.5 83.8 35.1C83.8 34.8 83.8 34.5 84 34.2C84.3 34 84.8 33.6 85.2 33.6C85.6 33.6 85.9 34.1 86.3 34.3C86.6 34.6 86.8 34.8 87.1 35C87.4 35.2 87.9 35.4 87.9 35.7ZM77.8 36C77.7 36.4 77.5 36.8 77.2 37.1C76.8 37.3 76 37.6 75.5 37.5C75.1 37.3 74.4 36.6 74.4 36.1C74.4 35.6 74.9 34.7 75.4 34.5C75.8 34.3 76.8 34.5 77.2 34.7C77.6 35 77.8 35.6 77.8 36ZM62.6 35.4C62.6 35.7 62.2 35.9 61.9 36C61.6 36.2 61.1 36.2 60.9 36.1C60.6 36 60.3 35.5 60.3 35.2C60.3 34.9 60.4 34.6 60.7 34.4C61 34.2 61.8 34 62.1 34.1C62.4 34.3 62.6 35 62.6 35.4ZM44.1 35.3C44.1 35.6 44 36.1 43.7 36.2C43.5 36.3 43.1 36.1 42.9 35.9C42.7 35.8 42.4 35.7 42.4 35.5C42.4 35.3 42.6 34.8 42.8 34.7C43.1 34.6 43.6 34.7 43.8 34.8C44 34.9 44.1 35.1 44.1 35.3Z"/><path d="M98.2 32.5Q104.9 33.5 118.1 35.8Q104.9 38.1 98.2 39.1Z"/></svg>
   <div class="wrap">
     <div>
       <p class="sec">Names <i>02</i></p>
@@ -468,10 +581,10 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
       <p class="aside">Before a fix applies, Quill tells you how many lines it will change. Taking a fix back restores every one of them.</p>
     </div>
     <div>
-      <div class="tx rv">
+      <div class="tx rv live" id="tx">
         <div class="tx-head">
           <span>transcript/tomb-of-annihilation/session-14.md</span>
-          <span class="tx-state">as written</span>
+          <span class="tx-state" id="tx-state">as heard</span>
         </div>
         <div class="tx-body">
           <div class="tx-line"><span class="tx-t">0:41:02</span><span class="tx-s">Bex</span><span class="tx-x">I roll to seduce the ledger.</span></div>
@@ -488,6 +601,8 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
 
 <!-- ── CONSENT ─────────────────────────────────────────────────────── -->
 <section class="band" id="consent">
+  <svg class="inkmark inkline" viewBox="0 0 1000 30" preserveAspectRatio="none" fill="currentColor" aria-hidden="true"><path d="M0 15.4L7.7 15.26L15.4 15.23L23.1 15.45L30.8 15.49L38.5 15.62L46.2 15.2L53.8 15.3L61.5 15.44L69.2 15.65L76.9 15.32L84.6 15.42L92.3 15.49L100 15.69L107.7 15.67L115.4 15.81L123.1 15.99L130.8 16L138.5 15.98L146.2 16L153.8 16.12L161.5 16.19L169.2 16.35L176.9 16.44L184.6 16.53L192.3 16.64L200 16.71L207.7 16.83L215.4 16.88L223.1 16.38L230.8 16.46L238.5 16.56L246.2 16.67L253.8 16.91L261.5 17.08L269.2 17.26L276.9 17.23L284.6 17.29L292.3 17.42L300 17.42L307.7 17.6L315.4 17.53L323.1 17.64L330.8 17.71L338.5 17.76L346.2 17.84L353.8 17.81L361.5 17.82L369.2 17.77L376.9 17.58L384.6 17.46L392.3 17.43L400 17.3L407.7 17.21L415.4 17.05L423.1 16.82L430.8 16.66L438.5 16.53L446.2 16.35L453.8 16.21L461.5 15.85L469.2 15.58L476.9 15.25L484.6 15.02L492.3 14.64L500 14.22L507.7 13.87L515.4 13.61L523.1 13.28L530.8 12.94L538.5 12.63L546.2 12.41L553.8 12.04L561.5 11.72L569.2 11.4L576.9 11.07L584.6 10.26L592.3 10.24L600 10.21L607.7 10.04L615.4 9.75L623.1 9.79L630.8 9.66L638.5 9.67L646.2 9.49L653.8 9.47L661.5 9.31L669.2 8.86L676.9 8.9L684.6 9.06L692.3 8.65L700 8.88L707.7 9.09L715.4 9.12L723.1 9.15L730.8 9.27L738.5 9.32L746.2 9.55L753.8 9.6L761.5 9.73L769.2 9.8L776.9 9.94L784.6 10.06L792.3 10.25L800 10.33L807.7 10.53L815.4 10.67L823.1 10.79L830.8 10.94L838.5 11.15L846.2 11.33L853.8 11.52L861.5 11.61L869.2 11.7L876.9 11.76L884.6 11.84L892.3 11.94L900 12.02L907.7 12.18L915.4 12.26L923.1 12.42L930.8 12.44L938.5 12.57L946.2 12.57L953.8 12.61L961.5 12.74L969.2 12.9L976.9 12.96L984.6 13.01L992.3 13.12L1000 13.31L1000 13.31L992.3 13.17L984.6 13.1L976.9 13.1L969.2 13.1L961.5 13.01L953.8 12.92L946.2 12.92L938.5 12.95L930.8 12.93L923.1 13.02L915.4 12.93L907.7 12.85L900 12.82L892.3 12.7L884.6 12.59L876.9 12.65L869.2 12.65L861.5 12.54L853.8 12.47L846.2 12.42L838.5 12.42L830.8 12.38L823.1 12.32L815.4 12.28L807.7 12.19L800 12.14L792.3 12.16L784.6 12.07L776.9 12.04L769.2 11.78L761.5 11.7L753.8 11.73L746.2 11.76L738.5 11.62L730.8 11.51L723.1 11.54L715.4 11.55L707.7 11.59L700 11.62L692.3 11.76L684.6 11.42L676.9 11.52L669.2 11.53L661.5 11.26L653.8 11.37L646.2 11.49L638.5 11.75L630.8 11.92L623.1 12.09L615.4 12.39L607.7 12.54L600 12.97L592.3 13.31L584.6 13.66L576.9 13.32L569.2 13.7L561.5 14.02L553.8 14.34L546.2 14.69L538.5 14.93L530.8 15.1L523.1 15.48L515.4 15.81L507.7 16.02L500 16.31L492.3 16.67L484.6 17.03L476.9 17.29L469.2 17.49L461.5 17.61L453.8 17.96L446.2 18.13L438.5 18.41L430.8 18.69L423.1 18.93L415.4 19.05L407.7 19.22L400 19.4L392.3 19.61L384.6 19.78L376.9 19.91L369.2 20.04L361.5 20.15L353.8 20.1L346.2 20.03L338.5 20.02L330.8 19.97L323.1 19.9L315.4 19.91L307.7 19.86L300 19.84L292.3 19.75L284.6 19.54L276.9 19.39L269.2 19.34L261.5 19.37L253.8 19.24L246.2 19.21L238.5 19.13L230.8 19.13L223.1 19.15L215.4 18.5L207.7 18.5L200 18.54L192.3 18.5L184.6 18.27L176.9 18.06L169.2 18.16L161.5 18.07L153.8 18.11L146.2 18.13L138.5 18.09L130.8 18L123.1 17.99L115.4 18.04L107.7 18.04L100 18.04L92.3 18.14L84.6 18.31L76.9 18.43L69.2 18.14L61.5 18.22L53.8 18.44L46.2 18.56L38.5 18.01L30.8 17.9L23.1 17.91L15.4 17.74L7.7 17.61L0 17.11Z"/></svg>
+  <svg class="inkmark blot" style="--u:0;--cx:107.3;--cy:35;--dy:1.2" viewBox="0 0 300 70" fill="currentColor" aria-hidden="true"><path d="M114.1 34.6C114.1 35.9 114.3 38.7 113.6 39.5C113 40.4 111.2 39.5 110.1 39.9C109 40.4 108.2 42.4 106.9 42.3C105.7 42.2 103.7 40.1 102.5 39.3C101.2 38.5 100 38.4 99.6 37.4C99.3 36.3 100.1 34.2 100.4 32.9C100.6 31.6 100 30.6 101.1 29.8C102.2 29 105.4 28 107 28C108.6 28 109.6 29.2 110.7 29.7C111.8 30.3 113 30.8 113.5 31.6C114.1 32.4 114.1 33.3 114.1 34.6ZM104.5 34.8C104.5 35.2 104.2 35.8 103.9 36.3C103.5 36.7 102.8 37.2 102.3 37.4C101.8 37.6 101.4 37.3 100.8 37.3C100.3 37.3 99.4 37.8 99 37.6C98.7 37.4 99 36.5 98.8 35.9C98.7 35.4 98.3 34.9 98.3 34.4C98.4 33.9 98.7 33 99.2 32.7C99.6 32.4 100.6 32.6 101.2 32.5C101.7 32.4 102.1 31.9 102.6 32.1C103.1 32.3 103.8 33.2 104.1 33.7C104.4 34.1 104.5 34.4 104.5 34.8ZM90.8 25.7C90.8 26 90.8 26.5 90.6 26.6C90.4 26.7 89.9 26.6 89.6 26.4C89.3 26.3 89 25.9 89 25.6C89 25.4 89.4 25.1 89.6 25C89.9 24.9 90.5 24.8 90.7 24.9C90.9 25 90.8 25.4 90.8 25.7ZM115.7 43.9C115.7 44.1 115.5 44.3 115.4 44.4C115.2 44.5 114.9 44.6 114.7 44.5C114.6 44.4 114.4 44 114.4 43.9C114.5 43.7 114.7 43.5 114.8 43.4C115 43.3 115.3 43.3 115.4 43.4C115.6 43.5 115.7 43.7 115.7 43.9ZM102.2 44.6C102.2 44.8 102.1 45.1 102 45.1C101.8 45.2 101.5 45.1 101.3 45C101.2 45 101.1 44.8 101.1 44.6C101.1 44.5 101.1 44.2 101.3 44.1C101.5 44 101.8 44.1 102 44.2C102.1 44.3 102.2 44.5 102.2 44.6ZM88.2 38.2C88.2 38.4 87.9 38.7 87.7 38.8C87.5 38.9 87 39.1 86.9 39C86.7 38.9 86.7 38.5 86.7 38.3C86.7 38 86.7 37.6 86.9 37.5C87.1 37.3 87.6 37.4 87.8 37.5C88 37.6 88.2 38 88.2 38.2ZM91.3 27C91.3 27.4 90.7 27.8 90.4 27.9C90.1 28.1 89.8 28 89.6 27.8C89.3 27.6 88.8 27.2 88.8 26.9C88.8 26.7 89.1 26.5 89.4 26.3C89.7 26.2 90.2 25.9 90.5 26C90.8 26.1 91.3 26.7 91.3 27ZM103.9 28.7C103.9 29.1 103.9 29.5 103.7 29.7C103.4 29.9 102.6 30 102.3 29.8C102 29.7 101.9 29.2 101.9 28.8C101.9 28.4 102.1 27.9 102.4 27.7C102.6 27.5 103.3 27.4 103.6 27.6C103.8 27.8 103.8 28.4 103.9 28.7ZM119.7 43.1C119.7 43.3 119.4 43.6 119.2 43.7C119 43.8 118.7 43.8 118.4 43.7C118.2 43.6 117.9 43.3 117.9 43.1C117.8 42.8 118 42.5 118.3 42.4C118.5 42.3 119.1 42.2 119.3 42.3C119.5 42.4 119.8 42.8 119.7 43.1ZM122.1 32.7C122.1 32.9 121.6 33.2 121.3 33.4C121 33.5 120.6 33.5 120.3 33.4C120 33.3 119.6 33.1 119.6 32.8C119.6 32.5 120 32 120.3 31.9C120.6 31.7 121.1 31.7 121.4 31.9C121.7 32 122.1 32.4 122.1 32.7ZM122.7 30.1C122.7 30.3 122.6 30.6 122.4 30.7C122.2 30.8 121.8 30.9 121.6 30.8C121.4 30.7 121.2 30.5 121.2 30.2C121.2 30 121.5 29.4 121.7 29.3C121.8 29.2 122.2 29.4 122.4 29.5C122.5 29.6 122.7 29.9 122.7 30.1ZM122.1 34.1C122 34.4 121.4 34.7 121.2 35.1C120.9 35.5 120.8 36.4 120.5 36.6C120.3 36.8 119.8 36.5 119.5 36.4C119.1 36.3 118.6 36.2 118.2 36C117.9 35.7 117.5 35.3 117.5 34.9C117.4 34.5 118 34.2 118.1 33.8C118.1 33.4 117.6 32.9 117.8 32.6C117.9 32.3 118.6 32 119.1 32C119.5 31.9 119.9 32.2 120.3 32.4C120.8 32.6 121.4 33.1 121.7 33.4C122 33.6 122.2 33.8 122.1 34.1ZM131 30.4C131 30.9 130.4 31.5 129.9 31.8C129.3 32 128.3 31.9 127.8 31.6C127.4 31.3 127 30.6 127 30.1C127 29.6 127.3 28.6 127.8 28.4C128.2 28.1 129.2 28.3 129.8 28.6C130.3 28.9 131 29.8 131 30.4ZM141.5 26.1C141.5 26.5 141.2 27.3 140.8 27.5C140.4 27.7 139.6 27.8 139.2 27.6C138.7 27.4 138.3 26.6 138.3 26.2C138.3 25.8 139 25.4 139.4 25.2C139.8 25.1 140.3 24.9 140.7 25.1C141 25.2 141.5 25.7 141.5 26.1ZM157.4 20.4C157.4 20.7 157.1 21.1 156.9 21.3C156.6 21.5 156.1 21.6 155.8 21.5C155.6 21.3 155.4 20.7 155.4 20.4C155.4 20.1 155.7 19.9 156 19.7C156.3 19.5 156.8 19.2 157.1 19.3C157.3 19.4 157.4 20 157.4 20.4ZM173.9 12.2C173.9 12.4 173.8 12.5 173.6 12.6C173.5 12.7 173.2 12.9 173.1 12.8C172.9 12.7 172.7 12.3 172.7 12.2C172.7 12 172.9 11.9 173.1 11.8C173.2 11.7 173.6 11.7 173.7 11.8C173.8 11.9 173.9 12.1 173.9 12.2Z"/><path d="M107.3 31.4Q115.6 32.5 131.1 35Q115.6 37.6 107.3 38.7Z"/></svg>
   <div class="wrap">
     <div class="split">
       <div>
@@ -515,8 +630,10 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
 
 <!-- ── START ───────────────────────────────────────────────────────── -->
 <section class="band" id="start">
+  <svg class="inkmark inkline rtl" viewBox="0 0 1000 30" preserveAspectRatio="none" fill="currentColor" aria-hidden="true"><path d="M1000 18.07L992.3 17.47L984.6 17.29L976.9 17.17L969.2 16.98L961.5 16.74L953.8 16.55L946.2 16.31L938.5 16.18L930.8 16.14L923.1 15.98L915.4 15.93L907.7 15.77L900 15.51L892.3 15.48L884.6 15.29L876.9 15.12L869.2 15.14L861.5 15.1L853.8 14.97L846.2 14.88L838.5 14.86L830.8 14.79L823.1 14.74L815.4 14.79L807.7 14.59L800 14.62L792.3 14.54L784.6 14.62L776.9 14.59L769.2 14.5L761.5 14.53L753.8 14.53L746.2 14.47L738.5 14.33L730.8 14.25L723.1 14.19L715.4 14.05L707.7 13.87L700 13.7L692.3 13.43L684.6 13.3L676.9 13.17L669.2 12.89L661.5 12.61L653.8 12.34L646.2 12.11L638.5 11.83L630.8 11.49L623.1 11.32L615.4 11.13L607.7 10.92L600 10.64L592.3 10.44L584.6 10.22L576.9 10.07L569.2 9.82L561.5 9.76L553.8 9.69L546.2 8.88L538.5 9.02L530.8 9.26L523.1 9.29L515.4 9.45L507.7 9.69L500 9.9L492.3 10.1L484.6 10.4L476.9 10.66L469.2 10.86L461.5 11.19L453.8 11.03L446.2 11.44L438.5 11.82L430.8 12.11L423.1 12.46L415.4 12.75L407.7 13.11L400 13.35L392.3 13.58L384.6 14.01L376.9 14.38L369.2 14.74L361.5 15.08L353.8 15.33L346.2 15.52L338.5 15.72L330.8 15.86L323.1 16.01L315.4 16.12L307.7 16.22L300 16.37L292.3 16.59L284.6 16.57L276.9 16.73L269.2 16.87L261.5 16.89L253.8 16.93L246.2 16.96L238.5 17.07L230.8 16.45L223.1 16.43L215.4 16.54L207.7 16.65L200 16.71L192.3 16.72L184.6 16.82L176.9 16.91L169.2 16.53L161.5 16.79L153.8 16.92L146.2 17.13L138.5 17.28L130.8 17.5L123.1 17.75L115.4 17.98L107.7 18.11L100 18.19L92.3 18.35L84.6 18.55L76.9 18.71L69.2 18.79L61.5 19.01L53.8 19.1L46.2 19.21L38.5 19.29L30.8 19.22L23.1 19.3L15.4 19.41L7.7 19.36L0 19.45L0 19.45L7.7 19.46L15.4 19.6L23.1 19.63L30.8 19.7L38.5 19.57L46.2 19.53L53.8 19.49L61.5 19.41L69.2 19.29L76.9 19.3L84.6 19.22L92.3 19.12L100 19.06L107.7 19.02L115.4 18.93L123.1 18.86L130.8 18.8L138.5 18.82L146.2 18.92L153.8 18.99L161.5 19.15L169.2 19.31L176.9 18.67L184.6 18.8L192.3 18.7L200 18.66L207.7 18.7L215.4 18.76L223.1 18.74L230.8 18.89L238.5 18.36L246.2 18.35L253.8 18.27L261.5 18.17L269.2 18.27L276.9 18.22L284.6 18.05L292.3 18.02L300 17.82L307.7 17.67L315.4 17.62L323.1 17.37L330.8 17.36L338.5 17.15L346.2 16.91L353.8 16.6L361.5 16.27L369.2 15.95L376.9 15.65L384.6 15.35L392.3 14.98L400 14.65L407.7 14.4L415.4 14.1L423.1 13.94L430.8 13.78L438.5 13.46L446.2 13.22L453.8 13.06L461.5 12.35L469.2 12.17L476.9 11.9L484.6 11.72L492.3 11.47L500 11.39L507.7 11.35L515.4 11.23L523.1 11.3L530.8 11.41L538.5 11.53L546.2 11.62L553.8 11.09L561.5 11.1L569.2 11.31L576.9 11.47L584.6 11.64L592.3 11.79L600 11.84L607.7 12.1L615.4 12.41L623.1 12.73L630.8 12.99L638.5 13.25L646.2 13.46L653.8 13.81L661.5 14.08L669.2 14.22L676.9 14.43L684.6 14.67L692.3 14.94L700 15.24L707.7 15.37L715.4 15.66L723.1 15.81L730.8 15.92L738.5 16.01L746.2 16.3L753.8 16.32L761.5 16.35L769.2 16.48L776.9 16.52L784.6 16.58L792.3 16.6L800 16.71L807.7 16.69L815.4 16.76L823.1 16.84L830.8 16.9L838.5 16.92L846.2 16.87L853.8 16.89L861.5 16.93L869.2 17.08L876.9 17.12L884.6 17.25L892.3 17.45L900 17.64L907.7 17.79L915.4 18.02L923.1 18.17L930.8 18.29L938.5 18.43L946.2 18.6L953.8 18.87L961.5 19L969.2 19.25L976.9 19.47L984.6 19.89L992.3 20.04L1000 19.81Z"/></svg>
+  <svg class="inkmark blot" style="--u:1;--cx:194.5;--cy:36.4;--dy:4" viewBox="0 0 300 70" fill="currentColor" aria-hidden="true"><path d="M201.6 36.7C201.6 37.7 200.4 38 199.7 39C199 40 198.4 42.4 197.4 42.8C196.4 43.3 194.9 42 193.6 41.9C192.3 41.8 190.4 42.8 189.6 42.1C188.8 41.4 189.1 38.8 188.8 37.7C188.6 36.6 188.1 36.2 188.3 35.3C188.4 34.4 189 33.1 189.9 32.4C190.7 31.7 192.2 31.3 193.4 31.1C194.5 30.9 195.6 31 196.7 31.3C197.8 31.6 199.3 32.2 200.1 33C200.9 33.9 201.7 35.7 201.6 36.7ZM204.4 39.4C204.4 40.1 205 40.3 204.6 40.7C204.3 41 203 41.2 202.4 41.5C201.7 41.8 201 42.5 200.5 42.5C200 42.4 199.7 41.8 199.4 41.4C199 41 198.6 40.5 198.4 40.1C198.3 39.6 198.3 39.1 198.4 38.6C198.4 38 198.4 37.2 198.7 36.8C199 36.3 199.8 35.8 200.5 35.8C201.1 35.8 201.9 36.4 202.5 36.5C203.1 36.7 203.9 36.4 204.2 36.8C204.5 37.3 204.3 38.8 204.4 39.4ZM202.9 29.4C203 29.7 202.4 29.9 202 30.1C201.7 30.2 201.3 30.4 200.9 30.2C200.6 30.1 200.2 29.6 200.2 29.3C200.1 28.9 200.4 28.3 200.7 28.1C201 27.9 201.6 27.8 202 28.1C202.4 28.3 202.9 29 202.9 29.4ZM189.6 41.8C189.6 42 189.3 42.1 189.2 42.2C189 42.3 188.8 42.4 188.6 42.3C188.5 42.3 188.5 42 188.5 41.8C188.4 41.7 188.5 41.4 188.6 41.3C188.7 41.2 189 41.3 189.2 41.3C189.4 41.4 189.6 41.7 189.6 41.8ZM212.8 46.1C212.8 46.2 212.5 46.4 212.2 46.5C212 46.6 211.7 46.8 211.5 46.7C211.4 46.7 211.4 46.3 211.4 46.1C211.4 45.8 211.4 45.6 211.5 45.5C211.7 45.4 212 45.5 212.3 45.6C212.5 45.7 212.8 45.9 212.8 46.1ZM208 32.7C208 32.8 207.7 33.2 207.5 33.2C207.3 33.3 207 33.2 206.9 33.1C206.8 33 206.8 32.9 206.8 32.7C206.7 32.6 206.7 32.2 206.8 32.1C206.9 32.1 207.3 32.2 207.4 32.3C207.6 32.4 208 32.5 208 32.7ZM208.1 28.5C208.1 28.9 207.9 29.7 207.5 29.9C207.2 30.1 206.4 30 206.1 29.7C205.8 29.5 205.7 28.9 205.7 28.6C205.7 28.2 205.8 27.6 206 27.5C206.3 27.4 207 27.6 207.3 27.8C207.7 28 208 28.2 208.1 28.5ZM204.5 22.3C204.5 22.5 204.5 22.7 204.4 22.8C204.2 22.9 203.8 22.9 203.7 22.8C203.5 22.7 203.4 22.5 203.4 22.4C203.5 22.2 203.6 21.9 203.7 21.8C203.9 21.7 204.2 21.8 204.3 21.9C204.5 22 204.5 22.2 204.5 22.3ZM218.5 35.9C218.5 36.4 218.4 37.1 218 37.3C217.7 37.4 216.9 37.1 216.5 36.9C216.1 36.6 215.7 36.1 215.7 35.7C215.7 35.4 216.2 34.9 216.5 34.7C216.9 34.5 217.7 34.4 218 34.6C218.4 34.8 218.5 35.5 218.5 35.9ZM206.4 33.8C206.4 34.1 206.5 34.6 206.2 34.8C205.9 35 205 35.1 204.7 34.9C204.4 34.8 204.2 34.1 204.2 33.8C204.3 33.5 204.7 33.2 205 33C205.3 32.9 205.8 32.7 206 32.8C206.3 32.9 206.4 33.5 206.4 33.8ZM188.1 41.5C188.1 41.6 188 41.9 187.9 42C187.7 42 187.5 41.9 187.4 41.8C187.2 41.7 187.1 41.6 187.1 41.5C187.1 41.4 187.1 41.1 187.3 41.1C187.4 41 187.7 40.9 187.9 41C188 41 188.1 41.3 188.1 41.5ZM183.8 35.4C183.7 35.7 183.5 35.9 183.3 36.2C183.2 36.5 183 37.3 182.8 37.4C182.5 37.6 182 37.2 181.7 37.1C181.3 37.1 180.8 37.3 180.5 37.2C180.2 37 180.2 36.4 180.1 36C180.1 35.6 180.1 35.3 180.2 35C180.3 34.6 180.4 34.2 180.6 33.9C180.8 33.7 181.2 33.4 181.5 33.3C181.8 33.2 182.2 33.2 182.6 33.4C182.9 33.6 183.4 34.2 183.6 34.5C183.9 34.8 183.9 35.1 183.8 35.4ZM173.8 31.5C173.8 32 173.6 32.7 173.2 33C172.8 33.2 171.9 33.2 171.4 32.9C170.9 32.7 170.2 31.9 170.3 31.4C170.3 31 171.2 30.5 171.7 30.3C172.2 30.1 172.8 30 173.2 30.2C173.5 30.4 173.8 31 173.8 31.5ZM160.5 28C160.4 28.4 159.8 29 159.4 29.1C159.1 29.3 158.8 29.2 158.4 29C158.1 28.8 157.5 28.3 157.4 27.9C157.4 27.5 157.6 27 158 26.7C158.4 26.5 159.2 26.4 159.6 26.6C160.1 26.8 160.5 27.5 160.5 28ZM141.3 22.6C141.3 23 140.9 23.3 140.6 23.5C140.3 23.6 139.6 23.8 139.3 23.6C139.1 23.5 139.1 22.9 139.1 22.6C139.2 22.3 139.3 22 139.6 21.9C139.9 21.7 140.5 21.5 140.8 21.6C141.1 21.8 141.3 22.3 141.3 22.6ZM121.8 15.4C121.8 15.5 121.6 15.7 121.4 15.8C121.2 15.8 120.9 15.9 120.7 15.9C120.6 15.8 120.6 15.5 120.6 15.4C120.7 15.2 120.8 15 120.9 14.9C121.1 14.8 121.3 14.7 121.5 14.8C121.6 14.9 121.8 15.2 121.8 15.4Z"/><path d="M194.5 33Q185.5 34 169.6 36.4Q185.5 38.9 194.5 39.9Z"/></svg>
   <div class="wrap">
-    <p class="sec">Start <i>04</i></p>
+        <p class="sec">Start <i>04</i></p>
     <div class="start-head">
       <div>
         <h2 class="h2 rv">Bring a scribe to your table</h2>
@@ -665,6 +782,176 @@ dialog.ask[open]::backdrop{animation:ask-dim .28s ease}
   // On load, and on a hash change for an arrival that does not reload.
   window.addEventListener('hashchange', arrive);
   arrive();
+
+  // ═══ Life ══════════════════════════════════════════════════════════════
+  // The class the moving styles hang off goes on here, not in the markup: a
+  // page whose script never ran must not be left with its recap unwritten.
+  var still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!still) document.body.classList.add('motion');
+  var moving = function () { return !still; };
+
+  // 1 ── the recap is written in. Every word of the title and the summary is
+  // its own span, laid down in reading order; then the lists and the kept
+  // line arrive whole.
+  var recap = document.querySelector('.recap');
+  var whenSay = document.getElementById('when-say');
+  var words = [];
+  document.querySelectorAll('[data-write]').forEach(function (el) {
+    var walk = function (node) {
+      Array.prototype.slice.call(node.childNodes).forEach(function (c) {
+        if (c.nodeType === 3) {
+          var frag = document.createDocumentFragment();
+          c.textContent.split(/(\s+)/).forEach(function (part) {
+            if (!part) return;
+            if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
+            var w = document.createElement('span'); w.className = 'w'; w.textContent = part;
+            frag.appendChild(w); words.push(w);
+          });
+          node.replaceChild(frag, c);
+        } else if (c.nodeType === 1) walk(c);
+      });
+    };
+    walk(el);
+  });
+  var blocks = Array.prototype.slice.call(recap.querySelectorAll('.blk'));
+  var timers = [];
+  var later = function (fn, ms) { timers.push(setTimeout(fn, ms)); };
+  var writeRecap = function () {
+    timers.forEach(clearTimeout); timers = [];
+    words.concat(blocks).forEach(function (el) { el.classList.remove('on'); });
+    recap.querySelectorAll('[data-write] u').forEach(function (u) { u.classList.remove('on'); });
+    if (!moving()) { words.concat(blocks).forEach(function (el) { el.classList.add('on'); }); whenSay.textContent = 'the morning after'; return; }
+    recap.classList.add('writing'); whenSay.textContent = 'writing';
+    var t = 500;
+    later(function () { blocks[0].classList.add('on'); }, t); t += 350;
+    words.forEach(function (w, i) {
+      // A breath at the end of a sentence, and a longer one after the title.
+      var pause = /[.?!]$/.test(w.textContent) ? 260 : /,$/.test(w.textContent) ? 110 : 0;
+      later(function () {
+        w.classList.add('on');
+        // Its underline, once the last word of the name is down.
+        var u = w.parentNode.closest('u');
+        if (u && !u.querySelector('.w:not(.on)')) u.classList.add('on');
+      }, t);
+      t += 62 + pause + (w.parentNode.closest('.recap-title') && !words[i + 1].parentNode.closest('.recap-title') ? 420 : 0);
+    });
+    blocks.slice(1).forEach(function (b, i) { later(function () { b.classList.add('on'); }, t + 300 + i * 380); });
+    later(function () { recap.classList.remove('writing'); whenSay.textContent = 'the morning after'; }, t + 300 + blocks.length * 380);
+  };
+
+  // 2 ── the transcript, as heard, then corrected one line at a time.
+  var tx = document.getElementById('tx');
+  var txState = document.getElementById('tx-state');
+  var fixes = Array.prototype.slice.call(tx.querySelectorAll('.tx-x')).filter(function (x) { return x.querySelector('.was'); });
+  var txTimers = [];
+  var correct = function () {
+    txTimers.forEach(clearTimeout); txTimers = [];
+    fixes.forEach(function (x) { x.classList.remove('fixed'); }); tx.classList.remove('done'); txState.textContent = 'as heard';
+    if (!moving()) { fixes.forEach(function (x) { x.classList.add('fixed'); }); tx.classList.add('done'); txState.textContent = 'as written'; return; }
+    fixes.forEach(function (x, i) { txTimers.push(setTimeout(function () { x.classList.add('fixed'); }, 1300 + i * 900)); });
+    txTimers.push(setTimeout(function () { tx.classList.add('done'); txState.textContent = 'as written'; }, 1300 + fixes.length * 900 + 300));
+  };
+  new IntersectionObserver(function (es, o) { es.forEach(function (e) { if (e.isIntersecting) { correct(); o.disconnect(); } }); }, { threshold: 0.5 }).observe(tx);
+
+  // 3 ── the kept line changes every few seconds.
+  // [what leads in, the part underlined, who and when, spoken?]
+  //
+  // The first four are the page's invented examples. The rest are moments
+  // Quill kept from a real campaign, The Curse of Straad, cut down from the
+  // "worth remembering" line of each night's write-up. Only the one marked
+  // spoken is a quotation; the others are the write-up's own telling, so they
+  // are set without quote marks.
+  var KEPT = [
+    ['A natural one. ', 'On an unlocked door.', 'DM · session 21 · 0:08:21', true],
+    ['The door is not warded. It is not trapped. ', 'It is pull.', 'DM · session 12 · 1:04:38', true],
+    ['You cannot seduce a ledger. ', 'Yusdrayl has heard worse offers.', 'Marn and the DM · session 14 · 0:41:06', true],
+    ['I am in the middle of them. ', 'I know.', 'Marn and Bex · session 5 · 2:02:18', true],
+
+    ['What do you call a fish with no eyes? ', 'Fush.', 'Tad, to a druid, mid-combat · The Curse of Straad · session 11', true],
+    ['Cipher ordered every owl in Barovia killed on sight, then remembered ', 'his own familiar is one.', 'The Curse of Straad · session 7', false],
+    ['Saf cast Detect Evil on the tavern owners and found an undead abomination: ', 'Cipher, standing beside him.', 'The Curse of Straad · session 6', false],
+    ['BenTen leapt for the wine vat, rolled a natural 1, and ', 'landed face-first in the dregs.', 'The Curse of Straad · session 11', false],
+    ['Tad lit one of Cipher\u2019s bones purple and gave an orphan ', 'a disco bone, in church.', 'The Curse of Straad · session 8', false],
+    ['\u201CHealth inspectors, citing sanitation violations.\u201D ', 'The goblins did not buy it.', 'Cipher, bluffing in Goblin · The Curse of Straad · session 4', false],
+    ['Saf missed every swing with his new warhammer, yelled \u201Cscrew this!\u201D and ', 'drew an axe instead.', 'The Curse of Straad · session 5', false],
+    ['Meepo went into battle with a pair of dirty underwear for a sling. ', 'It worked.', 'The Curse of Straad · session 3', false],
+    ['The Baron feared threats from outside. Tad suggested ', 'a farmer\u2019s market.', 'The Curse of Straad · session 10', false]
+  ];
+  // A different order on every visit, the opening line included.
+  (function () {
+    for (var i = KEPT.length - 1; i > 0; i -= 1) { var j = Math.floor(Math.random() * (i + 1)); var x = KEPT[i]; KEPT[i] = KEPT[j]; KEPT[j] = x; }
+  })();
+
+  var kept = document.getElementById('kept'), keptBy = document.getElementById('kept-by'), dots = document.getElementById('kept-dots');
+  KEPT.forEach(function () { dots.appendChild(document.createElement('i')); });
+  var at = 0;
+  var markup = function (k) {
+    return (k[3] ? '\u201C' : '') + k[0] + '<span class="ul">' + k[1] + '</span>' + (k[3] ? '\u201D' : '');
+  };
+  var sizes = [];
+  var showKept = function (i) {
+    at = i;
+    Array.prototype.forEach.call(dots.children, function (d, j) { d.classList.toggle('on', j === i); });
+    if (sizes[i]) kept.style.fontSize = sizes[i] + 'px';
+    // The underline is simply part of the line, and fades in with it. Drawn
+    // across on every change it arrived ahead of its own words.
+    kept.innerHTML = markup(KEPT[i]);
+    keptBy.textContent = KEPT[i][2];
+    // If the line has outgrown its box, the box was measured under different
+    // conditions (a font not yet in, a width not yet settled): measure again.
+    if (!fitting && kept.style.height && kept.scrollHeight > kept.clientHeight + 2) fitKept();
+  };
+
+  // One box for all of them, and each line at the largest size that fits it.
+  //
+  // The box is as tall as the shortest line set at full size, so that line
+  // fills it exactly and every longer one is brought down to match, never
+  // left floating in room reserved for something else. Unless the longest
+  // would have to go below a readable size to do it: then the box grows to
+  // hold that one at the smallest size allowed, and the rest fill what they can.
+  var fitting = false;
+  var fitKept = function () {
+    fitting = true;
+    kept.style.height = ''; kept.style.fontSize = '';
+    var top = parseFloat(getComputedStyle(kept).fontSize);
+    var floor = Math.max(21, Math.round(top * 0.4));
+    var tall = function (k, px) { kept.style.fontSize = px + 'px'; kept.innerHTML = markup(k); return kept.offsetHeight; };
+    var least = Infinity, most = 0;
+    KEPT.forEach(function (k) { least = Math.min(least, tall(k, top)); most = Math.max(most, tall(k, floor)); });
+    var box = Math.max(least, most);
+    sizes = KEPT.map(function (k) {
+      var lo = floor, hi = top;
+      while (hi - lo > 0.5) { var mid = (lo + hi) / 2; if (tall(k, mid) <= box) lo = mid; else hi = mid; }
+      return Math.floor(lo * 2) / 2;
+    });
+    kept.style.height = box + 'px';
+    showKept(at);
+    fitting = false;
+  };
+  document.fonts.ready.then(fitKept);
+  // Measured again whenever the column's width changes, not only on a window
+  // resize: on a phone the page can still be settling its width when the
+  // fonts arrive, and a box sized then left three lines in a two-line box.
+  var keptWidth = 0;
+  new ResizeObserver(function () {
+    var w = kept.parentNode.clientWidth;
+    if (w !== keptWidth) { keptWidth = w; fitKept(); }
+  }).observe(kept.parentNode);
+  window.addEventListener('resize', fitKept);
+  // fonts.ready can settle before the italic face is even asked for, so the
+  // first fit is done in the fallback face. Fit again as each face lands.
+  document.fonts.addEventListener('loadingdone', fitKept);
+  // And once more as the band comes into view, by when everything it is set in
+  // has arrived: the measure the reader actually sees is this one.
+  new IntersectionObserver(function (es) { if (es.some(function (e) { return e.isIntersecting; })) fitKept(); }).observe(kept);
+  showKept(0);
+  setInterval(function () {
+    if (!moving() || document.hidden) return;
+    kept.classList.add('out');
+    setTimeout(function () { showKept((at + 1) % KEPT.length); kept.classList.remove('out'); }, 520);
+  }, 6500);
+
+  document.fonts.ready.then(writeRecap);
 </script>
 </body>
 </html>
