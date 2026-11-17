@@ -1226,7 +1226,7 @@ they were cleared to make room for. That section is empty again.
 
 ## 2026-11-17
 
-- [x] **A new front page** — rebuilt from the reviewed draft in . The
+- [x] **A new front page** — rebuilt from the reviewed draft in `design/`. The
       hero shows a recap as it lands in the channel instead of a transcript,
       the lines worth keeping get a dark band of their own, kept words are
       underlined in pen rather than highlighted, the left rail of sample
@@ -1236,10 +1236,10 @@ they were cleared to make room for. That section is empty again.
       forward-only. Starting a campaign is shown both ways, in Discord and on
       the web. "Add to Discord", which had no address behind it, is gone.
 
-- [x] **Request an invite** — a page of its own at . Discord
+- [x] **Request an invite** — a page of its own at `/request/`. Discord
       sign-in only, behind a tick box agreeing to the username being shared.
       The callback files the request straight into the gatehouse (state flag
-      , see ) and returns to the page as its receipt.
+      `a`, see `askingToJoin`) and returns to the page as its receipt.
       Somebody already on the guest list is simply signed in. Quill sends no
       message: it can only DM somebody it shares a server with.
 
